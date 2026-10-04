@@ -1,0 +1,48 @@
+name: Recordatorios y correos
+
+# En Vercel la API no tiene un proceso siempre encendido: este cron dispara las tareas
+# periódicas (recordatorios, reintentos de correos, limpieza) y avisa por ntfy.
+# Los correos de reservas y avisos salen al momento; este cron cubre recordatorios y reintentos.
+on:
+  schedule:
+    # Cada 30 minutos: unas 1.440 ejecuciones al mes, dentro de los 2.000 minutos gratis de
+    # GitHub para repositorios privados. GitHub puede retrasarlo unos minutos en horas pico.
+    - cron: "*/30 * * * *"
+  workflow_dispatch: # "Run workflow" en la pestaña Actions, para probarlo a mano
+
+concurrency:
+  group: agendo-cron
+  cancel-in-progress: false
+
+jobs:
+  ejecutar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts/cron.ts
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Ejecutar tareas y avisar por ntfy
+        env:
+          API_URL: ${{ vars.API_URL }}
+          APP_URL: ${{ vars.APP_URL }}
+          NTFY_SERVER: ${{ vars.NTFY_SERVER }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: node scripts/cron.ts
+
+      # Señal de vida opcional para healthchecks.io: si deja de llegar, avisa que el cron se detuvo.
+      - name: Avisar a healthchecks.io
+        if: always()
+        env:
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+          SUFIJO: ${{ job.status != 'success' && '/fail' || '' }}
+        run: |
+          if [ -z "$HEALTHCHECK_URL" ]; then exit 0; fi
+          curl -fsS -m 10 --retry 3 -o /dev/null "$HEALTHCHECK_URL$SUFIJO"

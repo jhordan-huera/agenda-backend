@@ -1,0 +1,129 @@
+import { Router } from "express";
+import { handle, limitRequests, queryParam } from "../http/handlers.ts";
+import { adminService, platformService } from "../services/admin-service.ts";
+import { categoryService } from "../services/category-service.ts";
+import { publicBookingService } from "../services/public-booking-service.ts";
+
+/* -------------------------------------- /api/public (sin sesión) ------------ */
+
+export const publicRoutes = Router();
+
+const bookingLimit = limitRequests({
+  windowMinutes: 15,
+  max: 20,
+  message: "Demasiadas reservas desde esta conexión. Espera unos minutos o contacta al negocio.",
+});
+
+publicRoutes.get(
+  "/platform-settings",
+  handle(() => platformService.getSettings()),
+);
+publicRoutes.get(
+  "/categories",
+  handle(() => categoryService.listPublic()),
+);
+publicRoutes.get(
+  "/businesses/:slug",
+  handle((req) => publicBookingService.getProfile(req.params.slug)),
+);
+const lookupLimit = limitRequests({
+  windowMinutes: 15,
+  max: 30,
+  message: "Demasiadas búsquedas desde esta conexión. Espera unos minutos o contacta al negocio.",
+});
+
+publicRoutes.post(
+  "/businesses/:slug/clients/lookup",
+  lookupLimit,
+  handle((req) => publicBookingService.lookupClient(req.params.slug, req.body)),
+);
+publicRoutes.post(
+  "/businesses/:slug/bookings",
+  bookingLimit,
+  handle((req) => publicBookingService.book(req.params.slug, req.body)),
+);
+
+/* --------------------------------------- /api/admin (super admin) ----------- */
+
+export const adminRoutes = Router();
+
+adminRoutes.get(
+  "/stats",
+  handle((req) => adminService.getStats(req.ctx)),
+);
+adminRoutes.get(
+  "/businesses",
+  handle((req) => adminService.listBusinesses(req.ctx)),
+);
+adminRoutes.post(
+  "/businesses",
+  handle((req) => adminService.createBusiness(req.ctx, req.body)),
+);
+adminRoutes.get(
+  "/businesses/:businessId",
+  handle((req) => adminService.getBusiness(req.ctx, req.params.businessId)),
+);
+adminRoutes.post(
+  "/businesses/:businessId/members",
+  handle((req) => adminService.addBusinessMember(req.ctx, req.params.businessId, req.body)),
+);
+adminRoutes.patch(
+  "/businesses/:businessId/status",
+  handle((req) => adminService.setBusinessStatus(req.ctx, req.params.businessId, req.body?.status)),
+);
+adminRoutes.put(
+  "/businesses/:businessId/plan",
+  handle((req) => adminService.changeBusinessPlan(req.ctx, req.params.businessId, req.body?.plan)),
+);
+adminRoutes.get(
+  "/categories",
+  handle((req) => categoryService.listForAdmin(req.ctx)),
+);
+adminRoutes.post(
+  "/categories",
+  handle((req) => categoryService.create(req.ctx, req.body)),
+);
+adminRoutes.put(
+  "/categories/:categoryId",
+  handle((req) => categoryService.update(req.ctx, req.params.categoryId, req.body)),
+);
+adminRoutes.delete(
+  "/categories/:categoryId",
+  handle((req) => categoryService.remove(req.ctx, req.params.categoryId)),
+);
+adminRoutes.get(
+  "/plan-requests",
+  handle((req) => adminService.listPlanRequests(req.ctx)),
+);
+adminRoutes.post(
+  "/plan-requests/:requestId/approve",
+  handle((req) => adminService.approvePlanRequest(req.ctx, req.params.requestId)),
+);
+adminRoutes.post(
+  "/plan-requests/:requestId/reject",
+  handle((req) => adminService.rejectPlanRequest(req.ctx, req.params.requestId, req.body)),
+);
+adminRoutes.get(
+  "/users",
+  handle((req) => adminService.listUsers(req.ctx)),
+);
+adminRoutes.patch(
+  "/users/:userId/active",
+  handle((req) => adminService.setUserActive(req.ctx, req.params.userId, req.body?.isActive)),
+);
+adminRoutes.put(
+  "/users/:userId/password",
+  handle((req) => adminService.setUserPassword(req.ctx, req.params.userId, req.body)),
+);
+adminRoutes.get(
+  "/audit-logs",
+  handle((req) => adminService.listAuditLogs(req.ctx, queryParam(req, "scope") ?? "all")),
+);
+adminRoutes.get(
+  "/emails",
+  handle((req) => adminService.listEmails(req.ctx)),
+);
+adminRoutes.put(
+  "/settings",
+  handle((req) => adminService.updateSettings(req.ctx, req.body)),
+);
