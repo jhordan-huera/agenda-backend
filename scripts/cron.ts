@@ -1,5 +1,5 @@
 /**
- * Cliente del cron (lo ejecuta .github/workflows/cron.yml): llama a POST /api/cron/run de la
+ * Cliente del cron (lo ejecuta .github/workflows/cron.yml cada 10 min): llama a POST /api/cron/run de la
  * API en Vercel y avisa por ntfy de los correos enviados o de cualquier fallo. Si no hubo
  * correos ni errores, no avisa.
  *
@@ -164,7 +164,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.info(JSON.stringify(report, null, 2));
+  // Los registros de Actions son públicos: sólo cifras, nunca datos de clientes.
+  console.info(
+    `Recordatorios: ${report.reminders} · enviados desde la anterior: ${report.sentSinceLastRun} · ` +
+      `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ${report.durationMs} ms`,
+  );
   const notice = buildNotice(report);
   if (notice) await notify(notice);
   else console.info("Sin correos ni errores: no se envía aviso.");

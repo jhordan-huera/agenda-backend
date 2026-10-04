@@ -75,7 +75,7 @@ src/
                     plantillas de email, planes y permisos
 scripts/            cron.ts (cliente del cron de GitHub + ntfy), test.ts (npm test), sync-shared.ts
 tests/              Pruebas de integración (*.test.mjs / *.test.ts)
-.github/workflows/  cron.yml: tareas periódicas cada 30 min en producción
+.github/workflows/  cron.yml: tareas periódicas cada 10 min en producción
 ```
 
 ### Código compartido con el frontend
@@ -169,7 +169,7 @@ marca como enviados o, tras 5 intentos, fallidos (con el motivo en `last_error`)
 - Las direcciones de los datos demo (`@demo.com`, `@example.com`) nunca reciben emails.
 - En local, los recordatorios se ponen en cola cada `REMINDER_JOB_INTERVAL_MINUTES` minutos y la cola
   se revisa cada minuto. **En Vercel** no hay proceso siempre encendido: cada email sale al momento
-  (con `waitUntil`, la función sigue viva tras responder) y el **cron de GitHub** llama cada 30 min a
+  (con `waitUntil`, la función sigue viva tras responder) y el **cron de GitHub** llama cada 10 min a
   `POST /api/cron/run` (recordatorios, reintentos, limpieza de sesiones) y **avisa por ntfy** de los
   correos enviados o fallidos. Cada ejecución queda en la tabla `cron_runs` (30 días).
 - Gmail gratuito permite unos 500 emails al día; para más volumen conviene un proveedor
@@ -215,9 +215,10 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
 5. **Comprobación:** `https://<frontend>/api/health` responde `{"ok":true,"database":true}`, el
    login funciona (la cookie pasa por el proxy) y una reserva de prueba envía su email.
 
-El cron corre cada 30 minutos (~1.440 minutos de GitHub Actions al mes, dentro de los 2.000 gratis
-de un repositorio privado). Con más frecuencia habría que pasar a un plan de pago o mover el
-workflow a un repositorio público.
+El cron corre cada 10 minutos (el repositorio es público: GitHub Actions no tiene límite de
+minutos). Sus registros son públicos, por eso sólo muestran cifras. GitHub pausa los cron de los
+repositorios públicos tras 60 días sin actividad (avisa por email antes): basta con un commit o
+con reactivarlo en Actions.
 
 ## Pendiente
 
