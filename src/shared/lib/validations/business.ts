@@ -62,6 +62,15 @@ export const bookingSettingsSchema = z.object({
   cancellationPolicy: optionalText(500),
 });
 
+const hexColorField = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^#[0-9a-f]{6}$/, "Escribe el color como #RRGGBB");
+
+/** Colores de marca; null vuelve a los de Agenda360. */
+export const brandColorsSchema = z.object({ primary: hexColorField, highlight: hexColorField }).nullable();
+
 export const notificationSettingsSchema = z.object({
   confirmations: z.boolean(),
   reminders: z.boolean(),

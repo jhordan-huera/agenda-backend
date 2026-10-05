@@ -118,6 +118,8 @@ export interface Business {
    * (salvo que el servicio de la cita tenga el suyo). null: el recomendado para la especialidad.
    */
   clinicalDefaultTemplateId: string | null;
+  /** Colores del panel y de la página de reservas; null: los de Agenda360. */
+  brandColors: BrandColors | null;
   createdAt: ISODateTime;
 }
 
@@ -140,6 +142,14 @@ export interface TeamMember extends BusinessUser {
   lastName: string;
   email: string;
   avatarUrl: string | null;
+}
+
+/** Colores de marca de un negocio ("#rrggbb"). De ellos sale toda la paleta (lib/brand-theme.ts). */
+export interface BrandColors {
+  /** Botones, títulos y lo activo. */
+  primary: string;
+  /** Lo elegido o lo nuevo: la hora reservada, el día elegido. */
+  highlight: string;
 }
 
 /** Persona que atiende citas dentro de un negocio. Por ahora hay uno por negocio (el dueño). */

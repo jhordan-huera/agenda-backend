@@ -6,6 +6,7 @@ import type {
   AppointmentStatus,
   AuditChange,
   BookingSettings,
+  BrandColors,
   Business,
   Client,
   NotificationSettings,
@@ -147,6 +148,12 @@ const BUSINESS_FIELDS: ChangeField<BusinessForAudit>[] = [
   { key: "location", label: "Ubicación en el mapa", hideValues: true },
   { key: "logoUrl", label: "Logo", hideValues: true },
   { key: "clinicalRecordsEnabled", label: "Historia clínica", format: (value: boolean) => (value ? "Activada" : "Desactivada") },
+  {
+    key: "brandColors",
+    label: "Colores de la marca",
+    format: (value: BrandColors | null) =>
+      value ? `${value.primary.toUpperCase()} y ${value.highlight.toUpperCase()}` : "Los de Agenda360",
+  },
 ];
 
 export function businessChanges(before: BusinessForAudit, after: BusinessForAudit): AuditChange[] {

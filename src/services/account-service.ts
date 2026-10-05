@@ -16,6 +16,7 @@ import { ROLE_LABELS } from "../shared/lib/permissions.ts";
 import { planIdSchema } from "../shared/lib/validations/admin.ts";
 import {
   bookingSettingsSchema,
+  brandColorsSchema,
   businessProfileSchema,
   notificationSettingsSchema,
   onboardingSchema,
@@ -199,7 +200,7 @@ export const businessService = {
   },
 
   async update(ctx: RequestContext, businessId: string, input: unknown): Promise<Business> {
-    const { bookingSettings, notificationSettings, clinicalRecordsEnabled, ...profile } = (input ?? {}) as Record<
+    const { bookingSettings, notificationSettings, clinicalRecordsEnabled, brandColors, ...profile } = (input ?? {}) as Record<
       string,
       unknown
     >;
@@ -207,6 +208,8 @@ export const businessService = {
     const booking = bookingSettings ? parseInput(bookingSettingsSchema, bookingSettings) : null;
     const notifications = notificationSettings ? parseInput(notificationSettingsSchema, notificationSettings) : null;
     const clinical = clinicalRecordsEnabled === undefined ? null : parseInput(z.boolean(), clinicalRecordsEnabled);
+    // undefined: no se tocan; null: vuelven los colores de Agenda360.
+    const brand = brandColors === undefined ? undefined : parseInput(brandColorsSchema, brandColors);
 
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "business.manage", { lock: true });
@@ -248,6 +251,10 @@ export const businessService = {
         values.push(clinical);
         assignments.push(`clinical_records_enabled = $${values.length}`);
       }
+      if (brand !== undefined) {
+        values.push(brand === null ? null : JSON.stringify(brand));
+        assignments.push(`brand_colors = $${values.length}::jsonb`);
+      }
       const business = assignments.length
         ? await one<Business>(
             db,
@@ -263,7 +270,9 @@ export const businessService = {
           ? "las notificaciones"
           : clinical !== null
             ? `la historia clínica (${clinical ? "activada" : "desactivada"})`
-            : "los datos del negocio";
+            : brand !== undefined
+              ? "los colores de la marca"
+              : "los datos del negocio";
       await logAudit(db, {
         businessId,
         actor,

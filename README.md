@@ -141,6 +141,10 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   campo existente no cambia de tipo) o duplica uno de la plataforma. Cada servicio puede tener su
   formato. Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
   Storage (en local, carpeta `storage/` y rutas `/api/files`); no se borran.
+- **Colores de marca** (migración 018): `businesses.brand_colors` (jsonb, `{ primary, highlight }` en
+  `#rrggbb`, con un check en la base; null = los de Agenda360). Se cambian con `PATCH
+  /businesses/:id` (`brandColors`, permiso `business.manage`), quedan en la actividad y llegan al
+  perfil público para que la página de reservas use los colores del negocio.
 - **Formato de tu negocio** (migración 017): `businesses.clinical_default_template_id` guarda el
   formato que se propone en cada evolución nueva (salvo en las citas de un servicio con formato
   propio). Lo elige el propietario con `PUT /businesses/:id/clinical-default-template` (cualquier
