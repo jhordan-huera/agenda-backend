@@ -74,6 +74,15 @@ api.use("/businesses", businessRoutes);
 api.use("/admin", adminRoutes);
 
 app.use("/api", api);
+
+// La raíz no es la aplicación: quien la abra en el navegador ve qué es y dónde comprobar el estado.
+app.get(["/", "/api"], (_req, res) => {
+  res.json({
+    name: "API de Agenda360",
+    message: "Esta dirección es la API. La aplicación se abre desde el frontend.",
+    health: "/api/health",
+  });
+});
 app.use(notFoundHandler);
 app.use(errorHandler);
 
