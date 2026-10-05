@@ -33,13 +33,31 @@ app.use(cookieParser());
 
 const api = Router();
 
+/**
+ * Motivo (sin datos sensibles) por el que no conecta la base de datos, para diagnosticar un
+ * despliegue: red (p. ej. la dirección directa de Supabase sólo tiene IPv6), contraseña, usuario…
+ */
+function databaseProblem(error: unknown): string {
+  const { code, message = "" } = (error ?? {}) as { code?: string; message?: string };
+  if (["ENOTFOUND", "ENETUNREACH", "EHOSTUNREACH", "ECONNREFUSED", "EAI_AGAIN"].includes(code ?? "")) return "red";
+  if (code === "28P01") return "contraseña";
+  if (/tenant or user not found/i.test(message) || code === "28000") return "usuario";
+  if (/ssl|certificate/i.test(message)) return "ssl";
+  if (/timeout|timed out/i.test(message) || code === "ETIMEDOUT") return "tiempo de espera";
+  if (code === "3D000") return "base de datos inexistente";
+  return "otro";
+}
+
 /** Estado del servicio y de la conexión a la base de datos. */
 api.get("/health", async (_req, res) => {
-  const database = await pool.query("select 1").then(
-    () => true,
-    () => false,
+  const failure = await pool.query("select 1").then(
+    () => null,
+    (error: unknown) => {
+      console.error("[health] Sin conexión a PostgreSQL:", (error as { code?: string })?.code, (error as Error)?.message);
+      return { problem: databaseProblem(error), code: (error as { code?: string })?.code ?? null };
+    },
   );
-  res.status(database ? 200 : 503).json({ ok: database, database });
+  res.status(failure ? 503 : 200).json({ ok: !failure, database: !failure, ...failure });
 });
 
 // Antes de la cabecera anti-CSRF y la sesión: la llama el cron de GitHub con su secreto.
