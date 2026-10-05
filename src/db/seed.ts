@@ -99,9 +99,10 @@ async function seed() {
       );
     }
 
-    await db.query("update platform_settings set allow_public_signup = $1, support_email = $2", [
+    await db.query("update platform_settings set allow_public_signup = $1, support_email = $2, support_phone = $3", [
       data.platformSettings.allowPublicSignup,
       data.platformSettings.supportEmail,
+      data.platformSettings.supportPhone,
     ]);
     await insertRows(
       db,

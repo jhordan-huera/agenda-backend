@@ -834,7 +834,7 @@ function seedClinicalRecords(
 
 export function createSeedDatabase(): SeedDatabase {
   const db: SeedDatabase = {
-    platformSettings: { allowPublicSignup: true, supportEmail: DEFAULT_SUPPORT_EMAIL },
+    platformSettings: { allowPublicSignup: true, supportEmail: DEFAULT_SUPPORT_EMAIL, supportPhone: "" },
     users: [],
     credentials: [],
     businesses: [],

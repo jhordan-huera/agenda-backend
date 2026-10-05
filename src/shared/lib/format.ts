@@ -64,6 +64,11 @@ export function plural(count: number, singular: string, pluralForm: string): str
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
+/** Contacto de soporte en texto: "soporte@x.com o al WhatsApp 099 406 0669" (el teléfono es opcional). */
+export function formatSupportContact(settings: { supportEmail: string; supportPhone: string }): string {
+  return settings.supportPhone ? `${settings.supportEmail} o al WhatsApp ${settings.supportPhone}` : settings.supportEmail;
+}
+
 export function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }

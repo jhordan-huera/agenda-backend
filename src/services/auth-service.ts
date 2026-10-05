@@ -3,6 +3,7 @@ import { userColumns } from "../db/columns.ts";
 import { one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
+import { formatSupportContact } from "../shared/lib/format.ts";
 import { changePasswordSchema, loginSchema, registerSchema } from "../shared/lib/validations/auth.ts";
 import type { BusinessRole, BusinessStatus, PlatformRole, User } from "../shared/types/index.ts";
 import { hashPassword, verifyPassword } from "./accounts.ts";
@@ -101,8 +102,8 @@ export const authService = {
     if (!row || !valid) throw new AppError("unauthorized", "Email o contraseña incorrectos.");
     const { passwordHash: _, ...user } = row;
     if (!user.isActive) {
-      const { supportEmail } = await getPlatformSettings(pool);
-      throw new AppError("forbidden", `Tu cuenta está desactivada. Escribe a ${supportEmail} para recuperar el acceso.`);
+      const supportContact = formatSupportContact(await getPlatformSettings(pool));
+      throw new AppError("forbidden", `Tu cuenta está desactivada. Escribe a ${supportContact} para recuperar el acceso.`);
     }
     const issued = await createSession(pool, user.id, remember);
     return { session: (await resolveSession(pool, user))!, issued };

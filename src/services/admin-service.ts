@@ -13,7 +13,7 @@ import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { DEFAULT_WEEKLY_SCHEDULE } from "../shared/lib/constants/business.ts";
 import { PLANS, getPlan } from "../shared/lib/constants/plans.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
-import { getFullName, plural } from "../shared/lib/format.ts";
+import { formatSupportContact, getFullName, plural } from "../shared/lib/format.ts";
 import { ROLE_LABELS } from "../shared/lib/permissions.ts";
 import { getZonedNow } from "../shared/lib/time.ts";
 import {
@@ -343,13 +343,13 @@ export const adminService = {
       const suspended = next === "suspended";
       const owner = await one<User>(db, `select ${userColumns()} from users where id = $1`, [business.ownerId]);
       if (owner) {
-        const { supportEmail } = await getPlatformSettings(db);
+        const supportContact = formatSupportContact(await getPlatformSettings(db));
         await queueEmail(db, {
           businessId,
           type: suspended ? "business_suspended" : "business_reactivated",
           to: owner.email,
           ...(suspended
-            ? emailTemplates.businessSuspended(owner.firstName, business.name, supportEmail)
+            ? emailTemplates.businessSuspended(owner.firstName, business.name, supportContact)
             : emailTemplates.businessReactivated(owner.firstName, business.name, `${appOrigin()}/login`)),
         });
       }
@@ -508,12 +508,12 @@ export const adminService = {
       const planName = getPlan(request.requestedPlan).name;
       const owner = await findOwner(db, request.businessId);
       if (owner) {
-        const { supportEmail } = await getPlatformSettings(db);
+        const supportContact = formatSupportContact(await getPlatformSettings(db));
         await queueEmail(db, {
           businessId: request.businessId,
           type: "plan_change_rejected",
           to: owner.email,
-          ...emailTemplates.planChangeRejected(owner.firstName, owner.businessName, planName, reason, supportEmail),
+          ...emailTemplates.planChangeRejected(owner.firstName, owner.businessName, planName, reason, supportContact),
         });
       }
       await logAudit(db, {
@@ -666,10 +666,13 @@ export const adminService = {
         data.allowPublicSignup !== previous.allowPublicSignup &&
           (data.allowPublicSignup ? "Abrió el registro público" : "Cerró el registro público"),
         data.supportEmail !== previous.supportEmail && `Cambió el email de soporte a ${data.supportEmail}`,
+        data.supportPhone !== previous.supportPhone &&
+          (data.supportPhone ? `Cambió el teléfono de soporte a ${data.supportPhone}` : "Quitó el teléfono de soporte"),
       ].filter((change) => change !== false);
-      await db.query("update platform_settings set allow_public_signup = $1, support_email = $2", [
+      await db.query("update platform_settings set allow_public_signup = $1, support_email = $2, support_phone = $3", [
         data.allowPublicSignup,
         data.supportEmail,
+        data.supportPhone,
       ]);
       if (changes.length > 0) {
         await logAudit(db, {

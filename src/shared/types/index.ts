@@ -598,6 +598,8 @@ export interface PlatformSettings {
   allowPublicSignup: boolean;
   /** Contacto que se muestra a negocios suspendidos y cuentas desactivadas. */
   supportEmail: string;
+  /** Teléfono de soporte (WhatsApp) que se muestra junto al email; "" si no hay. */
+  supportPhone: string;
 }
 
 /** Métricas globales para el panel del super admin. */

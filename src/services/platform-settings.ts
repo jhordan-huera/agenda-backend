@@ -5,6 +5,7 @@ import type { PlatformSettings } from "../shared/types/index.ts";
 export async function getPlatformSettings(db: Db): Promise<PlatformSettings> {
   return (await one<PlatformSettings>(
     db,
-    `select allow_public_signup as "allowPublicSignup", support_email as "supportEmail" from platform_settings`,
+    `select allow_public_signup as "allowPublicSignup", support_email as "supportEmail", support_phone as "supportPhone"
+       from platform_settings`,
   ))!;
 }
