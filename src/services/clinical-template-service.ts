@@ -168,13 +168,43 @@ export const clinicalTemplateService = {
       const actor = await authorizeManager(db, ctx, businessId);
       const template = await ownTemplate(db, businessId, templateId);
       await db.query("update clinical_templates set is_active = $2, updated_at = now() where id = $1", [templateId, active]);
+      // Si era el formato del negocio, vuelve a usarse el recomendado para la especialidad.
+      const wasDefault =
+        !active &&
+        (await db.query(
+          "update businesses set clinical_default_template_id = null where id = $1 and clinical_default_template_id = $2",
+          [businessId, templateId],
+        )).rowCount === 1;
       await logAudit(db, {
         businessId,
         actor,
         action: "clinical_template.updated",
         entityType: "business",
         entityId: businessId,
-        summary: `${active ? "Activó" : "Desactivó"} el formato «${template.name}»`,
+        summary: `${active ? "Activó" : "Desactivó"} el formato «${template.name}»${wasDefault ? " (era el formato del negocio)" : ""}`,
+      });
+      return findTemplate(db, businessId, templateId);
+    });
+  },
+
+  /**
+   * El formato que se propone en todas las evoluciones nuevas del negocio: uno de la plataforma o
+   * uno propio activo. No depende del plan (un formato propio se sigue usando en el plan Free).
+   */
+  async setDefault(ctx: RequestContext, businessId: string, templateId: unknown): Promise<ClinicalTemplate> {
+    if (typeof templateId !== "string" || !templateId) throw new AppError("validation", "Indica el formato.");
+    return transaction(async (db) => {
+      const actor = await authorizeManager(db, ctx, businessId);
+      const template = await findTemplate(db, businessId, templateId);
+      if (!template.isActive) throw new AppError("validation", "Activa el formato antes de usarlo en todo el negocio.");
+      await db.query("update businesses set clinical_default_template_id = $2 where id = $1", [businessId, template.id]);
+      await logAudit(db, {
+        businessId,
+        actor,
+        action: "clinical_template.updated",
+        entityType: "business",
+        entityId: businessId,
+        summary: `Eligió «${template.name}» como formato de historia clínica de todo el negocio`,
       });
       return findTemplate(db, businessId, templateId);
     });

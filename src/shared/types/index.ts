@@ -113,6 +113,11 @@ export interface Business {
   notificationSettings: NotificationSettings;
   /** Historia clínica de los clientes (pacientes). Por defecto, activa en negocios de salud. */
   clinicalRecordsEnabled: boolean;
+  /**
+   * Formato de historia clínica de todo el negocio: el que se propone en cada evolución nueva
+   * (salvo que el servicio de la cita tenga el suyo). null: el recomendado para la especialidad.
+   */
+  clinicalDefaultTemplateId: string | null;
   createdAt: ISODateTime;
 }
 
@@ -511,6 +516,11 @@ export interface ClinicalTemplate {
   categories: string[];
   /** Recomendada para la especialidad de este negocio. */
   recommended: boolean;
+  /**
+   * Formato de todo el negocio: el elegido por el propietario o, si no eligió ninguno, el
+   * recomendado para su especialidad. Siempre hay exactamente uno.
+   */
+  isDefault: boolean;
   /** Las propias se pueden desactivar (dejan de ofrecerse; sus evoluciones se siguen viendo). */
   isActive: boolean;
   /** Versión vigente: las evoluciones nuevas se escriben con ella. */
@@ -686,7 +696,7 @@ export interface RecoveryCodes {
 export type BusySlot = Pick<Appointment, "date" | "startTime" | "endTime">;
 
 /** El negocio en la página pública: sin datos internos (propietario, estado, avisos…). */
-export type PublicBusiness = Omit<Business, "ownerId" | "status" | "notificationSettings" | "clinicalRecordsEnabled" | "createdAt">;
+export type PublicBusiness = Omit<Business, "ownerId" | "status" | "notificationSettings" | "clinicalRecordsEnabled" | "clinicalDefaultTemplateId" | "createdAt">;
 export type PublicProfessional = Omit<Professional, "userId">;
 /** Con el precio oculto (`showPrice` false), `price` y `homeVisitFee` llegan a 0. */
 export type PublicService = Omit<Service, "clinicalTemplateId" | "isActive" | "createdAt">;

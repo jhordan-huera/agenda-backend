@@ -95,6 +95,7 @@ function toPublicBusiness({
   status: _status,
   notificationSettings: _notifications,
   clinicalRecordsEnabled: _clinical,
+  clinicalDefaultTemplateId: _template,
   createdAt: _created,
   ...business
 }: Business): PublicBusiness {

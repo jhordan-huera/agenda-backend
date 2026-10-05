@@ -141,6 +141,11 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   campo existente no cambia de tipo) o duplica uno de la plataforma. Cada servicio puede tener su
   formato. Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
   Storage (en local, carpeta `storage/` y rutas `/api/files`); no se borran.
+- **Formato de tu negocio** (migración 017): `businesses.clinical_default_template_id` guarda el
+  formato que se propone en cada evolución nueva (salvo en las citas de un servicio con formato
+  propio). Lo elige el propietario con `PUT /businesses/:id/clinical-default-template` (cualquier
+  plan, de la plataforma o propio y activo); si no eligió ninguno, o desactiva el elegido, se usa el
+  recomendado para su especialidad. La lista de formatos marca cuál es con `isDefault`.
 - **Odontograma, mapa del cuerpo y escalas** (migración 011): tipos de campo `odontogram` (FDI, por
   superficie y pieza), `bodymap` (frente y espalda) y `questionnaire` (PHQ-9 y GAD-7 con puntaje,
   interpretación y aviso en la pregunta 9 del PHQ-9). Versión 2 de atención médica, odontología,

@@ -105,6 +105,51 @@ r = await ricardo("POST", `${B}/clients/${patient.id}/clinical-record/notes`, { 
 ok(r.status === 404, "no se puede escribir con un formato desactivado", r.body);
 r = await ricardo("PATCH", `${B}/clinical-templates/${own.id}/active`, { active: true });
 
+console.log("Formato del negocio");
+const defaults = (list) => list.filter((t) => t.isDefault).map((t) => t.id);
+r = await ricardo("GET", `${B}/clinical-templates`);
+const recommended = r.body.find((t) => t.recommended);
+ok(recommended && defaults(r.body).join() === recommended.id, "sin elegir, es el recomendado para la especialidad (y sólo uno)", defaults(r.body));
+r = await ricardo("GET", `${B}`);
+ok(r.body.clinicalDefaultTemplateId === null, "el negocio aún no eligió ninguno", r.body.clinicalDefaultTemplateId);
+r = await ricardo("PUT", `${B}/clinical-default-template`, { templateId: own.id });
+ok(r.status === 200 && r.body.id === own.id && r.body.isDefault, "el propietario elige uno propio para todo el negocio", r.body);
+r = await ricardo("GET", `${B}/clinical-templates`);
+ok(defaults(r.body).join() === own.id, "la lista lo marca como el formato del negocio", defaults(r.body));
+r = await ricardo("GET", `${B}`);
+ok(r.body.clinicalDefaultTemplateId === own.id, "y el negocio lo guarda", r.body.clinicalDefaultTemplateId);
+r = await elena("PUT", `${B}/clinical-default-template`, { templateId: "atencion-medica" });
+ok(r.status === 403, "el staff no lo cambia", r.body);
+r = await ricardo("PUT", `${B}/clinical-default-template`, { templateId: "no-existe" });
+ok(r.status === 404, "uno que no existe → 404", r.body);
+r = await ricardo("PUT", `${B}/clinical-default-template`, {});
+ok(r.status === 400, "sin formato → 400", r.body);
+const { a: lauraOwner, session: lauraSession } = await login("laura@demo.com");
+r = await lauraOwner("PUT", `/businesses/${lauraSession.businessId}/clinical-default-template`, { templateId: own.id });
+ok(r.status === 404 || r.status === 403, "el formato propio de otro negocio no se puede elegir", r.body);
+r = await ricardo("PATCH", `${B}/clinical-templates/${own.id}/active`, { active: false });
+r = await ricardo("GET", `${B}/clinical-templates?all=1`);
+ok(defaults(r.body).join() === recommended.id, "si se desactiva, se vuelve al recomendado", defaults(r.body));
+r = await ricardo("GET", `${B}`);
+ok(r.body.clinicalDefaultTemplateId === null, "y el negocio lo olvida", r.body.clinicalDefaultTemplateId);
+r = await ricardo("PUT", `${B}/clinical-default-template`, { templateId: own.id });
+ok(r.status === 400 && /Activa el formato/.test(r.body.error.message), "uno desactivado no se puede elegir", r.body);
+r = await ricardo("PATCH", `${B}/clinical-templates/${own.id}/active`, { active: true });
+setPlan("free");
+r = await ricardo("PUT", `${B}/clinical-default-template`, { templateId: "atencion-medica" });
+ok(r.status === 200 && r.body.isDefault, "elegir uno de la plataforma no depende del plan", r.body);
+setPlan("business");
+const slug = (await ricardo("GET", `${B}`)).body.slug;
+r = await agent()("GET", `/public/businesses/${slug}`);
+ok(r.status === 200 && !("clinicalDefaultTemplateId" in r.body.business), "la página pública no lo muestra", Object.keys(r.body.business ?? {}));
+const templateLogs = (await ricardo("GET", `${B}/audit-logs?limit=50`)).body;
+const summaries = templateLogs.entries.map((l) => l.summary);
+ok(
+  summaries.some((s) => /Eligió «Atención médica» como formato/.test(s)) && summaries.some((s) => /era el formato del negocio/.test(s)),
+  "queda en la auditoría",
+  summaries.slice(0, 8),
+);
+
 console.log("Plan Free");
 setPlan("free");
 r = await ricardo("POST", `${B}/clinical-templates`, { name: "Otro", description: "", fields });

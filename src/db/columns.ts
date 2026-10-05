@@ -40,6 +40,7 @@ export const businessColumns = columns({
   bookingSettings: "booking_settings",
   notificationSettings: "notification_settings",
   clinicalRecordsEnabled: "clinical_records_enabled",
+  clinicalDefaultTemplateId: "clinical_default_template_id",
   createdAt: "created_at",
 });
 

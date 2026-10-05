@@ -141,6 +141,10 @@ businessRoutes.patch(
   "/:businessId/clinical-templates/:templateId/active",
   handle((req) => clinicalTemplateService.setActive(req.ctx, req.params.businessId, req.params.templateId, req.body?.active)),
 );
+businessRoutes.put(
+  "/:businessId/clinical-default-template",
+  handle((req) => clinicalTemplateService.setDefault(req.ctx, req.params.businessId, req.body?.templateId)),
+);
 businessRoutes.post(
   "/:businessId/clients/:clientId/clinical-record/attachments",
   handle((req) => clinicalAttachmentService.requestUpload(req.ctx, req.params.businessId, req.params.clientId, req.body)),

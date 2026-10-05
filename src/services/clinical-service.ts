@@ -100,7 +100,9 @@ async function loadTemplateVersions(db: Db, ids: string[]): Promise<Record<strin
 
 /**
  * Plantillas que puede usar el negocio: las de la plataforma y las suyas, activas y en su versión
- * vigente. Primero las recomendadas para su especialidad.
+ * vigente. Primero las propias y luego las recomendadas para su especialidad. Una es el formato
+ * del negocio (`isDefault`): el que eligió el propietario o, si no eligió ninguno (o lo
+ * desactivó), la primera recomendada para su especialidad; si no hay, la evolución general.
  */
 export async function availableTemplates(
   db: Db,
@@ -109,12 +111,25 @@ export async function availableTemplates(
 ): Promise<ClinicalTemplate[]> {
   return many<ClinicalTemplate>(
     db,
-    `select t.id, t.business_id as "businessId", t.name, t.description, t.categories,
-            b.category = any(t.categories) as recommended, t.is_active as "isActive",
+    `with b as (
+       select id, category, clinical_default_template_id as chosen from businesses where id = $1
+     ), business_default as (
+       select coalesce(
+         (select t.id from clinical_templates t, b
+           where t.id = b.chosen and t.is_active and (t.business_id is null or t.business_id = b.id)),
+         (select t.id from clinical_templates t, b
+           where t.business_id is null and t.is_active and b.category = any(t.categories)
+           order by t.sort_order, t.name limit 1),
+         'evolucion-general'
+       ) as id
+     )
+     select t.id, t.business_id as "businessId", t.name, t.description, t.categories,
+            b.category = any(t.categories) as recommended, t.id = d.id as "isDefault", t.is_active as "isActive",
             v.id as "versionId", v.version, v.fields
        from clinical_templates t
        join clinical_template_versions v on v.id = t.current_version_id
-       join businesses b on b.id = $1
+       cross join b
+       cross join business_default d
       where (t.is_active or $2) and (t.business_id is null or t.business_id = $1) and ($3::text is null or t.id = $3)
       order by t.business_id is null, b.category = any(t.categories) desc, t.sort_order, t.name`,
     [businessId, options.includeInactive ?? false, options.templateId ?? null],

@@ -39,13 +39,13 @@ export interface EmailContent {
 }
 
 const COLORS = {
-  brand: "#4f46e5",
-  text: "#111827",
-  muted: "#6b7280",
-  border: "#e5e7eb",
-  page: "#f3f4f6",
-  panel: "#f9fafb",
-  info: { bg: "#eef2ff", border: "#c7d2fe", text: "#3730a3" },
+  brand: "#4a6cb0",
+  text: "#1d2433",
+  muted: "#5b6478",
+  border: "#e2e6ef",
+  page: "#f5f7fc",
+  panel: "#f5f7fc",
+  info: { bg: "#efebfc", border: "#ddd4f8", text: "#5a4ea3" },
   warning: { bg: "#fffbeb", border: "#fde68a", text: "#92400e" },
 };
 const FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";

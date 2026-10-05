@@ -455,6 +455,7 @@ function seedTenant(
     bookingSettings: { ...DEFAULT_BOOKING_SETTINGS },
     notificationSettings: { ...DEFAULT_NOTIFICATION_SETTINGS },
     clinicalRecordsEnabled: isHealthCategory(tenant.business.category),
+    clinicalDefaultTemplateId: null,
     createdAt,
   });
   db.professionals.push({
