@@ -1,4 +1,4 @@
-import { clinicalNoteColumns, clinicalProfileColumns } from "../db/columns.ts";
+import { clinicalAttachmentColumns, clinicalNoteColumns, clinicalProfileColumns } from "../db/columns.ts";
 import { isUuid, many, one, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
@@ -10,6 +10,7 @@ import {
   clinicalProfileSchema,
 } from "../shared/lib/validations/clinical.ts";
 import type {
+  ClinicalAttachment,
   ClinicalField,
   ClinicalNote,
   ClinicalNoteAddendum,
@@ -19,6 +20,8 @@ import type {
   ClinicalTemplateVersion,
 } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
+import { fileStorage } from "./file-storage.ts";
+import { planOf } from "./plan-limits.ts";
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
 
 /**
@@ -32,7 +35,7 @@ import { authorize, parseInput, type Actor, type RequestContext } from "./contex
 /** Como mucho un registro de "consultó la historia" por persona y paciente en este intervalo. */
 const VIEW_LOG_INTERVAL_MINUTES = 30;
 
-async function authorizeClinical(db: Db, ctx: RequestContext, businessId: string, lock = false): Promise<Actor> {
+export async function authorizeClinical(db: Db, ctx: RequestContext, businessId: string, lock = false): Promise<Actor> {
   // El super admin (modo soporte) entra con rol de propietario: queda identificado en la auditoría.
   const actor = await authorize(db, ctx, businessId, undefined, { lock });
   const access = await one<{ enabled: boolean; clinicalAccess: boolean | null }>(
@@ -55,7 +58,7 @@ async function businessToday(db: Db, businessId: string): Promise<string> {
   return getZonedNow(business?.timezone ?? DEFAULT_TIMEZONE).date;
 }
 
-async function findPatient(db: Db, businessId: string, clientId: string): Promise<{ name: string }> {
+export async function findPatient(db: Db, businessId: string, clientId: string): Promise<{ name: string }> {
   const client = isUuid(clientId)
     ? await one<{ name: string }>(db, "select name from clients where id = $1 and business_id = $2", [clientId, businessId])
     : null;
@@ -99,27 +102,31 @@ async function loadTemplateVersions(db: Db, ids: string[]): Promise<Record<strin
  * Plantillas que puede usar el negocio: las de la plataforma y las suyas, activas y en su versión
  * vigente. Primero las recomendadas para su especialidad.
  */
-async function availableTemplates(db: Db, businessId: string): Promise<ClinicalTemplate[]> {
+export async function availableTemplates(
+  db: Db,
+  businessId: string,
+  options: { includeInactive?: boolean; templateId?: string } = {},
+): Promise<ClinicalTemplate[]> {
   return many<ClinicalTemplate>(
     db,
     `select t.id, t.business_id as "businessId", t.name, t.description, t.categories,
-            b.category = any(t.categories) as recommended,
+            b.category = any(t.categories) as recommended, t.is_active as "isActive",
             v.id as "versionId", v.version, v.fields
        from clinical_templates t
        join clinical_template_versions v on v.id = t.current_version_id
        join businesses b on b.id = $1
-      where t.is_active and (t.business_id is null or t.business_id = $1)
-      order by b.category = any(t.categories) desc, t.business_id is null, t.sort_order, t.name`,
-    [businessId],
+      where (t.is_active or $2) and (t.business_id is null or t.business_id = $1) and ($3::text is null or t.id = $3)
+      order by t.business_id is null, b.category = any(t.categories) desc, t.sort_order, t.name`,
+    [businessId, options.includeInactive ?? false, options.templateId ?? null],
   );
 }
 
 export const clinicalService = {
-  /** Formatos de evolución disponibles para el negocio. */
-  async listTemplates(ctx: RequestContext, businessId: string): Promise<ClinicalTemplate[]> {
+  /** Formatos de evolución disponibles para el negocio (con `includeInactive`, también los propios desactivados). */
+  async listTemplates(ctx: RequestContext, businessId: string, includeInactive = false): Promise<ClinicalTemplate[]> {
     return transaction(async (db) => {
       await authorizeClinical(db, ctx, businessId);
-      return availableTemplates(db, businessId);
+      return availableTemplates(db, businessId, { includeInactive });
     });
   },
 
@@ -147,6 +154,7 @@ export const clinicalService = {
         });
       }
       const notes = await loadNotes(db, "business_id = $1 and client_id = $2", [businessId, clientId]);
+      const plan = await planOf(db, businessId);
       return {
         profile: await one<ClinicalProfile>(
           db,
@@ -158,6 +166,13 @@ export const clinicalService = {
           db,
           notes.map((note) => note.templateVersionId),
         ),
+        attachments: await many<ClinicalAttachment>(
+          db,
+          `select ${clinicalAttachmentColumns()} from clinical_attachments
+            where business_id = $1 and client_id = $2 and status = 'ready' order by created_at desc`,
+          [businessId, clientId],
+        ),
+        attachmentAccess: !plan.clinicalAttachments ? "upgrade" : fileStorage ? "available" : "unavailable",
       };
     });
   },

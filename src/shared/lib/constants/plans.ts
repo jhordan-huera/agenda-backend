@@ -9,6 +9,10 @@ export interface Plan {
   features: string[];
   /** Los aplica el backend (repositorio / triggers de PostgreSQL), no sólo la interfaz. */
   limits: PlanLimits;
+  /** Crear y adaptar formatos de historia clínica propios (los de la plataforma se usan en todos). */
+  customClinicalTemplates: boolean;
+  /** Subir archivos (radiografías, exámenes, fotos) a la historia clínica. */
+  clinicalAttachments: boolean;
   highlighted?: boolean;
 }
 
@@ -26,11 +30,13 @@ export const PLANS: Plan[] = [
       "Calendario, servicios y horarios",
     ],
     limits: { appointmentsPerMonth: 20, clients: 50, users: 1 },
+    customClinicalTemplates: false,
+    clinicalAttachments: false,
   },
   {
     id: "pro",
     name: "Pro",
-    price: 7.99,
+    price: 9.99,
     description: "Para profesionales con agenda completa.",
     features: [
       "Citas ilimitadas",
@@ -39,8 +45,11 @@ export const PLANS: Plan[] = [
       "Recordatorios por email",
       "Reportes",
       "Personalización",
+      "Historia clínica con formatos propios y archivos",
     ],
     limits: { appointmentsPerMonth: null, clients: null, users: 3 },
+    customClinicalTemplates: true,
+    clinicalAttachments: true,
     highlighted: true,
   },
   {
@@ -55,8 +64,11 @@ export const PLANS: Plan[] = [
       "Reportes avanzados",
       "Varias agendas",
       "Funciones administrativas",
+      "Historia clínica con formatos propios y archivos",
     ],
     limits: { appointmentsPerMonth: null, clients: null, users: null },
+    customClinicalTemplates: true,
+    clinicalAttachments: true,
   },
 ];
 

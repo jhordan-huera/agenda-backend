@@ -250,3 +250,28 @@ export const clinicalAddendumSchema = z.object({
 export type ClinicalProfileInput = z.infer<typeof clinicalProfileSchema>;
 export type ClinicalNoteInput = z.infer<typeof clinicalNoteSchema>;
 export type ClinicalAddendumInput = z.infer<typeof clinicalAddendumSchema>;
+
+/** Formato propio de un negocio (planes de pago): nombre, descripción y campos. */
+export const clinicalTemplateInputSchema = z.object({
+  name: requiredText("El nombre del formato", 2, 80),
+  description: optionalText(300),
+  fields: clinicalTemplateFieldsSchema,
+});
+
+/** Archivo que se va a subir a la historia clínica. */
+export const CLINICAL_ATTACHMENT_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "application/pdf"] as const;
+export const CLINICAL_ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024;
+
+export const clinicalAttachmentInputSchema = z.object({
+  fileName: requiredText("El nombre del archivo", 1, 200),
+  contentType: z.enum(CLINICAL_ATTACHMENT_TYPES, { error: "Sube una imagen (JPG, PNG, WebP, HEIC) o un PDF" }),
+  sizeBytes: z
+    .number()
+    .int()
+    .min(1, "El archivo está vacío")
+    .max(CLINICAL_ATTACHMENT_MAX_BYTES, "El archivo supera los 15 MB"),
+  description: optionalText(200),
+});
+
+export type ClinicalTemplateInput = z.infer<typeof clinicalTemplateInputSchema>;
+export type ClinicalAttachmentInput = z.infer<typeof clinicalAttachmentInputSchema>;

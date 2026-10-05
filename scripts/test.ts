@@ -90,6 +90,8 @@ const env: NodeJS.ProcessEnv = {
   CRON_SECRET: randomBytes(24).toString("hex"),
   PROXY_SECRET: randomBytes(24).toString("hex"),
   TEST_DATABASE_URL: databaseUrl,
+  // Archivos de la historia clínica en una carpeta temporal (almacenamiento local).
+  LOCAL_STORAGE_DIR: mkdtempSync(join(tmpdir(), "agendo-files-")),
   TEST_API_URL: `http://127.0.0.1:${apiPort}/api`,
 };
 
@@ -122,6 +124,7 @@ async function stopApi(): Promise<void> {
 
 function cleanup(): void {
   api?.kill("SIGKILL");
+  rmSync(env.LOCAL_STORAGE_DIR!, { recursive: true, force: true });
   if (tempCluster && pgBin) {
     try {
       run(join(pgBin, "pg_ctl"), ["-D", join(tempCluster.dir, "data"), "-m", "immediate", "stop"], process.env);

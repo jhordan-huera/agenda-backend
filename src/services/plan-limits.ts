@@ -10,7 +10,7 @@ import type { ISODate, PlanId, PlanUsage } from "../shared/types/index.ts";
  * negocio (ver `authorize` con `lock`), así que dos altas simultáneas no superan el cupo.
  */
 
-async function planOf(db: Db, businessId: string): Promise<Plan> {
+export async function planOf(db: Db, businessId: string): Promise<Plan> {
   const row = await one<{ plan: PlanId }>(db, "select plan from subscriptions where business_id = $1", [businessId]);
   return getPlan(row?.plan ?? "free");
 }

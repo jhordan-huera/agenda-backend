@@ -1,5 +1,6 @@
 import { many, one, pool, transaction } from "../db/pool.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
+import { deleteStalePendingAttachments } from "../services/clinical-attachment-service.ts";
 import { processEmailQueue, type EmailQueueReport } from "../services/mailer.ts";
 import { runReminderJob } from "../services/notifications.ts";
 
@@ -43,6 +44,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const reminders = await queueAllReminders();
   const emails = await processEmailQueue({ maxBatches: MAX_EMAIL_BATCHES });
   await deleteExpiredSessions();
+  await deleteStalePendingAttachments();
   // Corte en "ahora": lo enviado hasta aquí cuenta en esta ejecución y no en la siguiente.
   const totals = await one<{ at: string; pending: number; sent: number }>(
     pool,

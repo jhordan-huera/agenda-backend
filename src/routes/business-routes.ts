@@ -2,7 +2,9 @@ import { Router } from "express";
 import { handle, queryParam } from "../http/handlers.ts";
 import { businessService, subscriptionService, teamService, userService } from "../services/account-service.ts";
 import { auditLogService, notificationService } from "../services/activity-service.ts";
+import { clinicalAttachmentService } from "../services/clinical-attachment-service.ts";
 import { clinicalService } from "../services/clinical-service.ts";
+import { clinicalTemplateService } from "../services/clinical-template-service.ts";
 import {
   appointmentService,
   blockedTimeService,
@@ -122,7 +124,35 @@ businessRoutes.delete(
 // Historia clínica (propietario, miembros autorizados y super admin en modo soporte)
 businessRoutes.get(
   "/:businessId/clinical-templates",
-  handle((req) => clinicalService.listTemplates(req.ctx, req.params.businessId)),
+  handle((req) => clinicalService.listTemplates(req.ctx, req.params.businessId, req.query.all === "1")),
+);
+businessRoutes.post(
+  "/:businessId/clinical-templates",
+  handle((req) => clinicalTemplateService.create(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.get(
+  "/:businessId/clinical-templates/:templateId",
+  handle((req) => clinicalTemplateService.get(req.ctx, req.params.businessId, req.params.templateId)),
+);
+businessRoutes.put(
+  "/:businessId/clinical-templates/:templateId",
+  handle((req) => clinicalTemplateService.update(req.ctx, req.params.businessId, req.params.templateId, req.body)),
+);
+businessRoutes.patch(
+  "/:businessId/clinical-templates/:templateId/active",
+  handle((req) => clinicalTemplateService.setActive(req.ctx, req.params.businessId, req.params.templateId, req.body?.active)),
+);
+businessRoutes.post(
+  "/:businessId/clients/:clientId/clinical-record/attachments",
+  handle((req) => clinicalAttachmentService.requestUpload(req.ctx, req.params.businessId, req.params.clientId, req.body)),
+);
+businessRoutes.post(
+  "/:businessId/clinical-attachments/:attachmentId/complete",
+  handle((req) => clinicalAttachmentService.completeUpload(req.ctx, req.params.businessId, req.params.attachmentId)),
+);
+businessRoutes.get(
+  "/:businessId/clinical-attachments/:attachmentId/url",
+  handle((req) => clinicalAttachmentService.downloadUrl(req.ctx, req.params.businessId, req.params.attachmentId)),
 );
 businessRoutes.get(
   "/:businessId/clients/:clientId/clinical-record",

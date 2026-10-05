@@ -294,6 +294,7 @@ export const adminService = {
           showPrice: true,
           location: "business",
           homeVisitFee: 0,
+          clinicalTemplateId: null,
           isActive: true,
         },
       });

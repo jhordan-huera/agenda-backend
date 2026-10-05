@@ -9,6 +9,7 @@ import { loadSession, requireAjaxHeader } from "./http/session.ts";
 import { authRoutes } from "./routes/auth-routes.ts";
 import { businessRoutes, userRoutes } from "./routes/business-routes.ts";
 import { cronRoutes } from "./routes/cron-routes.ts";
+import { fileRoutes } from "./routes/file-routes.ts";
 import { adminRoutes, publicRoutes } from "./routes/platform-routes.ts";
 
 // helmet trae tipos ESM y CommonJS: según cómo los resuelva TypeScript (en local o al compilar
@@ -43,6 +44,8 @@ api.get("/health", async (_req, res) => {
 
 // Antes de la cabecera anti-CSRF y la sesión: la llama el cron de GitHub con su secreto.
 api.use("/cron", cronRoutes);
+// Archivos con el almacenamiento local (desarrollo): el token firmado de la URL es la autorización.
+api.use("/files", fileRoutes);
 
 api.use(requireAjaxHeader);
 api.use(loadSession);

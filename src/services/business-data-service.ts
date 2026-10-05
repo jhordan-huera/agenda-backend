@@ -150,7 +150,8 @@ export const clientService = {
       const hasClinicalRecord = await one(
         db,
         `select 1 where exists (select 1 from clinical_notes where client_id = $1)
-                     or exists (select 1 from clinical_profiles where client_id = $1)`,
+                     or exists (select 1 from clinical_profiles where client_id = $1)
+                     or exists (select 1 from clinical_attachments where client_id = $1)`,
         [clientId],
       );
       if (hasClinicalRecord) {
@@ -174,6 +175,17 @@ export const clientService = {
 
 /* --------------------------------- Servicios --------------------------------- */
 
+/** El formato de historia clínica de un servicio: de la plataforma o propio del negocio. */
+async function assertServiceTemplate(db: Db, businessId: string, templateId: string | null): Promise<void> {
+  if (!templateId) return;
+  const template = await one(
+    db,
+    "select 1 from clinical_templates where id = $1 and (business_id is null or business_id = $2)",
+    [templateId, businessId],
+  );
+  if (!template) throw new AppError("validation", "Ese formato de historia clínica no existe.");
+}
+
 export const serviceService = {
   async list(ctx: RequestContext, businessId: string): Promise<Service[]> {
     await authorize(pool, ctx, businessId);
@@ -187,11 +199,13 @@ export const serviceService = {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "services.manage", { lock: true });
       const data = parseInput(serviceSchema, input);
+      await assertServiceTemplate(db, businessId, data.clinicalTemplateId);
       const service = (await one<Service>(
         db,
         `insert into services
-           (business_id, name, description, duration_minutes, price, show_price, location, home_visit_fee, is_active)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           (business_id, name, description, duration_minutes, price, show_price, location, home_visit_fee,
+            clinical_template_id, is_active)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          returning ${serviceColumns()}`,
         [
           businessId,
@@ -202,6 +216,7 @@ export const serviceService = {
           data.showPrice,
           data.location,
           data.homeVisitFee,
+          data.clinicalTemplateId,
           data.isActive,
         ],
       ))!;
@@ -229,11 +244,12 @@ export const serviceService = {
         serviceId,
         "Servicio no encontrado.",
       );
+      await assertServiceTemplate(db, businessId, data.clinicalTemplateId);
       const service = (await one<Service>(
         db,
         `update services
             set name = $2, description = $3, duration_minutes = $4, price = $5,
-                show_price = $6, location = $7, home_visit_fee = $8, is_active = $9
+                show_price = $6, location = $7, home_visit_fee = $8, clinical_template_id = $9, is_active = $10
           where id = $1
           returning ${serviceColumns()}`,
         [
@@ -245,6 +261,7 @@ export const serviceService = {
           data.showPrice,
           data.location,
           data.homeVisitFee,
+          data.clinicalTemplateId,
           data.isActive,
         ],
       ))!;

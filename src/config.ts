@@ -35,6 +35,11 @@ const envSchema = z.object({
   GMAIL_CLIENT_SECRET: z.string().trim().optional(),
   GMAIL_REFRESH_TOKEN: z.string().trim().optional(),
   EMAIL_REDIRECT_TO: z.string().trim().optional(),
+  // Archivos de la historia clínica en Supabase Storage (Project Settings → API → clave secreta).
+  // Sin ellas: en local se guardan en storage/; en producción los archivos quedan desactivados.
+  SUPABASE_URL: z.url("SUPABASE_URL debe ser una URL (https://xxxx.supabase.co)").optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().trim().min(20).optional(),
+  STORAGE_BUCKET: z.string().trim().regex(/^[a-z0-9-]{3,63}$/).default("historias-clinicas"),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -69,6 +74,9 @@ export const config = {
   /** La API corre como función de Vercel (sin servidor siempre encendido). */
   onVercel: process.env.VERCEL === "1",
   cronSecret: env.CRON_SECRET ?? null,
+  supabaseUrl: env.SUPABASE_URL ?? null,
+  supabaseServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY ?? null,
+  storageBucket: env.STORAGE_BUCKET,
   proxySecret: env.PROXY_SECRET ?? null,
   /** Orígenes permitidos por CORS. El primero se usa en los enlaces de los emails. */
   frontendUrls: env.FRONTEND_URL,

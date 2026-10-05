@@ -14,6 +14,8 @@ export const serviceSchema = z.object({
   showPrice: z.boolean().default(true),
   location: z.enum(["business", "home", "both"]).default("business"),
   homeVisitFee: moneyField.default(0),
+  /** Formato de historia clínica de las evoluciones de este servicio (null: el habitual). */
+  clinicalTemplateId: z.string().min(1).max(80).nullable().default(null),
   isActive: z.boolean(),
 });
 

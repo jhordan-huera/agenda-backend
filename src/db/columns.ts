@@ -83,6 +83,7 @@ export const serviceColumns = columns({
   showPrice: "show_price",
   location: "location",
   homeVisitFee: "home_visit_fee",
+  clinicalTemplateId: "clinical_template_id",
   isActive: "is_active",
   createdAt: "created_at",
 });
@@ -219,3 +220,14 @@ export const categoryColumns = (alias?: string) => {
     `${c("sort_order")} as "sortOrder"`,
   ].join(", ");
 };
+
+export const clinicalAttachmentColumns = columns({
+  id: "id",
+  clientId: "client_id",
+  fileName: "file_name",
+  contentType: "content_type",
+  sizeBytes: "size_bytes",
+  description: "description",
+  uploadedByName: "uploaded_by_name",
+  createdAt: "created_at",
+});
