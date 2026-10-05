@@ -98,7 +98,7 @@ const changed = emails.find((e) => e.to === "miguel@demo.com" && e.type === "pas
 ok(changed && /Contraseña: MiguelClave2026/.test(changed.body), "cambio de contraseña: email con la nueva", changed?.body);
 const invite = emails.find((e) => e.to === "luis@example.com" && e.type === "team_invite");
 ok(invite && /Contraseña: LuisClave2026/.test(invite.body), "miembro nuevo: email con su contraseña", invite?.body);
-const audit = (await admin("GET", "/admin/audit-logs?scope=admin")).body.map((l) => l.action);
+const audit = (await admin("GET", "/admin/audit-logs?scope=admin")).body.entries.map((l) => l.action);
 ok(audit.includes("platform.user_password_changed") && audit.includes("platform.member_added"), "queda registrado en la auditoría", audit.slice(0, 6));
 
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de contraseñas pasaron");

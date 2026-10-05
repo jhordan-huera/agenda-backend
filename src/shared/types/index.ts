@@ -332,7 +332,16 @@ export type AuditEntityType =
   | "subscription"
   | "user"
   | "platform"
-  | "clinical_record";
+  | "clinical_record"
+  /** Inicios y cierres de sesión e intentos fallidos: sólo los ve el super admin. */
+  | "session";
+
+/** Un campo que cambió en una edición. `before`/`after` null: valor que no se muestra (p. ej. notas). */
+export interface AuditChange {
+  label: string;
+  before: string | null;
+  after: string | null;
+}
 
 /** Registro de auditoría: quién hizo qué y cuándo (tabla audit_logs). */
 export interface AuditLog {
@@ -346,7 +355,15 @@ export interface AuditLog {
   entityType: AuditEntityType;
   entityId: string | null;
   summary: string;
+  /** Qué cambió en una edición (null si no es una edición o no hubo cambios). */
+  changes: AuditChange[] | null;
   createdAt: ISODateTime;
+}
+
+/** Una página de la auditoría. `nextCursor`: para "Cargar más" (null si no hay más). */
+export interface AuditLogPage<T extends AuditLog = AuditLog> {
+  entries: T[];
+  nextCursor: string | null;
 }
 
 /* -------------------------------------------------------- Historia clínica ---- */
@@ -635,6 +652,9 @@ export interface AdminUserSummary {
 
 export interface AdminAuditLog extends AuditLog {
   businessName: string | null;
+  /** Sólo en los eventos de sesión: desde dónde se conectó. */
+  ip: string | null;
+  userAgent: string | null;
 }
 
 /** Franja ocupada expuesta a la página pública: sin datos personales del cliente. */

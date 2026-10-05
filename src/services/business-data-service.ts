@@ -29,6 +29,15 @@ import type {
   Service,
 } from "../shared/types/index.ts";
 import { describeAppointment, logAudit } from "./audit.ts";
+import {
+  APPOINTMENT_FIELDS,
+  CLIENT_FIELDS,
+  SERVICE_FIELDS,
+  diffChanges,
+  scheduleChanges,
+  type AppointmentForAudit,
+  type ServiceForAudit,
+} from "./audit-changes.ts";
 import { authorize, parseInput, type RequestContext } from "./context.ts";
 import { notifyAppointmentChange } from "./notifications.ts";
 import { assertAppointmentLimit, assertClientLimit } from "./plan-limits.ts";
@@ -107,14 +116,7 @@ export const clientService = {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "clients.manage", { lock: true });
       const data = parseInput(clientSchema, input);
-      const current = await findOwned<Pick<Client, "documentId" | "email">>(
-        db,
-        "clients",
-        'document_id as "documentId", email',
-        businessId,
-        clientId,
-        "Cliente no encontrado.",
-      );
+      const current = await findOwned<Client>(db, "clients", clientColumns(), businessId, clientId, "Cliente no encontrado.");
       // Clientes antiguos sin cédula o sin email pueden seguir así hasta que se completen; una vez
       // puestos, no se quitan (el formulario del panel ya los exige al editar).
       if (!data.documentId && current.documentId) {
@@ -136,6 +138,7 @@ export const clientService = {
         entityType: "client",
         entityId: clientId,
         summary: `Actualizó el cliente ${client.name}`,
+        changes: diffChanges(current, client, CLIENT_FIELDS),
       });
       return client;
     });
@@ -236,14 +239,7 @@ export const serviceService = {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "services.manage", { lock: true });
       const data = parseInput(serviceSchema, input);
-      const before = await findOwned<Service>(
-        db,
-        "services",
-        'is_active as "isActive"',
-        businessId,
-        serviceId,
-        "Servicio no encontrado.",
-      );
+      const before = await findOwned<Service>(db, "services", serviceColumns(), businessId, serviceId, "Servicio no encontrado.");
       await assertServiceTemplate(db, businessId, data.clinicalTemplateId);
       const service = (await one<Service>(
         db,
@@ -269,7 +265,15 @@ export const serviceService = {
         before.isActive !== data.isActive
           ? `${data.isActive ? "Activó" : "Desactivó"} el servicio ${service.name}`
           : `Actualizó el servicio ${service.name}`;
-      await logAudit(db, { businessId, actor, action: "service.updated", entityType: "service", entityId: serviceId, summary });
+      await logAudit(db, {
+        businessId,
+        actor,
+        action: "service.updated",
+        entityType: "service",
+        entityId: serviceId,
+        summary,
+        changes: diffChanges(await serviceForAudit(db, before), await serviceForAudit(db, service), SERVICE_FIELDS),
+      });
       return service;
     });
   },
@@ -371,6 +375,36 @@ async function saveAppointment(db: Db, appointment: Appointment): Promise<Appoin
       homeVisitJson(appointment.homeVisit),
     ],
   ))!;
+}
+
+/** La cita con los nombres que muestra la auditoría. */
+async function appointmentForAudit(db: Db, appointment: Appointment): Promise<AppointmentForAudit> {
+  const names = await one<{ clientName: string | null; serviceName: string | null; professionalName: string | null }>(
+    db,
+    `select (select name from clients where id = $1) as "clientName",
+            (select name from services where id = $2) as "serviceName",
+            (select display_name from professionals where id = $3) as "professionalName"`,
+    [appointment.clientId, appointment.serviceId, appointment.professionalId],
+  );
+  return {
+    date: appointment.date,
+    time: formatTimeRange(appointment.startTime, appointment.endTime),
+    clientName: names?.clientName ?? "—",
+    serviceName: names?.serviceName ?? "—",
+    professionalName: names?.professionalName ?? "—",
+    status: appointment.status,
+    price: appointment.price,
+    notes: appointment.notes,
+    homeAddress: appointment.homeVisit?.address ?? null,
+  };
+}
+
+/** El servicio con el nombre de su formato de historia clínica. */
+async function serviceForAudit(db: Db, service: Service): Promise<ServiceForAudit> {
+  const template = service.clinicalTemplateId
+    ? await one<{ name: string }>(db, "select name from clinical_templates where id = $1", [service.clinicalTemplateId])
+    : null;
+  return { ...service, clinicalTemplateName: template?.name ?? null };
 }
 
 const STATUS_VERBS: Record<AppointmentStatus, string> = {
@@ -484,6 +518,7 @@ export const appointmentService = {
         summary: rescheduled
           ? `Reprogramó la cita de ${await describeAppointment(db, before)} al ${formatNumericDate(appointment.date)} ${appointment.startTime}`
           : `Editó la cita de ${await describeAppointment(db, appointment)}`,
+        changes: diffChanges(await appointmentForAudit(db, before), await appointmentForAudit(db, appointment), APPOINTMENT_FIELDS),
       });
       return appointment;
     });
@@ -513,6 +548,7 @@ export const appointmentService = {
         entityType: "appointment",
         entityId: appointment.id,
         summary: `${STATUS_VERBS[nextStatus]} la cita de ${await describeAppointment(db, appointment)}`,
+        changes: diffChanges(await appointmentForAudit(db, before), await appointmentForAudit(db, appointment), APPOINTMENT_FIELDS),
       });
       return appointment;
     });
@@ -540,6 +576,7 @@ export const scheduleService = {
       if (new Set(week.map((day) => day.dayOfWeek)).size !== week.length) {
         throw new AppError("validation", "Cada día de la semana sólo puede aparecer una vez.");
       }
+      const previousWeek = await listSchedules(db, businessId);
       await db.query("delete from schedules where business_id = $1", [businessId]);
       for (const day of week) {
         const intervals = [...day.intervals].sort((a, b) => a.start.localeCompare(b.start));
@@ -555,6 +592,7 @@ export const scheduleService = {
         entityType: "schedule",
         entityId: null,
         summary: "Actualizó el horario semanal",
+        changes: scheduleChanges(previousWeek, await listSchedules(db, businessId)),
       });
       return listSchedules(db, businessId);
     });

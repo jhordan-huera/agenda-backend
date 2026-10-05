@@ -3,11 +3,12 @@ import { userColumns } from "../db/columns.ts";
 import { one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
-import { formatSupportContact } from "../shared/lib/format.ts";
+import { formatSupportContact, getFullName } from "../shared/lib/format.ts";
 import { changePasswordSchema, loginSchema, registerSchema } from "../shared/lib/validations/auth.ts";
 import type { BusinessRole, BusinessStatus, PlatformRole, User } from "../shared/types/index.ts";
 import { hashPassword, verifyPassword } from "./accounts.ts";
-import { parseInput, requireUser, type RequestContext } from "./context.ts";
+import { logAudit } from "./audit.ts";
+import { parseInput, requireUser, type AuditActor, type RequestContext } from "./context.ts";
 import { queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
 
@@ -37,6 +38,43 @@ const sha256 = (value: string) => createHash("sha256").update(value).digest("hex
 
 /** Hash de referencia para que un email inexistente tarde lo mismo que una contraseña incorrecta. */
 const DUMMY_PASSWORD_HASH = await hashPassword(randomBytes(16).toString("hex"));
+
+const withoutPassword = ({ passwordHash: _, ...user }: User & { passwordHash: string }): User => user;
+
+/** Desde dónde se conecta (IP y navegador). Sólo se guarda en los eventos de sesión. */
+export interface ClientConnection {
+  ip: string;
+  userAgent: string | null;
+}
+
+/**
+ * Inicio y cierre de sesión e intentos fallidos, en la auditoría (entityType "session"). Sólo los
+ * ve el super admin; el cron avisa por ntfy si una cuenta acumula intentos fallidos.
+ */
+async function logSessionEvent(
+  user: User | null,
+  event: { action: string; summary: string; attemptedEmail?: string },
+  connection: ClientConnection,
+): Promise<void> {
+  const membership = user
+    ? await one<{ businessId: string }>(pool, 'select business_id as "businessId" from business_users where user_id = $1 limit 1', [
+        user.id,
+      ])
+    : null;
+  const actor: AuditActor | null = user
+    ? { userId: user.id, name: user.platformRole === "super_admin" ? `${getFullName(user)} (Super admin)` : getFullName(user) }
+    : null;
+  await logAudit(pool, {
+    businessId: membership?.businessId ?? null,
+    actor,
+    actorName: event.attemptedEmail?.slice(0, 120),
+    action: event.action,
+    entityType: "session",
+    entityId: user?.id ?? null,
+    summary: event.summary,
+    connection,
+  });
+}
 
 async function createSession(db: Db, userId: string, remember: boolean): Promise<IssuedSession> {
   const token = randomBytes(32).toString("base64url");
@@ -91,7 +129,7 @@ export const authService = {
     return ctx.user ? resolveSession(pool, ctx.user) : null;
   },
 
-  async signIn(input: unknown): Promise<{ session: Session; issued: IssuedSession }> {
+  async signIn(input: unknown, connection: ClientConnection): Promise<{ session: Session; issued: IssuedSession }> {
     const { email, password, remember } = parseInput(loginSchema, input);
     const row = await one<User & { passwordHash: string }>(
       pool,
@@ -99,13 +137,24 @@ export const authService = {
       [email],
     );
     const valid = await verifyPassword(password, row?.passwordHash ?? DUMMY_PASSWORD_HASH);
-    if (!row || !valid) throw new AppError("unauthorized", "Email o contraseña incorrectos.");
-    const { passwordHash: _, ...user } = row;
+    const user = row ? withoutPassword(row) : null;
+    if (!user || !valid) {
+      await logSessionEvent(
+        user,
+        user
+          ? { action: "session.login_failed", summary: "Intento de inicio de sesión fallido: contraseña incorrecta" }
+          : { action: "session.login_failed", summary: "Intento de inicio de sesión con un email no registrado", attemptedEmail: email },
+        connection,
+      );
+      throw new AppError("unauthorized", "Email o contraseña incorrectos.");
+    }
     if (!user.isActive) {
+      await logSessionEvent(user, { action: "session.login_blocked", summary: "Intento de inicio de sesión con la cuenta desactivada" }, connection);
       const supportContact = formatSupportContact(await getPlatformSettings(pool));
       throw new AppError("forbidden", `Tu cuenta está desactivada. Escribe a ${supportContact} para recuperar el acceso.`);
     }
     const issued = await createSession(pool, user.id, remember);
+    await logSessionEvent(user, { action: "session.login", summary: "Inició sesión" }, connection);
     return { session: (await resolveSession(pool, user))!, issued };
   },
 
@@ -135,8 +184,10 @@ export const authService = {
     });
   },
 
-  async signOut(ctx: RequestContext): Promise<void> {
-    if (ctx.sessionId) await pool.query("delete from sessions where id = $1", [ctx.sessionId]);
+  async signOut(ctx: RequestContext, connection: ClientConnection): Promise<void> {
+    if (!ctx.sessionId) return;
+    await pool.query("delete from sessions where id = $1", [ctx.sessionId]);
+    if (ctx.user) await logSessionEvent(ctx.user, { action: "session.logout", summary: "Cerró sesión" }, connection);
   },
 
   /**

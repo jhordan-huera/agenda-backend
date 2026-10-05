@@ -105,10 +105,20 @@ export const clinicalAttachmentService = {
   async downloadUrl(ctx: RequestContext, businessId: string, attachmentId: string): Promise<{ url: string }> {
     const storage = requireStorage();
     return transaction(async (db) => {
-      await authorizeClinical(db, ctx, businessId);
+      const actor = await authorizeClinical(db, ctx, businessId);
       const attachment = await findAttachment(db, businessId, attachmentId);
       if (attachment.status !== "ready") throw new AppError("not_found", "Archivo no encontrado.");
-      return { url: await storage.createDownloadUrl(attachment.storagePath, attachment.fileName) };
+      const url = await storage.createDownloadUrl(attachment.storagePath, attachment.fileName);
+      // Datos de salud: también queda quién abre cada archivo.
+      await logAudit(db, {
+        businessId,
+        actor,
+        action: "clinical_record.attachment_opened",
+        entityType: "clinical_record",
+        entityId: attachment.clientId,
+        summary: `Abrió el archivo «${attachment.fileName}» de la historia clínica de ${attachment.clientName}`,
+      });
+      return { url };
     });
   },
 };

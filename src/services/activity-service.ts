@@ -1,12 +1,89 @@
-import { auditLogColumns, notificationColumns } from "../db/columns.ts";
-import { isUuid, many, pool, transaction } from "../db/pool.ts";
-import type { AuditEntityType, AuditLog, EmailNotification } from "../shared/types/index.ts";
-import { authorize, type RequestContext } from "./context.ts";
-import { runReminderJob } from "./notifications.ts";
+import { z } from "zod";
+import { auditLogColumns, auditLogConnectionColumns, notificationColumns } from "../db/columns.ts";
+import { many, pool, type Db } from "../db/pool.ts";
+import type { AuditLog, AuditLogPage, EmailNotification } from "../shared/types/index.ts";
+import { authorize, parseInput, type RequestContext } from "./context.ts";
 
-export interface AuditLogFilters {
-  entityType?: AuditEntityType;
-  entityId?: string;
+const AUDIT_ENTITY_TYPES = [
+  "appointment",
+  "client",
+  "service",
+  "schedule",
+  "blocked_time",
+  "business",
+  "team",
+  "subscription",
+  "user",
+  "platform",
+  "clinical_record",
+  "session",
+] as const;
+
+/** Filtros de la auditoría (query string). Las fechas, en ISO 8601; `cursor`: id de la última entrada vista. */
+export const auditFiltersSchema = z.object({
+  entityType: z.enum(AUDIT_ENTITY_TYPES).optional(),
+  entityId: z.uuid().optional(),
+  /** Un usuario, "online" (reservas desde la página pública) o "support" (el super admin). */
+  actorId: z.union([z.uuid(), z.enum(["online", "support"])]).optional(),
+  action: z.string().trim().max(60).optional(),
+  from: z.iso.datetime({ offset: true }).optional(),
+  to: z.iso.datetime({ offset: true }).optional(),
+  q: z.string().trim().max(100).optional(),
+  cursor: z.uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(1000).default(50),
+});
+export type AuditFilters = z.infer<typeof auditFiltersSchema>;
+
+/** Sólo los parámetros con valor (la query string puede traer vacíos o repetidos). */
+export function parseAuditFilters(query: Record<string, unknown>): AuditFilters {
+  const clean = Object.fromEntries(Object.entries(query).filter(([, value]) => typeof value === "string" && value !== ""));
+  return parseInput(auditFiltersSchema, clean);
+}
+
+const escapeLike = (text: string) => text.replace(/[\\%_]/g, (char) => `\\${char}`);
+
+/**
+ * Una página de la auditoría, de la más reciente a la más antigua. `select` y `from` dicen qué
+ * columnas y tablas (alias `l` para audit_logs); `where`, las condiciones fijas de quien consulta.
+ */
+export async function queryAuditLogs<T extends AuditLog>(
+  db: Db,
+  query: { select: string; from: string; where: string[]; values: unknown[] },
+  filters: AuditFilters,
+): Promise<AuditLogPage<T>> {
+  const values = [...query.values];
+  const where = [...query.where];
+  const param = (value: unknown) => {
+    values.push(value);
+    return `$${values.length}`;
+  };
+  if (filters.entityType) where.push(`l.entity_type = ${param(filters.entityType)}`);
+  if (filters.entityId) where.push(`l.entity_id = ${param(filters.entityId)}::uuid`);
+  if (filters.actorId === "online") where.push("l.actor_id is null and l.entity_type <> 'session'");
+  else if (filters.actorId === "support") {
+    where.push("exists (select 1 from users u where u.id = l.actor_id and u.platform_role = 'super_admin')");
+  } else if (filters.actorId) where.push(`l.actor_id = ${param(filters.actorId)}::uuid`);
+  if (filters.action) where.push(`l.action = ${param(filters.action)}`);
+  if (filters.from) where.push(`l.created_at >= ${param(filters.from)}::timestamptz`);
+  if (filters.to) where.push(`l.created_at < ${param(filters.to)}::timestamptz`);
+  if (filters.q) {
+    const pattern = param(`%${escapeLike(filters.q)}%`);
+    where.push(`(l.summary ilike ${pattern} or l.actor_name ilike ${pattern})`);
+  }
+  // Por el id de la última entrada vista: compara con su fecha exacta (varias pueden compartir la misma).
+  if (filters.cursor) {
+    where.push(`(l.created_at, l.id) < (select c.created_at, c.id from audit_logs c where c.id = ${param(filters.cursor)}::uuid)`);
+  }
+  const rows = await many<T>(
+    db,
+    `select ${query.select} from ${query.from}
+      ${where.length ? `where ${where.join(" and ")}` : ""}
+      order by l.created_at desc, l.id desc
+      limit ${filters.limit + 1}`,
+    values,
+  );
+  const entries = rows.slice(0, filters.limit);
+  return { entries, nextCursor: rows.length > filters.limit ? entries[entries.length - 1].id : null };
 }
 
 export const notificationService = {
@@ -23,29 +100,31 @@ export const notificationService = {
       [businessId, ctx.user!.email],
     );
   },
-
-  /** Envía los recordatorios pendientes del negocio (el servidor también lo hace periódicamente). */
-  async runReminderJob(ctx: RequestContext, businessId: string): Promise<number> {
-    return transaction(async (db) => {
-      await authorize(db, ctx, businessId);
-      return runReminderJob(db, businessId);
-    });
-  },
 };
 
 export const auditLogService = {
-  async list(ctx: RequestContext, businessId: string, filters: AuditLogFilters = {}): Promise<AuditLog[]> {
+  /**
+   * Actividad del negocio. Sin los eventos de sesión (inicios de sesión, IP y navegador): ésos
+   * sólo los ve el super admin.
+   */
+  async list(ctx: RequestContext, businessId: string, query: Record<string, unknown>): Promise<AuditLogPage> {
     await authorize(pool, ctx, businessId, "audit.view");
-    if (filters.entityId && !isUuid(filters.entityId)) return [];
-    return many<AuditLog>(
+    const filters = parseAuditFilters(query);
+    return queryAuditLogs<AuditLog>(
       pool,
-      `select ${auditLogColumns()} from audit_logs
-        where business_id = $1
-          and ($2::text is null or entity_type = $2)
-          and ($3::uuid is null or entity_id = $3::uuid)
-        order by created_at desc
-        limit 200`,
-      [businessId, filters.entityType ?? null, filters.entityId ?? null],
+      {
+        select: auditLogColumns("l"),
+        from: "audit_logs l",
+        where: ["l.business_id = $1", "l.entity_type <> 'session'"],
+        values: [businessId],
+      },
+      filters,
     );
   },
+};
+
+/** Columnas de la vista del super admin: con el negocio y, en las sesiones, desde dónde. */
+export const ADMIN_AUDIT_QUERY = {
+  select: `${auditLogColumns("l")}, ${auditLogConnectionColumns("l")}, b.name as "businessName"`,
+  from: "audit_logs l left join businesses b on b.id = l.business_id",
 };

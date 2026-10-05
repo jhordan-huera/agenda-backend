@@ -78,6 +78,23 @@ ok(lastRun().report.sentSinceLastRun === 1, "cuenta los correos que la API envi√
 await runScript();
 ok(lastRun().report.sentSinceLastRun === 0, "y no los vuelve a contar", lastRun().report);
 
+console.log("Alerta de intentos fallidos");
+received.length = 0;
+for (let i = 0; i < 10; i++) {
+  await fetch(`${BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Requested-With": "fetch", "x-agendo-proxy-secret": PROXY_SECRET, "x-agendo-client-ip": `198.51.100.${i + 1}` },
+    body: JSON.stringify({ email: "ricardo@demo.com", password: `mala-${i}`, remember: false }),
+  });
+}
+run = await runScript();
+const alert = received.find((n) => /intentos de adivinar/.test(n.title));
+ok(alert && alert.priority === 4 && /ri\*\*\*@demo\.com: 10 intentos fallidos/.test(alert.message), "10 intentos fallidos en una hora: aviso por ntfy con el email enmascarado", alert);
+ok(!/@/.test(run.output) && /alertas de seguridad: 1/.test(run.output), "el registro p√∫blico no muestra la cuenta", run.output.slice(-400));
+received.length = 0;
+await runScript();
+ok(!received.some((n) => /intentos de adivinar/.test(n.title)), "sin intentos nuevos no repite la alerta", received);
+
 received.length = 0;
 run = await runScript({ DATABASE_URL: "" });
 ok(run.code === 1 && received.length === 1 && received[0].priority === 5 && /DATABASE_URL/.test(received[0].message), "sin base de datos: aviso urgente y el job falla", received[0]);

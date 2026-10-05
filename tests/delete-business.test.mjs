@@ -106,7 +106,7 @@ ok((await ricardo("GET", "/auth/session")).body === null && (await elena("GET", 
 ok((await login("ricardo@demo.com")).session?.error?.code !== undefined, "ya no pueden iniciar sesión");
 ok((await admin("GET", `/admin/businesses/${id}`)).body === null, "la ficha ya no existe");
 ok((await agent()("GET", `/public/businesses/${slug}`)).body === null, "su página de reservas tampoco");
-const logs = (await admin("GET", "/admin/audit-logs?scope=admin")).body;
+const logs = (await admin("GET", "/admin/audit-logs?scope=admin")).body.entries;
 ok(logs.some((l) => l.action === "platform.business_deleted" && l.summary.includes(name) && /2 cuentas/.test(l.summary)), "queda en la actividad de la plataforma", logs.slice(0, 2));
 r = await admin("DELETE", `/admin/businesses/${id}`, { confirmName: name });
 ok(r.status === 404, "eliminarlo otra vez → 404", r.body);

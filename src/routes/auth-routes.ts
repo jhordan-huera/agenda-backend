@@ -1,10 +1,14 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
+import { clientIp } from "../http/client-ip.ts";
 import { handle, limitRequests } from "../http/handlers.ts";
 import { clearSessionCookie, setSessionCookie } from "../http/session.ts";
 import { authService } from "../services/auth-service.ts";
 
 /** /api/auth: sesión con cookie httpOnly (ver src/http/session.ts). */
 export const authRoutes = Router();
+
+/** IP y navegador del visitante: quedan en la auditoría de las sesiones. */
+const connectionOf = (req: Request) => ({ ip: clientIp(req), userAgent: req.get("user-agent") ?? null });
 
 const loginLimit = limitRequests({
   windowMinutes: 15,
@@ -23,7 +27,7 @@ authRoutes.get(
 );
 
 authRoutes.post("/login", loginLimit, async (req, res) => {
-  const { session, issued } = await authService.signIn(req.body);
+  const { session, issued } = await authService.signIn(req.body, connectionOf(req));
   setSessionCookie(res, issued);
   res.json(session);
 });
@@ -35,7 +39,7 @@ authRoutes.post("/register", signupLimit, async (req, res) => {
 });
 
 authRoutes.post("/logout", async (req, res) => {
-  await authService.signOut(req.ctx);
+  await authService.signOut(req.ctx, connectionOf(req));
   clearSessionCookie(res);
   res.status(204).end();
 });

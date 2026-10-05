@@ -155,8 +155,8 @@ put = await fetch(ORIGIN + upload.url, { method: "PUT", headers: upload.headers,
 ok(put.status === 200, "el navegador sube el archivo", put.status);
 put = await fetch(ORIGIN + upload.url, { method: "PUT", headers: upload.headers, body: pdf });
 ok(put.status === 409, "no se puede sobrescribir", put.status);
-// Cambia el último carácter de la firma (si ya era "x", por "y": si no, el enlace seguiría siendo válido).
-put = await fetch(ORIGIN + upload.url.replace(/.$/, (c) => (c === "x" ? "y" : "x")), { method: "PUT", headers: upload.headers, body: pdf });
+// Cambia el primer carácter de la firma (el último no sirve: en base64 sus bits sobrantes se ignoran).
+put = await fetch(ORIGIN + upload.url.replace(/\.(.)/, (_, c) => `.${c === "A" ? "B" : "A"}`), { method: "PUT", headers: upload.headers, body: pdf });
 ok(put.status === 403, "un enlace manipulado → 403", put.status);
 r = await ricardo("POST", `${B}/clinical-attachments/${attachment.id}/complete`);
 ok(r.status === 200 && r.body.sizeBytes === pdf.length && r.body.fileName === "Radiografía panorámica.pdf", "queda subido con su tamaño real", r.body);
@@ -182,8 +182,9 @@ await fetch(ORIGIN + r.body.upload.url, { method: "PUT", headers: r.body.upload.
 await ricardo("POST", `${B}/clinical-attachments/${r.body.attachment.id}/complete`);
 r = await ricardo("DELETE", `${B}/clients/${other.id}`);
 ok(r.status === 409, "un paciente con archivos no se puede eliminar", r.body);
-const logs = (await ricardo("GET", `${B}/audit-logs?entityType=clinical_record&entityId=${patient.id}`)).body;
+const logs = (await ricardo("GET", `${B}/audit-logs?entityType=clinical_record&entityId=${patient.id}`)).body.entries;
 ok(logs.some((l) => l.action === "clinical_record.attachment_added" && /Radiografía panorámica/.test(l.summary)), "queda en la auditoría", logs.map((l) => l.summary));
+ok(logs.some((l) => l.action === "clinical_record.attachment_opened" && /Radiografía panorámica/.test(l.summary) && l.actorName === "Elena Suárez"), "y también quién abrió el archivo", logs.map((l) => l.summary));
 
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de formatos propios y archivos pasaron");
 process.exitCode = failures ? 1 : 0;

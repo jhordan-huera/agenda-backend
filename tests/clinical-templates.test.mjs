@@ -167,7 +167,7 @@ const versionError = (() => {
 ok(versionError && /no se modifica/.test(versionError), "una versión de plantilla no se puede modificar", versionError);
 
 console.log("Auditoría");
-const logs = (await ricardo("GET", `${B}/audit-logs?entityType=clinical_record&entityId=${patient.id}`)).body;
+const logs = (await ricardo("GET", `${B}/audit-logs?entityType=clinical_record&entityId=${patient.id}`)).body.entries;
 ok(logs.some((l) => l.action === "clinical_record.note_added" && /Atención médica/.test(l.summary)), "el registro indica la plantilla", logs.map((l) => l.summary));
 
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de plantillas clínicas pasaron");

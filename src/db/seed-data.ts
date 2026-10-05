@@ -72,7 +72,7 @@ export interface SeedDatabase {
   schedules: Schedule[];
   blockedTimes: BlockedTime[];
   notifications: never[];
-  auditLogs: AuditLog[];
+  auditLogs: Omit<AuditLog, "changes">[];
   clinicalProfiles: ClinicalProfile[];
   clinicalNotes: ClinicalNote[];
 }

@@ -34,6 +34,7 @@ import type {
   AdminPlanRequest,
   AdminUserSummary,
   AuditLog,
+  AuditLogPage,
   Business,
   BusinessRole,
   BusinessStatus,
@@ -47,6 +48,7 @@ import type {
   User,
 } from "../shared/types/index.ts";
 import { createUserAccount, hashPassword, isEmailRegistered } from "./accounts.ts";
+import { ADMIN_AUDIT_QUERY, parseAuditFilters, queryAuditLogs } from "./activity-service.ts";
 import { findTeamMember, listTeamMembers } from "./account-service.ts";
 import { logAudit } from "./audit.ts";
 import { insertBusiness, isSlugTaken } from "./business-factory.ts";
@@ -229,7 +231,10 @@ export const adminService = {
       members: await listTeamMembers(pool, businessId),
       recentActivity: await many<AuditLog>(
         pool,
-        `select ${auditLogColumns()} from audit_logs where business_id = $1 order by created_at desc limit 15`,
+        `select ${auditLogColumns()} from audit_logs
+          where business_id = $1 and entity_type <> 'session'
+          order by created_at desc, id desc
+          limit 15`,
         [businessId],
       ),
     };
@@ -634,18 +639,24 @@ export const adminService = {
     });
   },
 
-  async listAuditLogs(ctx: RequestContext, scope: unknown): Promise<AdminAuditLog[]> {
+  /**
+   * Auditoría de toda la plataforma. `scope`: "admin" (acciones del super admin), "security"
+   * (inicios de sesión, intentos fallidos y cierres, con IP y navegador) o "all".
+   */
+  async listAuditLogs(ctx: RequestContext, query: Record<string, unknown>): Promise<AuditLogPage<AdminAuditLog>> {
     authorizeSuperAdmin(ctx);
-    const onlyAdmin = parseInput(z.enum(["admin", "all"]), scope) === "admin";
-    return many<AdminAuditLog>(
-      pool,
-      `select ${auditLogColumns("l")}, b.name as "businessName"
-         from audit_logs l left join businesses b on b.id = l.business_id
-        where not $1 or l.action like 'platform.%'
-        order by l.created_at desc
-        limit 200`,
-      [onlyAdmin],
-    );
+    const { scope = "all", businessId, ...rest } = query;
+    const where: string[] = [];
+    const values: unknown[] = [];
+    const selected = parseInput(z.enum(["admin", "security", "all"]), scope);
+    if (selected === "admin") where.push("l.action like 'platform.%'");
+    if (selected === "security") where.push("l.entity_type = 'session'");
+    if (typeof businessId === "string" && businessId) {
+      if (!isUuid(businessId)) throw new AppError("validation", "Negocio no válido.");
+      values.push(businessId);
+      where.push(`l.business_id = $${values.length}`);
+    }
+    return queryAuditLogs<AdminAuditLog>(pool, { ...ADMIN_AUDIT_QUERY, where, values }, parseAuditFilters(rest));
   },
 
   /** Todos los emails de la plataforma (bandeja de salida global). */

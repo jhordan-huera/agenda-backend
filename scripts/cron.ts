@@ -82,9 +82,25 @@ export function buildNotice(report: ScheduledTasksReport, options: { gmailConfig
   return null;
 }
 
+/** Alerta de seguridad: cuentas con muchos intentos fallidos de inicio de sesión. */
+export function buildSecurityNotice(report: ScheduledTasksReport): Notice | null {
+  if (report.security.length === 0) return null;
+  return {
+    title: "Agenda360: posibles intentos de adivinar contraseñas",
+    message: [
+      ...report.security.map((alert) => `• ${alert.account}: ${alert.attempts} intentos fallidos en la última hora`),
+      "",
+      "Revisa Actividad → Seguridad en el panel de plataforma.",
+    ].join("\n"),
+    priority: 4,
+    tags: ["lock"],
+  };
+}
+
 async function notify(notice: Notice): Promise<void> {
   const topic = env("NTFY_TOPIC");
-  console.info(`[ntfy] ${notice.title}\n${notice.message}`);
+  // Sólo el título: el registro de Actions es público y el mensaje puede llevar cuentas.
+  console.info(`[ntfy] ${notice.title}`);
   if (!topic) {
     console.warn("Sin NTFY_TOPIC: el aviso sólo queda en este registro.");
     return;
@@ -151,11 +167,14 @@ async function main(): Promise<void> {
 
     console.info(
       `Recordatorios: ${report.reminders} · enviados desde la anterior: ${report.sentSinceLastRun} · ` +
-        `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ${report.durationMs} ms`,
+        `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +
+        `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ${report.durationMs} ms`,
     );
-    const notice = buildNotice(report, { gmailConfigured: Boolean(config.gmail) });
-    if (notice) await notify(notice);
-    else console.info("Sin correos ni errores: no se envía aviso.");
+    const notices = [buildNotice(report, { gmailConfigured: Boolean(config.gmail) }), buildSecurityNotice(report)].filter(
+      (notice) => notice !== null,
+    );
+    for (const notice of notices) await notify(notice);
+    if (notices.length === 0) console.info("Sin correos, errores ni alertas: no se envía aviso.");
   } finally {
     await pool.end().catch(() => undefined);
   }

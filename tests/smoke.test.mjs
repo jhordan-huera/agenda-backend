@@ -116,7 +116,7 @@ const types = r.body.map((n) => n.type);
 ok(types.includes("appointment_confirmed") && types.includes("appointment_updated") && types.includes("appointment_cancelled"), "emails de cita en la bandeja", types.slice(0, 6));
 ok(r.body.every((n) => n.status === "queued" || n.status === "sent" || n.status === "failed") && "to" in r.body[0], "bandeja con estado y destinatario", r.body[0]);
 r = await owner("GET", `${B}/audit-logs?entityType=appointment&entityId=${appointmentId}`);
-ok(r.body.length >= 3 && r.body.some((l) => l.action === "appointment.rescheduled"), "auditoría de la cita", r.body.map((l) => l.action));
+ok(r.body.entries.length >= 3 && r.body.entries.some((l) => l.action === "appointment.rescheduled"), "auditoría de la cita", r.body.entries?.map((l) => l.action));
 
 console.log("Horario y bloqueos");
 r = await owner("GET", `${B}/schedules`);
@@ -136,7 +136,7 @@ ok(r.status === 409, "slug en uso → 409", r.body);
 r = await owner("GET", `/businesses/slug-availability?slug=nuevo-slug-libre&exclude=${businessId}`);
 ok(r.body?.available === true, "slug disponible");
 r = await owner("POST", `${B}/notifications/reminders`);
-ok(r.status === 200 && typeof r.body.sent === "number", "recordatorios manuales", r.body);
+ok(r.status === 404, "los recordatorios ya no se piden desde el panel (los envía el cron)", r.body);
 
 console.log("Aislamiento entre negocios y roles");
 const laura = agent();
@@ -245,7 +245,7 @@ ok(r.status === 403 && /desactivada/.test(r.body.error.message), "usuario desact
 r = await admin("PUT", `/admin/users/${pedro.user.id}/password`, { password: "PedroNueva1" });
 ok(r.status === 204, "poner contraseña a un usuario", r.body);
 r = await admin("GET", "/admin/audit-logs?scope=admin");
-ok(r.body.length > 0 && r.body.every((l) => l.action.startsWith("platform.")), "auditoría de plataforma", r.body?.[0]);
+ok(r.body.entries.length > 0 && r.body.entries.every((l) => l.action.startsWith("platform.")), "auditoría de plataforma", r.body?.entries?.[0]);
 r = await admin("GET", "/admin/emails");
 ok(r.status === 200 && r.body.length > 0, "todos los emails", r.body?.length);
 r = await admin("PUT", "/admin/settings", { allowPublicSignup: false, supportEmail: "ayuda@example.com", supportPhone: "099 406 0669" });

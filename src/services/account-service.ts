@@ -35,6 +35,7 @@ import type {
   User,
 } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
+import { businessChanges, type BusinessForAudit } from "./audit-changes.ts";
 import { insertBusiness, isSlugTaken, uniqueSlug } from "./business-factory.ts";
 import { requireAssignableCategory } from "./category-service.ts";
 import { authorize, parseInput, requireUser, type RequestContext } from "./context.ts";
@@ -132,6 +133,16 @@ const BUSINESS_PROFILE_COLUMNS: Record<string, string> = {
   logoUrl: "logo_url",
 };
 
+/** El negocio con el nombre de su categoría y el punto del mapa, para la auditoría. */
+async function businessForAudit(db: Db, business: Business): Promise<BusinessForAudit> {
+  const category = await one<{ name: string }>(db, "select name from business_categories where id = $1", [business.category]);
+  return {
+    ...business,
+    categoryName: category?.name ?? business.category,
+    location: business.lat === null || business.lng === null ? null : `${business.lat},${business.lng}`,
+  };
+}
+
 export const businessService = {
   async getById(ctx: RequestContext, businessId: string): Promise<Business | null> {
     await authorize(pool, ctx, businessId);
@@ -199,6 +210,7 @@ export const businessService = {
 
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "business.manage", { lock: true });
+      const previous = await one<Business>(db, `select ${businessColumns()} from businesses where id = $1`, [businessId]);
       if (profileData.category) {
         const current = await one<{ category: string }>(db, "select category from businesses where id = $1", [businessId]);
         // La categoría sólo la cambia el super admin (desde /admin o en modo soporte).
@@ -259,6 +271,7 @@ export const businessService = {
         entityType: "business",
         entityId: businessId,
         summary: `Actualizó ${section}`,
+        changes: previous ? businessChanges(await businessForAudit(db, previous), await businessForAudit(db, business)) : null,
       });
       return business;
     });

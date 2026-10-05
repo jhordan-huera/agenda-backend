@@ -147,7 +147,14 @@ export const auditLogColumns = columns({
   entityType: "entity_type",
   entityId: "entity_id",
   summary: "summary",
+  changes: "changes",
   createdAt: "created_at",
+});
+
+/** Desde dónde (sólo eventos de sesión). Sólo para el super admin. */
+export const auditLogConnectionColumns = columns({
+  ip: "ip",
+  userAgent: "user_agent",
 });
 
 export const teamMemberColumns = (membership: string, user: string) =>

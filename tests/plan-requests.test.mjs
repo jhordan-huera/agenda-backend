@@ -71,7 +71,7 @@ r = await admin("POST", `/admin/plan-requests/${requestId}/approve`);
 ok(r.status === 409, "no se aprueba dos veces", r.body);
 emails = (await admin("GET", "/admin/emails")).body;
 ok(emails.some((e) => e.type === "plan_change_approved" && e.to === "jhordan@demo.com" && /Business/.test(e.body)), "email de aprobación al propietario");
-const history = (await owner("GET", `${B}/audit-logs?entityType=subscription`)).body.map((l) => l.action);
+const history = (await owner("GET", `${B}/audit-logs?entityType=subscription`)).body.entries.map((l) => l.action);
 ok(history.includes("subscription.plan_change_requested") && history.includes("platform.plan_change_approved"), "historial del plan", history);
 
 console.log("Rechazar y cancelar");

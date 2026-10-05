@@ -12,7 +12,6 @@ import {
   scheduleService,
   serviceService,
 } from "../services/business-data-service.ts";
-import type { AuditEntityType } from "../shared/types/index.ts";
 
 /* ------------------------------------------------------------ /api/users ---- */
 
@@ -242,16 +241,7 @@ businessRoutes.get(
   "/:businessId/notifications",
   handle((req) => notificationService.list(req.ctx, req.params.businessId)),
 );
-businessRoutes.post(
-  "/:businessId/notifications/reminders",
-  handle(async (req) => ({ sent: await notificationService.runReminderJob(req.ctx, req.params.businessId) })),
-);
 businessRoutes.get(
   "/:businessId/audit-logs",
-  handle((req) =>
-    auditLogService.list(req.ctx, req.params.businessId, {
-      entityType: queryParam(req, "entityType") as AuditEntityType | undefined,
-      entityId: queryParam(req, "entityId"),
-    }),
-  ),
+  handle((req) => auditLogService.list(req.ctx, req.params.businessId, req.query)),
 );

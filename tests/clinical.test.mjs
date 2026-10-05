@@ -98,7 +98,7 @@ r = await elena("GET", `${B}/clients/${patient.id}/clinical-record`);
 ok(r.status === 403, "al retirar el permiso deja de verla", r.status);
 
 console.log("Auditoría");
-const logs = (await ricardo("GET", `${B}/audit-logs?entityType=clinical_record&entityId=${patient.id}`)).body;
+const logs = (await ricardo("GET", `${B}/audit-logs?entityType=clinical_record&entityId=${patient.id}`)).body.entries;
 const views = logs.filter((l) => l.action === "clinical_record.viewed");
 ok(views.length === 3 && views.some((l) => /\(Super admin\)/.test(l.actorName)), "cada persona queda registrada una vez al consultar (Ricardo, Elena y el super admin)", views.map((l) => l.actorName));
 ok(["clinical_record.profile_updated", "clinical_record.note_added", "clinical_record.addendum_added"].every((a) => logs.some((l) => l.action === a)), "cambios registrados", logs.map((l) => l.action));

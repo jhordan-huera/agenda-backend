@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { handle, limitRequests, queryParam } from "../http/handlers.ts";
+import { handle, limitRequests } from "../http/handlers.ts";
 import { adminService, platformService } from "../services/admin-service.ts";
 import { categoryService } from "../services/category-service.ts";
 import { publicBookingService } from "../services/public-booking-service.ts";
@@ -121,7 +121,7 @@ adminRoutes.put(
 );
 adminRoutes.get(
   "/audit-logs",
-  handle((req) => adminService.listAuditLogs(req.ctx, queryParam(req, "scope") ?? "all")),
+  handle((req) => adminService.listAuditLogs(req.ctx, req.query)),
 );
 adminRoutes.get(
   "/emails",
