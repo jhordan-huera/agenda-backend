@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.ts";
 
@@ -21,6 +21,8 @@ export interface FileStorage {
   createDownloadUrl(objectPath: string, fileName: string): Promise<string>;
   /** Tamaño del archivo subido, o null si no existe. */
   sizeOf(objectPath: string): Promise<number | null>;
+  /** Borra los archivos (los que no existan se ignoran). */
+  remove(objectPaths: string[]): Promise<void>;
 }
 
 const UPLOAD_URL_SECONDS = 10 * 60;
@@ -83,6 +85,12 @@ function supabaseStorage(baseUrl: string, key: string, bucket: string): FileStor
       });
       const found = objects.find((object) => object.name === name);
       return found ? (found.metadata?.size ?? null) : null;
+    },
+    async remove(objectPaths) {
+      // Hasta 1.000 archivos por petición.
+      for (let i = 0; i < objectPaths.length; i += 1000) {
+        await request("DELETE", `/object/${bucket}`, { prefixes: objectPaths.slice(i, i + 1000) });
+      }
     },
   };
 }
@@ -149,6 +157,9 @@ const localStorage: FileStorage = {
       (info) => info.size,
       () => null,
     );
+  },
+  async remove(objectPaths) {
+    await Promise.all(objectPaths.map((objectPath) => rm(localFilePath(objectPath), { force: true })));
   },
 };
 

@@ -63,6 +63,10 @@ adminRoutes.get(
   "/businesses/:businessId",
   handle((req) => adminService.getBusiness(req.ctx, req.params.businessId)),
 );
+adminRoutes.delete(
+  "/businesses/:businessId",
+  handle((req) => adminService.deleteBusiness(req.ctx, req.params.businessId, req.body)),
+);
 adminRoutes.post(
   "/businesses/:businessId/members",
   handle((req) => adminService.addBusinessMember(req.ctx, req.params.businessId, req.body)),

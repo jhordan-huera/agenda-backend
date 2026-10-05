@@ -13,13 +13,15 @@ import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { DEFAULT_WEEKLY_SCHEDULE } from "../shared/lib/constants/business.ts";
 import { PLANS, getPlan } from "../shared/lib/constants/plans.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
-import { getFullName } from "../shared/lib/format.ts";
+import { getFullName, plural } from "../shared/lib/format.ts";
 import { ROLE_LABELS } from "../shared/lib/permissions.ts";
 import { getZonedNow } from "../shared/lib/time.ts";
 import {
   adminBusinessSchema,
   adminMemberSchema,
+  businessDeletionSchema,
   businessStatusSchema,
+  isSameBusinessName,
   planIdSchema,
   planRejectionSchema,
   platformSettingsSchema,
@@ -50,6 +52,7 @@ import { logAudit } from "./audit.ts";
 import { insertBusiness, isSlugTaken } from "./business-factory.ts";
 import { requireAssignableCategory } from "./category-service.ts";
 import { authorizeSuperAdmin, parseInput, type RequestContext } from "./context.ts";
+import { fileStorage } from "./file-storage.ts";
 import { appOrigin, queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
 import { assertUserLimit } from "./plan-limits.ts";
@@ -360,6 +363,65 @@ export const adminService = {
       });
       return business;
     });
+  },
+
+  /**
+   * Elimina el negocio para siempre con todos sus datos (citas, clientes, historias clínicas y
+   * archivos) y las cuentas de su equipo, que sólo pertenecían a él. Hay que escribir su nombre.
+   */
+  async deleteBusiness(ctx: RequestContext, businessId: string, input: unknown): Promise<void> {
+    const actor = authorizeSuperAdmin(ctx);
+    const { confirmName } = parseInput(businessDeletionSchema, input);
+    const files = await transaction(async (db) => {
+      const business = await findBusiness(db, businessId);
+      if (!isSameBusinessName(confirmName, business.name)) {
+        throw new AppError("validation", `El nombre no coincide. Escribe «${business.name}» para confirmar.`);
+      }
+      // Mientras se borra, nadie puede reservar ni crear nada en el negocio.
+      await db.query("select 1 from businesses where id = $1 for update", [businessId]);
+      const files = await many<{ storagePath: string }>(
+        db,
+        `select storage_path as "storagePath" from clinical_attachments where business_id = $1`,
+        [businessId],
+      );
+      const members = await many<{ id: string }>(db, "select user_id as id from business_users where business_id = $1", [businessId]);
+
+      // Antes que el negocio, lo que frenaría la cascada: la historia clínica (sus triggers impiden
+      // modificarla, y borrar una cita le pondría appointment_id a null) y las citas (sus
+      // servicios y profesionales no se pueden borrar mientras existan).
+      for (const table of ["clinical_notes", "clinical_attachments", "clinical_profiles", "appointments"]) {
+        await db.query(`delete from ${table} where business_id = $1`, [businessId]);
+      }
+      await db.query("delete from businesses where id = $1", [businessId]); // El resto cae en cascada.
+      const accounts = await many<{ id: string }>(
+        db,
+        `delete from users u
+          where u.id = any($1::uuid[]) and u.platform_role is null
+            and not exists (select 1 from business_users bu where bu.user_id = u.id)
+            and not exists (select 1 from businesses b where b.owner_id = u.id)
+          returning u.id`,
+        [members.map((member) => member.id)],
+      );
+
+      await logAudit(db, {
+        businessId: null,
+        actor,
+        action: "platform.business_deleted",
+        entityType: "business",
+        entityId: businessId,
+        summary: `Eliminó el negocio ${business.name} (/book/${business.slug})${
+          accounts.length ? ` y ${plural(accounts.length, "cuenta", "cuentas")} de su equipo` : ""
+        }`,
+      });
+      return files;
+    });
+
+    // Los archivos, una vez confirmado el borrado. Si falla, quedan sin ningún registro que los enlace.
+    if (files.length && fileStorage) {
+      await fileStorage
+        .remove(files.map((file) => file.storagePath))
+        .catch((error: unknown) => console.error("No se pudieron borrar los archivos del negocio eliminado:", error));
+    }
   },
 
   /** Cambio de plan desde el panel de plataforma: se aplica y se avisa al propietario por email. */
