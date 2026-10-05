@@ -69,13 +69,23 @@ ok(r.status === 200 && r.body.birthDate === "1990-05-17" && r.body.consentDate =
 const appts = (await ricardo("GET", `${B}/appointments?clientId=${patient.id}`)).body;
 const other = clients.find((c) => c.id !== patient.id);
 const otherAppt = (await ricardo("GET", `${B}/appointments?clientId=${other.id}`)).body[0];
-const note = { appointmentId: null, date: "2026-10-04", reason: "Dolor en muela", findings: "Caries", diagnosis: "K02", treatment: "Obturación", indications: "", nextControl: "1 mes" };
+const templates = (await ricardo("GET", `${B}/clinical-templates`)).body;
+const general = templates.find((t) => t.id === "evolucion-general");
+const note = {
+  appointmentId: null,
+  templateVersionId: general.versionId,
+  data: { reason: "Dolor en muela", findings: "Caries", diagnosis: "K02", treatment: "Obturación", indications: "", next_control: "1 mes" },
+};
 if (otherAppt) {
   r = await ricardo("POST", `${B}/clients/${patient.id}/clinical-record/notes`, { ...note, appointmentId: otherAppt.id });
   ok(r.status === 400 && /otro paciente/.test(r.body.error.message), "no se une a la cita de otro paciente", r.body);
 }
 r = await ricardo("POST", `${B}/clients/${patient.id}/clinical-record/notes`, { ...note, appointmentId: appts[0]?.id ?? null });
-ok(r.status === 200 && r.body.reason === "Dolor en muela" && r.body.addenda.length === 0, "registrar evolución", r.body);
+ok(
+  r.status === 200 && r.body.data.reason === "Dolor en muela" && r.body.templateVersionId === general.versionId && !("indications" in r.body.data) && r.body.addenda.length === 0,
+  "registrar evolución (sin guardar campos vacíos)",
+  r.body,
+);
 const noteId = r.body.id;
 r = await elena("POST", `${B}/clinical-notes/${noteId}/addenda`, { text: "Paciente refiere mejoría." });
 ok(r.status === 200 && r.body.addenda.length === 1 && /Elena/.test(r.body.addenda[0].authorName), "añadir aclaración (staff autorizado)", r.body);

@@ -30,6 +30,7 @@ import type {
   BusinessUser,
   Client,
   ClinicalNote,
+  ClinicalNoteData,
   ClinicalProfile,
   DayOfWeek,
   HomeVisitAddress,
@@ -657,21 +658,111 @@ function seedTenant(
   seedClinicalRecords(db, tenant, { businessId, ownerId: userId, ownerName: ownerActor.name, clients });
 }
 
-/** Ejemplos de historia clínica por especialidad: [motivo, hallazgos, diagnóstico, tratamiento, indicaciones]. */
-const CLINICAL_SAMPLES: Partial<Record<BusinessCategory, [string, string, string, string, string][]>> = {
+/**
+ * Ejemplos de historia clínica por especialidad, con la plantilla de cada una (migración 009).
+ * El primero va en la cita completada más reciente. seed.ts cambia el id de plantilla por el de
+ * su versión vigente.
+ */
+const CLINICAL_SAMPLES: Partial<Record<BusinessCategory, { templateId: string; data: ClinicalNoteData }[]>> = {
   dentistry: [
-    ["Dolor en molar inferior derecho al masticar.", "Caries profunda en pieza 46, sin afectación pulpar.", "Caries dentinaria pieza 46.", "Restauración con resina compuesta.", "Evitar alimentos muy fríos 48 h. Cepillado 3 veces al día."],
-    ["Control y limpieza semestral.", "Placa bacteriana moderada, encías sanas.", "Gingivitis leve.", "Profilaxis y pulido.", "Uso de hilo dental diario."],
+    {
+      templateId: "odontologia-consulta",
+      data: {
+        reason: "Dolor en molar inferior derecho al masticar.",
+        pain: 6,
+        intraoral: "Caries profunda en pieza 46, sin afectación pulpar.",
+        procedures: [{ tooth: "46", surface: "O", procedure: "Restauración con resina compuesta", notes: "" }],
+        anesthesia: "Lidocaína 2 % · 1 cartucho",
+        diagnoses: [{ description: "Caries de la dentina", cie10: "K02.1" }],
+        indications: "Evitar alimentos muy fríos 48 h. Cepillado 3 veces al día.",
+        next_control: "En 6 meses",
+      },
+    },
+    {
+      templateId: "odontologia-consulta",
+      data: {
+        reason: "Control y limpieza semestral.",
+        intraoral: "Placa bacteriana moderada, encías sanas.",
+        procedures: [{ tooth: "", surface: "", procedure: "Profilaxis y pulido", notes: "" }],
+        diagnoses: [{ description: "Gingivitis leve", cie10: "K05.1" }],
+        indications: "Uso de hilo dental diario.",
+      },
+    },
   ],
   physiotherapy: [
-    ["Dolor lumbar tras levantar peso.", "Contractura paravertebral lumbar, EVA 7/10.", "Lumbalgia mecánica.", "Terapia manual, TENS y ejercicios de estabilización.", "Calor local 20 min dos veces al día. Evitar cargas."],
-    ["Control de lumbalgia.", "Mejoría, EVA 3/10. Movilidad completa.", "Lumbalgia mecánica en remisión.", "Ejercicios de core progresivos.", "Continuar ejercicios en casa 3 veces por semana."],
+    {
+      templateId: "fisioterapia-sesion",
+      data: {
+        area: "Zona lumbar",
+        session_number: 4,
+        pain_before: 3,
+        pain_after: 2,
+        assessment: "Mejoría notable. Movilidad completa.",
+        treatment: [{ technique: "Plancha", sets: 3, reps: "30 s", notes: "" }],
+        home_exercises: "Continuar ejercicios de core 3 veces por semana.",
+        next_session: "En 15 días",
+      },
+    },
+    {
+      templateId: "fisioterapia-sesion",
+      data: {
+        area: "Zona lumbar",
+        session_number: 1,
+        pain_before: 7,
+        pain_after: 5,
+        assessment: "Contractura paravertebral lumbar tras levantar peso. Flexión de tronco limitada.",
+        treatment: [
+          { technique: "Terapia manual", sets: null, reps: "15 min", notes: "" },
+          { technique: "TENS", sets: null, reps: "20 min", notes: "" },
+          { technique: "Puente glúteo", sets: 3, reps: "10", notes: "" },
+        ],
+        home_exercises: "Calor local 20 min dos veces al día. Evitar cargas.",
+      },
+    },
   ],
   nutrition: [
-    ["Desea bajar de peso.", "Peso 82 kg, talla 1,65 m, IMC 30,1.", "Obesidad grado I.", "Plan de alimentación de 1.600 kcal.", "Registrar comidas en un diario. Caminar 30 min diarios."],
+    {
+      templateId: "nutricion-control",
+      data: {
+        reason: "Desea bajar de peso.",
+        weight: 82,
+        height: 165,
+        body_fat: 34.5,
+        waist: 98,
+        physical_activity: "Sedentaria",
+        water: 4,
+        nutritional_diagnosis: "Obesidad grado I.",
+        meal_plan: "Plan de alimentación de 1.600 kcal.",
+        indications: "Registrar comidas en un diario. Caminar 30 min diarios.",
+        next_control: "En 15 días",
+      },
+    },
   ],
   psychology: [
-    ["Ansiedad por carga laboral.", "Insomnio de conciliación, preocupación constante.", "Trastorno de ansiedad generalizada (en estudio).", "Terapia cognitivo-conductual, técnicas de respiración.", "Registro de pensamientos diario."],
+    {
+      templateId: "psicologia-sesion",
+      data: {
+        topic: "Registro de pensamientos",
+        mood: 6,
+        dap_data: "Refiere mejor descanso; dos episodios de preocupación intensa en la semana.",
+        dap_assessment: "Identifica pensamientos catastróficos con ayuda.",
+        dap_plan: "Reestructuración cognitiva.",
+        risk: "Sin riesgo aparente",
+        homework: "Registro de pensamientos diario.",
+        next_session: "En una semana",
+      },
+    },
+    {
+      templateId: "psicologia-evaluacion",
+      data: {
+        reason: "Ansiedad por carga laboral.",
+        problem_history: "Insomnio de conciliación y preocupación constante desde hace 3 meses.",
+        risk: "Sin riesgo aparente",
+        diagnoses: [{ description: "Trastorno de ansiedad generalizada (en estudio)", code: "F41.1" }],
+        goals: "Reducir la preocupación y mejorar el sueño.",
+        plan: "Terapia cognitivo-conductual semanal y técnicas de respiración.",
+      },
+    },
   ],
 };
 
@@ -707,19 +798,15 @@ function seedClinicalRecords(
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, samples.length);
     completed.forEach((appointment, index) => {
-      const [reason, findings, diagnosis, treatment, indications] = samples[index];
+      const { templateId, data } = samples[index];
       db.clinicalNotes.push({
         id: crypto.randomUUID(),
         businessId: context.businessId,
         clientId: client.id,
         appointmentId: appointment.id,
         date: appointment.date,
-        reason,
-        findings,
-        diagnosis,
-        treatment,
-        indications,
-        nextControl: index === 0 ? "En 15 días" : "",
+        templateVersionId: templateId,
+        data,
         authorId: context.ownerId,
         authorName: context.ownerName,
         createdAt: `${appointment.date}T${appointment.endTime}:00.000Z`,

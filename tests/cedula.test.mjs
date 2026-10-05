@@ -143,10 +143,13 @@ r = await ricardo("PUT", `${RB}/clients/${patient.id}/clinical-record/profile`, 
 ok(r.body?.consentDate === today && r.body.allergies === "Látex", "después no se puede quitar", r.body);
 let error = sqlError(`update clinical_profiles set consent_date = '2020-01-01' where client_id = '${patient.id}'`);
 ok(error && /consentimiento informado no se puede modificar/.test(error), "ni siquiera con SQL directo", error);
-r = await ricardo("POST", `${RB}/clients/${patient.id}/clinical-record/notes`, { appointmentId: null, date: "2020-01-01", reason: "Control", findings: "", diagnosis: "", treatment: "", indications: "", nextControl: "" });
+const general = (await ricardo("GET", `${RB}/clinical-templates`)).body.find((t) => t.id === "evolucion-general");
+r = await ricardo("POST", `${RB}/clients/${patient.id}/clinical-record/notes`, { appointmentId: null, date: "2020-01-01", templateVersionId: general.versionId, data: { reason: "Control" } });
 ok(r.status === 200 && r.body.date === today, "la evolución lleva la fecha de hoy aunque se envíe otra", r.body);
 error = sqlError(`update clinical_notes set date = '2020-01-01' where id = '${r.body.id}'`);
 ok(error && /no se pueden modificar/.test(error), "la evolución no se puede cambiar con SQL directo", error);
+error = sqlError(`update clinical_notes set data = '{"reason": "Otro"}' where id = '${r.body.id}'`);
+ok(error && /no se pueden modificar/.test(error), "ni su contenido", error);
 
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de cédula y fechas clínicas pasaron");
 process.exitCode = failures ? 1 : 0;

@@ -382,19 +382,93 @@ export interface ClinicalNoteAddendum {
   createdAt: ISODateTime;
 }
 
-/** Evolución: registro de una consulta, normalmente unida a su cita. */
+/* ------------------------------------------ Plantillas de historia clínica ---- */
+
+/** Columna de un campo de tipo lista (p. ej. la receta: cantidad, principio activo…). */
+export interface ClinicalListColumn {
+  id: string;
+  label: string;
+  type: "text" | "number";
+  placeholder?: string;
+}
+
+interface ClinicalFieldBase {
+  /** Clave del valor en `ClinicalNote.data`: no cambia entre versiones de la plantilla. */
+  id: string;
+  label: string;
+  hint?: string;
+  required?: boolean;
+}
+
+/**
+ * Campo de una plantilla de evolución. Cada especialidad registra cosas distintas (signos
+ * vitales, odontograma, antropometría…): la plantilla dice qué se pide y cómo.
+ */
+export type ClinicalField =
+  /** Título que agrupa los campos siguientes (no guarda valor). */
+  | (ClinicalFieldBase & { type: "section" })
+  | (ClinicalFieldBase & { type: "text" | "textarea"; placeholder?: string })
+  | (ClinicalFieldBase & { type: "number"; unit?: string; min?: number; max?: number; step?: number })
+  /** Escala de puntos, p. ej. dolor 0–10. */
+  | (ClinicalFieldBase & { type: "scale"; min: number; max: number; minLabel?: string; maxLabel?: string })
+  | (ClinicalFieldBase & { type: "select" | "multiselect"; options: string[] })
+  /** Sí / No. */
+  | (ClinicalFieldBase & { type: "boolean" })
+  | (ClinicalFieldBase & { type: "date" })
+  /** Filas con columnas: receta, diagnósticos CIE-10, procedimientos por pieza… */
+  | (ClinicalFieldBase & { type: "list"; columns: ClinicalListColumn[]; addLabel?: string })
+  /** Índice de masa corporal calculado de otros dos campos (peso en kg y talla en cm); no guarda valor. */
+  | (ClinicalFieldBase & { type: "bmi"; weightField: string; heightField: string });
+
+export type ClinicalFieldType = ClinicalField["type"];
+
+export type ClinicalListRow = Record<string, string | number | null>;
+
+/** Valor de un campo: texto, número, sí/no, opciones elegidas o filas de una lista. */
+export type ClinicalFieldValue = string | number | boolean | string[] | ClinicalListRow[];
+
+/** Contenido de una evolución: sólo los campos completados, por id de campo. */
+export type ClinicalNoteData = Record<string, ClinicalFieldValue>;
+
+/** Formato de evolución disponible para el negocio, en su versión vigente. */
+export interface ClinicalTemplate {
+  /** "atencion-medica" en las de la plataforma. */
+  id: string;
+  /** null: plantilla de la plataforma, disponible para todos los negocios. */
+  businessId: string | null;
+  name: string;
+  description: string;
+  /** Especialidades (ids de categoría) para las que se recomienda; vacío = general. */
+  categories: string[];
+  /** Recomendada para la especialidad de este negocio. */
+  recommended: boolean;
+  /** Versión vigente: las evoluciones nuevas se escriben con ella. */
+  versionId: string;
+  version: number;
+  fields: ClinicalField[];
+}
+
+/**
+ * Versión de una plantilla tal como era al escribir una evolución. Nunca cambia: si la
+ * plantilla se modifica, las evoluciones antiguas se siguen mostrando con sus campos.
+ */
+export interface ClinicalTemplateVersion {
+  id: string;
+  templateId: string;
+  name: string;
+  version: number;
+  fields: ClinicalField[];
+}
+
+/** Evolución: registro de una consulta con el formato (plantilla) de la especialidad. */
 export interface ClinicalNote {
   id: string;
   businessId: string;
   clientId: string;
   appointmentId: string | null;
   date: ISODate;
-  reason: string;
-  findings: string;
-  diagnosis: string;
-  treatment: string;
-  indications: string;
-  nextControl: string;
+  templateVersionId: string;
+  data: ClinicalNoteData;
   authorId: string;
   authorName: string;
   createdAt: ISODateTime;
@@ -405,6 +479,8 @@ export interface ClinicalRecord {
   profile: ClinicalProfile | null;
   /** De la más reciente a la más antigua. */
   notes: ClinicalNote[];
+  /** Versiones de plantilla con que se escribieron las evoluciones (por id). */
+  templateVersions: Record<string, ClinicalTemplateVersion>;
 }
 
 /* ------------------------------------------------------- Cambios de plan ---- */

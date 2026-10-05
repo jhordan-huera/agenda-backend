@@ -3,8 +3,21 @@ import { isUuid, many, one, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { getZonedNow } from "../shared/lib/time.ts";
-import { clinicalAddendumSchema, clinicalNoteSchema, clinicalProfileSchema } from "../shared/lib/validations/clinical.ts";
-import type { ClinicalNote, ClinicalNoteAddendum, ClinicalProfile, ClinicalRecord } from "../shared/types/index.ts";
+import {
+  clinicalAddendumSchema,
+  clinicalNoteDataSchema,
+  clinicalNoteSchema,
+  clinicalProfileSchema,
+} from "../shared/lib/validations/clinical.ts";
+import type {
+  ClinicalField,
+  ClinicalNote,
+  ClinicalNoteAddendum,
+  ClinicalProfile,
+  ClinicalRecord,
+  ClinicalTemplate,
+  ClinicalTemplateVersion,
+} from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
 
@@ -70,7 +83,46 @@ async function loadNotes(db: Db, where: string, values: unknown[]): Promise<Clin
   }));
 }
 
+/** Versiones de plantilla (con sus campos) por id. */
+async function loadTemplateVersions(db: Db, ids: string[]): Promise<Record<string, ClinicalTemplateVersion>> {
+  if (ids.length === 0) return {};
+  const versions = await many<ClinicalTemplateVersion>(
+    db,
+    `select id, template_id as "templateId", name, version, fields
+       from clinical_template_versions where id = any($1::uuid[])`,
+    [[...new Set(ids)]],
+  );
+  return Object.fromEntries(versions.map((version) => [version.id, version]));
+}
+
+/**
+ * Plantillas que puede usar el negocio: las de la plataforma y las suyas, activas y en su versión
+ * vigente. Primero las recomendadas para su especialidad.
+ */
+async function availableTemplates(db: Db, businessId: string): Promise<ClinicalTemplate[]> {
+  return many<ClinicalTemplate>(
+    db,
+    `select t.id, t.business_id as "businessId", t.name, t.description, t.categories,
+            b.category = any(t.categories) as recommended,
+            v.id as "versionId", v.version, v.fields
+       from clinical_templates t
+       join clinical_template_versions v on v.id = t.current_version_id
+       join businesses b on b.id = $1
+      where t.is_active and (t.business_id is null or t.business_id = $1)
+      order by b.category = any(t.categories) desc, t.business_id is null, t.sort_order, t.name`,
+    [businessId],
+  );
+}
+
 export const clinicalService = {
+  /** Formatos de evolución disponibles para el negocio. */
+  async listTemplates(ctx: RequestContext, businessId: string): Promise<ClinicalTemplate[]> {
+    return transaction(async (db) => {
+      await authorizeClinical(db, ctx, businessId);
+      return availableTemplates(db, businessId);
+    });
+  },
+
   /** Antecedentes y evoluciones del paciente. Registra el acceso en la auditoría. */
   async get(ctx: RequestContext, businessId: string, clientId: string): Promise<ClinicalRecord> {
     return transaction(async (db) => {
@@ -94,13 +146,18 @@ export const clinicalService = {
           summary: `Consultó la historia clínica de ${client.name}`,
         });
       }
+      const notes = await loadNotes(db, "business_id = $1 and client_id = $2", [businessId, clientId]);
       return {
         profile: await one<ClinicalProfile>(
           db,
           `select ${clinicalProfileColumns()} from clinical_profiles where business_id = $1 and client_id = $2`,
           [businessId, clientId],
         ),
-        notes: await loadNotes(db, "business_id = $1 and client_id = $2", [businessId, clientId]),
+        notes,
+        templateVersions: await loadTemplateVersions(
+          db,
+          notes.map((note) => note.templateVersionId),
+        ),
       };
     });
   },
@@ -169,6 +226,22 @@ export const clinicalService = {
     return transaction(async (db) => {
       const actor = await authorizeClinical(db, ctx, businessId, true);
       const client = await findPatient(db, businessId, clientId);
+      // Sólo la versión vigente de una plantilla disponible para el negocio.
+      const template = isUuid(data.templateVersionId)
+        ? await one<{ name: string; fields: ClinicalField[]; current: boolean }>(
+            db,
+            `select t.name, v.fields, t.current_version_id = v.id as current
+               from clinical_template_versions v
+               join clinical_templates t on t.id = v.template_id
+              where v.id = $1 and t.is_active and (t.business_id is null or t.business_id = $2)`,
+            [data.templateVersionId, businessId],
+          )
+        : null;
+      if (!template) throw new AppError("not_found", "Ese formato de evolución no existe o ya no está disponible.");
+      if (!template.current) {
+        throw new AppError("conflict", "El formato de evolución cambió mientras escribías. Recarga la página para usar la versión nueva.");
+      }
+      const content = parseInput(clinicalNoteDataSchema(template.fields), data.data);
       if (data.appointmentId) {
         const appointment = isUuid(data.appointmentId)
           ? await one<{ clientId: string }>(
@@ -183,9 +256,8 @@ export const clinicalService = {
       const { id } = (await one<{ id: string }>(
         db,
         `insert into clinical_notes
-           (business_id, client_id, appointment_id, date, reason, findings, diagnosis, treatment, indications,
-            next_control, author_id, author_name)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           (business_id, client_id, appointment_id, date, template_version_id, data, author_id, author_name)
+         values ($1, $2, $3, $4, $5, $6, $7, $8)
          returning id`,
         [
           businessId,
@@ -193,12 +265,8 @@ export const clinicalService = {
           data.appointmentId,
           // La evolución lleva siempre la fecha de hoy: no se puede fechar con retraso.
           await businessToday(db, businessId),
-          data.reason,
-          data.findings,
-          data.diagnosis,
-          data.treatment,
-          data.indications,
-          data.nextControl,
+          data.templateVersionId,
+          content,
           actor.userId,
           actor.name,
         ],
@@ -209,7 +277,7 @@ export const clinicalService = {
         action: "clinical_record.note_added",
         entityType: "clinical_record",
         entityId: clientId,
-        summary: `Registró una evolución en la historia clínica de ${client.name}`,
+        summary: `Registró una evolución (${template.name}) en la historia clínica de ${client.name}`,
       });
       return (await loadNotes(db, "id = $1", [id]))[0];
     });

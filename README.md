@@ -97,7 +97,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 | Perfil | `GET/PUT /users/:userId` |
 | Negocio | `POST /businesses` (onboarding) · `GET /businesses/slug-availability` · `GET/PATCH /businesses/:id` · `GET …/professional` |
 | Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status`) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
-| Historia clínica | `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
+| Historia clínica | `GET /businesses/:id/clinical-templates` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `POST /public/businesses/:slug/clients/lookup` · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` |
 | Super admin | `/admin/stats` · `/admin/businesses` (+ `status`, `plan`, `members`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` |
 | Estado | `GET /health` |
@@ -137,6 +137,17 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   él autoriza y el super admin en modo soporte (queda en la auditoría). Las evoluciones no se editan ni se
   borran (se añaden aclaraciones), cada consulta queda en la auditoría y un paciente con historia
   no se puede eliminar.
+- **Plantillas de historia clínica** (migración 009): cada evolución se escribe con un formato
+  (`clinical_templates` + `clinical_template_versions`) y guarda sus valores en `clinical_notes.data`
+  (jsonb). Tipos de campo: texto, texto largo, número con unidad, escala, opción única o múltiple,
+  sí/no, fecha, lista con columnas (receta, diagnósticos CIE-10, procedimientos) e IMC calculado.
+  La API valida el contenido con los campos de la plantilla (`clinicalNoteDataSchema`, compartido
+  con el frontend) y sólo guarda lo completado. Las versiones no se modifican (trigger): si una
+  plantilla cambia se crea otra versión, las evoluciones antiguas se muestran con la suya y escribir
+  con una versión vieja responde 409. Plantillas de la plataforma (business_id null): Atención
+  médica, Evolución general, Nota libre y una o dos por especialidad (psicología, odontología,
+  nutrición, fisioterapia, fonoaudiología, medicina estética); se recomiendan según la categoría del
+  negocio. `db:seed -- --reset` las conserva.
 
 ## Seguridad
 

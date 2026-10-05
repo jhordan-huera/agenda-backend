@@ -1,5 +1,5 @@
 import { hashPassword } from "../services/accounts.ts";
-import { pool, transaction, type Db } from "./pool.ts";
+import { many, pool, transaction, type Db } from "./pool.ts";
 import { createSeedDatabase } from "./seed-data.ts";
 
 /**
@@ -69,7 +69,35 @@ async function seed() {
   const passwordOf = new Map(data.credentials.map((c) => [c.userId, hashes.get(c.password)!]));
 
   await transaction(async (db) => {
-    if (reset) await db.query(`truncate ${TABLES.join(", ")} cascade`);
+    if (reset) {
+      // Las plantillas clínicas de la plataforma vienen de las migraciones y el truncate en cascada
+      // las borraría (una plantilla puede pertenecer a un negocio): se guardan y se reponen.
+      const templates = await many<unknown[]>(
+        db,
+        `select json_build_array(id, name, description, categories, sort_order, is_active, current_version_id, created_at, updated_at)
+           from clinical_templates where business_id is null`,
+      );
+      const versions = await many<unknown[]>(
+        db,
+        `select json_build_array(v.id, v.template_id, v.version, v.name, v.fields::text, v.created_by_name, v.created_at)
+           from clinical_template_versions v join clinical_templates t on t.id = v.template_id
+          where t.business_id is null`,
+      );
+      await db.query(`truncate ${TABLES.join(", ")} cascade`);
+      // El orden da igual: la referencia a la versión vigente se comprueba al confirmar.
+      await insertRows(
+        db,
+        "clinical_templates",
+        ["id", "name", "description", "categories", "sort_order", "is_active", "current_version_id", "created_at", "updated_at"],
+        templates.map((row) => Object.values(row)[0] as unknown[]),
+      );
+      await insertRows(
+        db,
+        "clinical_template_versions",
+        ["id", "template_id", "version", "name", "fields", "created_by_name", "created_at"],
+        versions.map((row) => Object.values(row)[0] as unknown[]),
+      );
+    }
 
     await db.query("update platform_settings set allow_public_signup = $1, support_email = $2", [
       data.platformSettings.allowPublicSignup,
@@ -181,16 +209,19 @@ async function seed() {
         p.conditions, p.medications, p.surgeries, p.familyHistory, p.consentDate || null, p.updatedAt, p.updatedByName,
       ]),
     );
+    // Los ejemplos indican la plantilla por su id: aquí se cambia por su versión vigente.
+    const templateVersions = await many<{ id: string; versionId: string }>(
+      db,
+      'select id, current_version_id as "versionId" from clinical_templates',
+    );
+    const versionOf = new Map(templateVersions.map((t) => [t.id, t.versionId]));
     await insertRows(
       db,
       "clinical_notes",
-      [
-        "id", "business_id", "client_id", "appointment_id", "date", "reason", "findings", "diagnosis", "treatment",
-        "indications", "next_control", "author_id", "author_name", "created_at",
-      ],
+      ["id", "business_id", "client_id", "appointment_id", "date", "template_version_id", "data", "author_id", "author_name", "created_at"],
       data.clinicalNotes.map((n) => [
-        n.id, n.businessId, n.clientId, n.appointmentId, n.date, n.reason, n.findings, n.diagnosis, n.treatment,
-        n.indications, n.nextControl, n.authorId, n.authorName, n.createdAt,
+        n.id, n.businessId, n.clientId, n.appointmentId, n.date, versionOf.get(n.templateVersionId) ?? n.templateVersionId,
+        n.data, n.authorId, n.authorName, n.createdAt,
       ]),
     );
     await insertRows(

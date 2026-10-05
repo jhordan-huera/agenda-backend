@@ -121,6 +121,10 @@ businessRoutes.delete(
 
 // Historia clínica (propietario, miembros autorizados y super admin en modo soporte)
 businessRoutes.get(
+  "/:businessId/clinical-templates",
+  handle((req) => clinicalService.listTemplates(req.ctx, req.params.businessId)),
+);
+businessRoutes.get(
   "/:businessId/clients/:clientId/clinical-record",
   handle((req) => clinicalService.get(req.ctx, req.params.businessId, req.params.clientId)),
 );
