@@ -51,7 +51,7 @@ const base = { reminders: 0, sentSinceLastRun: 0, since: null, pending: 0, durat
 const emails = (patch) => ({ sent: 0, retrying: 0, failed: 0, skipped: 0, errors: [], ...patch });
 ok(buildNotice({ ...base, emails: emails() }) === null, "sin novedades no avisa");
 let notice = buildNotice({ ...base, reminders: 2, sentSinceLastRun: 3, emails: emails({ sent: 2 }) });
-ok(notice?.priority === 2 && notice.title === "Agendo: 3 correos enviados" && /2 recordatorios nuevos/.test(notice.message), "correos enviados: aviso discreto", notice);
+ok(notice?.priority === 2 && notice.title === "Agenda360: 3 correos enviados" && /2 recordatorios nuevos/.test(notice.message), "correos enviados: aviso discreto", notice);
 notice = buildNotice({ ...base, emails: emails({ retrying: 1, errors: ["Gmail: 454 Too many login attempts"] }) });
 ok(notice?.priority === 3 && /1 correo no se pudo enviar/.test(notice.title) && /Too many login attempts/.test(notice.message), "reintentos: aviso normal con el error", notice);
 notice = buildNotice({ ...base, pending: 4, emails: emails({ failed: 2, retrying: 1, errors: ["invalid_grant"] }) });

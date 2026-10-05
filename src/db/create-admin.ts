@@ -9,7 +9,7 @@ import { one, pool } from "./pool.ts";
  * en super admin una cuenta existente sin negocio. Nunca se hace desde la aplicación.
  */
 async function createAdmin() {
-  const [rawEmail, password, firstName = "Admin", lastName = "Agendo"] = process.argv.slice(2);
+  const [rawEmail, password, firstName = "Admin", lastName = "Agenda360"] = process.argv.slice(2);
   const email = emailField.safeParse(rawEmail ?? "");
   if (!email.success || !password) {
     throw new Error("Uso: npm run db:create-admin -- <email> <contraseña> [nombre] [apellido]");

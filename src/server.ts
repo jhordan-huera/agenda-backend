@@ -22,7 +22,7 @@ async function checkDatabase(): Promise<void> {
 }
 
 const server = app.listen(config.port, () => {
-  console.info(`API de Agendo en http://localhost:${config.port}/api (frontend: ${config.frontendUrl})`);
+  console.info(`API de Agenda360 en http://localhost:${config.port}/api (frontend: ${config.frontendUrl})`);
   void checkDatabase();
 });
 const stopReminderJob = startReminderJob();

@@ -30,7 +30,7 @@ const envSchema = z.object({
   PROXY_SECRET: z.string().trim().min(24, "PROXY_SECRET debe tener al menos 24 caracteres").optional(),
   // Envío de emails con Gmail (OAuth2). Sin estas variables los emails quedan en cola sin enviarse.
   GMAIL_USER: z.string().trim().optional(),
-  GMAIL_FROM_NAME: z.string().trim().default("Agendo"),
+  GMAIL_FROM_NAME: z.string().trim().default("Agenda360"),
   GMAIL_CLIENT_ID: z.string().trim().optional(),
   GMAIL_CLIENT_SECRET: z.string().trim().optional(),
   GMAIL_REFRESH_TOKEN: z.string().trim().optional(),

@@ -92,8 +92,8 @@ export function buildNotice(report: CronReport): Notice | null {
     return {
       title:
         problems > 0
-          ? `Agendo: ${plural(problems, "correo no se pudo enviar", "correos no se pudieron enviar")}`
-          : "Agendo: error al procesar los correos",
+          ? `Agenda360: ${plural(problems, "correo no se pudo enviar", "correos no se pudieron enviar")}`
+          : "Agenda360: error al procesar los correos",
       message: [...lines, "", "Errores:", ...emails.errors.map((error) => `• ${error}`)].join("\n"),
       // Fallo definitivo: alta. Sólo reintentos (p. ej. Gmail caído un momento): normal.
       priority: emails.failed > 0 ? 4 : 3,
@@ -102,7 +102,7 @@ export function buildNotice(report: CronReport): Notice | null {
   }
   if (report.sentSinceLastRun > 0) {
     return {
-      title: `Agendo: ${plural(report.sentSinceLastRun, "correo enviado", "correos enviados")}`,
+      title: `Agenda360: ${plural(report.sentSinceLastRun, "correo enviado", "correos enviados")}`,
       message: lines.join("\n"),
       priority: 2,
       tags: ["white_check_mark"],
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     await notify({
-      title: "Agendo: el cron de correos falló",
+      title: "Agenda360: el cron de correos falló",
       message: `${reason}\n\nLos correos y recordatorios pendientes se intentarán en la próxima ejecución.`,
       priority: 5,
       tags: ["rotating_light"],

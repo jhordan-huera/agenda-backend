@@ -1,6 +1,6 @@
-# Agendo · API (agenda-backend)
+# Agenda360 · API (agenda-backend)
 
-API REST de Agendo: agenda y reservas online multi-negocio. La usa el frontend
+API REST de Agenda360: agenda y reservas online multi-negocio. La usa el frontend
 [`agenda-front`](../../Frontend/agenda-front) (React + Vite).
 
 **Stack:** Node.js 22.18+ (ejecuta TypeScript directamente, sin compilar) · Express 5 · PostgreSQL 16 ·

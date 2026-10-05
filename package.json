@@ -2,7 +2,7 @@
   "name": "agenda-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "API de Agendo: agenda y reservas online (Express + PostgreSQL)",
+  "description": "API de Agenda360: agenda y reservas online (Express + PostgreSQL)",
   "type": "module",
   "engines": {
     "node": ">=22.18"

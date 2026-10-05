@@ -857,7 +857,7 @@ export function createSeedDatabase(): SeedDatabase {
   db.users.push({
     id: superAdminId,
     firstName: "Admin",
-    lastName: "Agendo",
+    lastName: "Agenda360",
     email: SUPER_ADMIN_ACCOUNT.email,
     phone: "",
     avatarUrl: null,
@@ -866,7 +866,7 @@ export function createSeedDatabase(): SeedDatabase {
     createdAt: daysAgoISO(200),
   });
   db.credentials.push({ userId: superAdminId, email: SUPER_ADMIN_ACCOUNT.email, password: SUPER_ADMIN_ACCOUNT.password });
-  const superAdmin = { userId: superAdminId, name: "Admin Agendo (Super admin)" };
+  const superAdmin = { userId: superAdminId, name: "Admin Agenda360 (Super admin)" };
 
   const now = getZonedNow(DEFAULT_TIMEZONE);
   const random = createRandom(20260930);
