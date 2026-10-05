@@ -1,3 +1,4 @@
+import { config } from "../config.ts";
 import { hashPassword } from "../services/accounts.ts";
 import { many, pool, transaction, type Db } from "./pool.ts";
 import { createSeedDatabase } from "./seed-data.ts";
@@ -8,6 +9,8 @@ import { createSeedDatabase } from "./seed-data.ts";
  *
  * - Si la base ya tiene usuarios, no hace nada.
  * - `npm run db:seed -- --reset` BORRA todos los datos antes de cargarlos.
+ * - Sólo con una base de datos local: el .env puede apuntar a producción (Supabase) y la demo
+ *   crea cuentas con contraseñas conocidas (admin@demo.com / demo1234).
  */
 const TABLES = [
   "cron_runs",
@@ -52,7 +55,25 @@ async function insertRows(db: Db, table: string, columns: string[], rows: unknow
   }
 }
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1", ""]);
+
+/** El host de DATABASE_URL es este equipo (o un socket local, sin host). */
+function isLocalDatabase(url: string): boolean {
+  try {
+    return LOCAL_HOSTS.has(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 async function seed() {
+  if (!isLocalDatabase(config.databaseUrl)) {
+    console.error(
+      "✗ DATABASE_URL no es una base de datos local: los datos demo sólo se cargan en desarrollo, nunca en producción.",
+    );
+    process.exitCode = 1;
+    return;
+  }
   const reset = process.argv.includes("--reset");
   const { rows } = await pool.query("select count(*)::int as count from users");
   if (rows[0].count > 0 && !reset) {

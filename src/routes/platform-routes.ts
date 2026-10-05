@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireCaptcha } from "../http/captcha.ts";
 import { handle, limitRequests } from "../http/handlers.ts";
 import { adminService, platformService } from "../services/admin-service.ts";
 import { categoryService } from "../services/category-service.ts";
@@ -35,11 +36,13 @@ const lookupLimit = limitRequests({
 publicRoutes.post(
   "/businesses/:slug/clients/lookup",
   lookupLimit,
+  requireCaptcha,
   handle((req) => publicBookingService.lookupClient(req.params.slug, req.body)),
 );
 publicRoutes.post(
   "/businesses/:slug/bookings",
   bookingLimit,
+  requireCaptcha,
   handle((req) => publicBookingService.book(req.params.slug, req.body)),
 );
 

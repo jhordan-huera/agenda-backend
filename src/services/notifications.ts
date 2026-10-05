@@ -4,7 +4,9 @@ import { many, one, type Db } from "../db/pool.ts";
 import { emailTemplates, type AppointmentEmailData, type EmailContent } from "../shared/lib/email/templates.ts";
 import { addDaysISO, daysBetween, getZonedNow, timeToMinutes } from "../shared/lib/time.ts";
 import type { Appointment, Business, EmailType } from "../shared/types/index.ts";
-import { scheduleEmailDelivery } from "./mailer.ts";
+import { PASSWORD_MASK, scheduleEmailDelivery } from "./mailer.ts";
+
+export { PASSWORD_MASK };
 
 /**
  * Emails del sistema. Cada mensaje se guarda "en cola" en la tabla notifications, en la
@@ -17,16 +19,28 @@ export function appOrigin(): string {
   return config.frontendUrl;
 }
 
-/** Pone el email en cola. Devuelve false si ya existía (recordatorio duplicado). */
+/**
+ * Pone el email en cola. Devuelve false si ya existía (recordatorio duplicado). `secret`: la
+ * contraseña que el mailer pone en lugar de PASSWORD_MASK al enviarlo (ver mailer.ts).
+ */
 export async function queueEmail(
   db: Db,
-  message: { businessId: string | null; type: EmailType; to: string; appointmentId?: string | null } & EmailContent,
+  message: { businessId: string | null; type: EmailType; to: string; appointmentId?: string | null; secret?: string } & EmailContent,
 ): Promise<boolean> {
   const result = await db.query(
-    `insert into notifications (business_id, type, to_email, subject, body, html, appointment_id, status)
-     values ($1, $2, $3, $4, $5, $6, $7, 'queued')
+    `insert into notifications (business_id, type, to_email, subject, body, html, appointment_id, status, secret)
+     values ($1, $2, $3, $4, $5, $6, $7, 'queued', $8)
      on conflict do nothing`,
-    [message.businessId, message.type, message.to, message.subject, message.body, message.html, message.appointmentId ?? null],
+    [
+      message.businessId,
+      message.type,
+      message.to,
+      message.subject,
+      message.body,
+      message.html,
+      message.appointmentId ?? null,
+      message.secret ?? null,
+    ],
   );
   const inserted = (result.rowCount ?? 0) > 0;
   if (inserted) scheduleEmailDelivery();

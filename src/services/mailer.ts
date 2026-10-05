@@ -2,6 +2,7 @@ import { waitUntil } from "@vercel/functions";
 import nodemailer from "nodemailer";
 import { config } from "../config.ts";
 import { many, transaction } from "../db/pool.ts";
+import { escapeHtml } from "../shared/lib/email/layout.ts";
 
 /**
  * Envío de emails con Gmail (OAuth2). Los servicios sólo guardan el email "en cola" en la
@@ -9,6 +10,12 @@ import { many, transaction } from "../db/pool.ts";
  * que un fallo de Gmail nunca hace fallar una cita o un registro. Cada email se reintenta
  * hasta MAX_ATTEMPTS veces antes de quedar como fallido.
  */
+
+/**
+ * Lo que se guarda en lugar de la contraseña en los emails con datos de acceso: la plantilla
+ * se compone con esto y la contraseña va aparte (columna `secret`) sólo hasta que se envía.
+ */
+export const PASSWORD_MASK = "••••••••";
 
 const MAX_ATTEMPTS = 5;
 const BATCH_SIZE = 10;
@@ -44,16 +51,29 @@ interface QueuedEmail {
   body: string;
   /** Versión con diseño (null en los emails anteriores a la migración 012). */
   html: string | null;
+  /** Contraseña de los emails con datos de acceso: se guarda oculta (PASSWORD_MASK) y va aquí. */
+  secret: string | null;
+}
+
+/** El contenido que sale: la contraseña sólo existe en el email enviado; en el registro queda oculta. */
+export function outgoingContent(email: Pick<QueuedEmail, "body" | "html" | "secret">): { text: string; html: string | null } {
+  const { secret } = email;
+  if (secret === null) return { text: email.body, html: email.html };
+  return {
+    text: email.body.replaceAll(PASSWORD_MASK, () => secret),
+    html: email.html?.replaceAll(PASSWORD_MASK, () => escapeHtml(secret)) ?? null,
+  };
 }
 
 async function send(email: QueuedEmail): Promise<void> {
   const redirectTo = config.emailRedirectTo;
+  const { text, html } = outgoingContent(email);
   await transporter!.sendMail({
     from: { name: gmail!.fromName, address: gmail!.user },
     to: redirectTo ?? email.to,
     subject: redirectTo ? `[Para ${email.to}] ${email.subject}` : email.subject,
-    text: email.body,
-    ...(email.html ? { html: email.html } : {}),
+    text,
+    ...(html ? { html } : {}),
   });
 }
 
@@ -102,7 +122,7 @@ export async function processEmailQueue(
         // skip locked: varias instancias de la API nunca envían el mismo email.
         const batch = await many<QueuedEmail>(
           db,
-          `select id, to_email as "to", subject, body, html from notifications
+          `select id, to_email as "to", subject, body, html, secret from notifications
             where status = 'queued' ${options.skipReminders ? "and type <> 'appointment_reminder'" : ""}
             order by created_at
             limit $1
@@ -112,7 +132,7 @@ export async function processEmailQueue(
         for (const email of batch) {
           if (isUndeliverable(email.to)) {
             await db.query(
-              "update notifications set status = 'failed', last_error = $2 where id = $1",
+              "update notifications set status = 'failed', last_error = $2, secret = null where id = $1",
               [email.id, "Dirección de demostración: no se envía."],
             );
             report.skipped++;
@@ -121,7 +141,7 @@ export async function processEmailQueue(
           try {
             await send(email);
             await db.query(
-              "update notifications set status = 'sent', sent_at = now(), attempts = attempts + 1, last_error = null where id = $1",
+              "update notifications set status = 'sent', sent_at = now(), attempts = attempts + 1, last_error = null, secret = null where id = $1",
               [email.id],
             );
             report.sent++;
@@ -133,7 +153,8 @@ export async function processEmailQueue(
             const { rows } = await db.query(
               `update notifications
                   set attempts = attempts + 1, last_error = $2,
-                      status = case when attempts + 1 >= $3 then 'failed' else 'queued' end
+                      status = case when attempts + 1 >= $3 then 'failed' else 'queued' end,
+                      secret = case when attempts + 1 >= $3 then null else secret end
                 where id = $1
             returning status`,
               [email.id, message.slice(0, 500), MAX_ATTEMPTS],

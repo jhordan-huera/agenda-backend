@@ -163,6 +163,19 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   `sessions`). "Recordarme" = 30 días; si no, 24 h y la cookie se borra al cerrar el navegador.
   Cuando el super admin cambia una contraseña o desactiva una cuenta, se cierran sus sesiones.
 - **Contraseñas** con bcrypt. El login tarda lo mismo exista o no el email.
+- **Bloqueo por intentos fallidos:** 10 fallos con una cuenta (desde su último inicio de sesión
+  correcto) o 50 desde una conexión, en 15 minutos, bloquean el inicio de sesión hasta que pasen
+  (aunque la contraseña sea la correcta). Se cuentan en la auditoría, así que valen para todas
+  las instancias de Vercel. Un email no registrado se bloquea igual: no revela qué cuentas existen.
+- **Contraseñas fuera del registro de emails:** los emails con datos de acceso se guardan con la
+  contraseña oculta (`••••••••`); ésta va aparte (`notifications.secret`) sólo hasta que el email
+  se envía o se descarta.
+- **CAPTCHA** (Cloudflare Turnstile) en la búsqueda por cédula y en las reservas de la página
+  pública, con `TURNSTILE_SITE_KEY` y `TURNSTILE_SECRET_KEY` (`src/http/captcha.ts`). Sin ellas no
+  se pide. Si Cloudflare no responde, la reserva no se bloquea.
+- **Página pública** sin datos internos: ni el propietario, ni los avisos, ni el motivo de los
+  bloqueos, ni el precio de los servicios que lo ocultan.
+- **Datos demo** (`db:seed`) sólo en una base local: con el `.env` apuntando a Supabase se niega.
 - **Multi-tenant:** cada operación comprueba que la sesión pertenece al negocio, que no está
   suspendido y que su rol tiene permiso (`src/shared/lib/permissions.ts`).
 - **Concurrencia:** las escrituras de un negocio bloquean su fila durante la transacción: dos
@@ -226,6 +239,7 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    | `GMAIL_USER`, `GMAIL_FROM_NAME`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` | Los de `.env` |
    | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Para los archivos de la historia clínica (Supabase → Project Settings → API Keys) |
    | `PROXY_SECRET` | El de `.env` (mismo valor que en el frontend) |
+   | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | CAPTCHA de la página de reservas (Cloudflare → Turnstile → Add widget, hostname del frontend, modo *Managed*) |
 
 3. **Proyecto del frontend** (agenda-front): variables `API_URL` (URL de este proyecto, p. ej.
    `https://agenda-backend.vercel.app`) y `PROXY_SECRET`.

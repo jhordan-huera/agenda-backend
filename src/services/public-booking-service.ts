@@ -6,6 +6,7 @@ import {
   professionalColumns,
   serviceColumns,
 } from "../db/columns.ts";
+import { config } from "../config.ts";
 import { many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { isSlotAvailable } from "../shared/lib/availability.ts";
@@ -22,8 +23,12 @@ import type {
   Client,
   ISODate,
   Professional,
+  PublicBlockedTime,
+  PublicBusiness,
   PublicBusinessProfile,
   PublicClientLookup,
+  PublicProfessional,
+  PublicService,
   Service,
 } from "../shared/types/index.ts";
 import { describeAppointment, logAudit } from "./audit.ts";
@@ -83,6 +88,32 @@ async function findClientByDocument(db: Db, businessId: string, documentId: stri
   ]);
 }
 
+/* Lo que ve la página pública: nada de datos internos (propietario, avisos, plantillas clínicas…). */
+
+function toPublicBusiness({
+  ownerId: _owner,
+  status: _status,
+  notificationSettings: _notifications,
+  clinicalRecordsEnabled: _clinical,
+  createdAt: _created,
+  ...business
+}: Business): PublicBusiness {
+  return business;
+}
+
+function toPublicProfessional({ userId: _user, ...professional }: Professional): PublicProfessional {
+  return professional;
+}
+
+/** Con el precio oculto, ni el precio ni el recargo a domicilio salen del servidor. */
+function toPublicService({ clinicalTemplateId: _template, isActive: _active, createdAt: _created, ...service }: Service): PublicService {
+  return isPriceVisible(service) ? service : { ...service, price: 0, homeVisitFee: 0 };
+}
+
+function toPublicBlockedTime({ reason: _reason, createdAt: _created, ...block }: BlockedTime): PublicBlockedTime {
+  return block;
+}
+
 /** "María López Vera" → "María L." (para saludar sin exponer el nombre completo). */
 function greetingName(name: string): string {
   const [first = "", second = ""] = name.trim().split(/\s+/);
@@ -130,17 +161,19 @@ export const publicBookingService = {
     if (!found) return null;
     const { business, professional } = found;
     const today = getZonedNow(business.timezone).date;
+    const services = await many<Service>(
+      pool,
+      `select ${serviceColumns()} from services where business_id = $1 and is_active order by created_at, name`,
+      [business.id],
+    );
     return {
-      business,
-      professional,
-      services: await many<Service>(
-        pool,
-        `select ${serviceColumns()} from services where business_id = $1 and is_active order by created_at, name`,
-        [business.id],
-      ),
+      business: toPublicBusiness(business),
+      professional: toPublicProfessional(professional),
+      services: services.map(toPublicService),
       schedules: await listSchedules(pool, business.id),
-      blockedTimes: await blockedTimesFrom(pool, business.id, today),
+      blockedTimes: (await blockedTimesFrom(pool, business.id, today)).map(toPublicBlockedTime),
       busySlots: await busySlots(pool, business.id, today),
+      captchaSiteKey: config.turnstile?.siteKey ?? null,
     };
   },
 

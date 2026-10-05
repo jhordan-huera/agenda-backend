@@ -37,6 +37,11 @@ const envSchema = z.object({
   SUPABASE_URL: z.url("SUPABASE_URL debe ser una URL (https://xxxx.supabase.co)").optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().trim().min(20).optional(),
   STORAGE_BUCKET: z.string().trim().regex(/^[a-z0-9-]{3,63}$/).default("historias-clinicas"),
+  // CAPTCHA de la página de reservas (Cloudflare Turnstile). Sin las dos claves no se pide.
+  TURNSTILE_SITE_KEY: z.string().trim().optional(),
+  TURNSTILE_SECRET_KEY: z.string().trim().optional(),
+  // Sólo para las pruebas: un servidor local que imita a Cloudflare.
+  TURNSTILE_VERIFY_URL: z.url().default("https://challenges.cloudflare.com/turnstile/v0/siteverify"),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -58,6 +63,11 @@ const gmail =
         clientSecret: env.GMAIL_CLIENT_SECRET,
         refreshToken: env.GMAIL_REFRESH_TOKEN,
       }
+    : null;
+
+const turnstile =
+  env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY
+    ? { siteKey: env.TURNSTILE_SITE_KEY, secretKey: env.TURNSTILE_SECRET_KEY, verifyUrl: env.TURNSTILE_VERIFY_URL }
     : null;
 
 export const config = {
@@ -82,6 +92,8 @@ export const config = {
   reminderJobIntervalMinutes: env.REMINDER_JOB_INTERVAL_MINUTES,
   /** null si faltan las credenciales de Gmail. */
   gmail,
+  /** CAPTCHA de la búsqueda por cédula y de las reservas online. null: desactivado. */
+  turnstile,
   /**
    * Fuera de producción todos los emails van a esta dirección (por defecto, la propia cuenta
    * de Gmail) para no escribir a los clientes de los datos demo. "off" la desactiva.

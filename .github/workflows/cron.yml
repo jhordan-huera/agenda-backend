@@ -13,6 +13,10 @@ on:
   # "Run workflow" en la pestaña Actions, y despertador externo (cron-job.org) por la API de GitHub.
   workflow_dispatch:
 
+# El job sólo lee el código: el token de GitHub de la ejecución no puede escribir en el repositorio.
+permissions:
+  contents: read
+
 concurrency:
   group: agendo-cron
   cancel-in-progress: false
@@ -23,6 +27,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v5
         with:

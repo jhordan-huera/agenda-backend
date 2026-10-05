@@ -41,11 +41,14 @@ export type AvailabilitySettings = Pick<
   "alignSlotsToDuration" | "slotIntervalMinutes" | "minNoticeHours" | "maxAdvanceDays"
 >;
 
+/** Lo que la disponibilidad necesita de un bloqueo (la página pública no recibe el motivo). */
+export type BlockedRange = Pick<BlockedTime, "startDate" | "endDate" | "allDay" | "startTime" | "endTime">;
+
 export interface AvailabilityContext {
   schedules: Schedule[];
   /** Franjas ocupadas por citas activas (ver `toBusySlots`). */
   busySlots: BusySlot[];
-  blockedTimes: BlockedTime[];
+  blockedTimes: BlockedRange[];
   settings: AvailabilitySettings;
   now: ZonedNow;
 }
@@ -63,7 +66,7 @@ export function getWorkingRanges(schedules: Schedule[], date: ISODate): MinuteRa
     .sort((a, b) => a.start - b.start);
 }
 
-export function getBlockedRanges(blockedTimes: BlockedTime[], date: ISODate): MinuteRange[] {
+export function getBlockedRanges(blockedTimes: BlockedRange[], date: ISODate): MinuteRange[] {
   return blockedTimes
     .filter((block) => block.startDate <= date && date <= block.endDate)
     .map((block) =>
@@ -205,10 +208,10 @@ export function isWithinWorkingHours(schedules: Schedule[], window: TimeWindow):
   );
 }
 
-export function findOverlappingBlock(
-  blockedTimes: BlockedTime[],
+export function findOverlappingBlock<T extends BlockedRange>(
+  blockedTimes: T[],
   window: TimeWindow,
-): BlockedTime | undefined {
+): T | undefined {
   const start = timeToMinutes(window.startTime);
   const end = timeToMinutes(window.endTime);
   return blockedTimes.find((block) => {

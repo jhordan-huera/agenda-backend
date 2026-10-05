@@ -34,6 +34,16 @@ export interface IssuedSession {
 const REMEMBER_DAYS = 30;
 const SESSION_HOURS = 24;
 
+/**
+ * Bloqueo ante intentos de adivinar contraseñas. Los fallos se cuentan en la auditoría (no en la
+ * memoria de cada servidor), así que valen para todas las instancias de Vercel a la vez.
+ */
+const LOCKOUT_MINUTES = 15;
+/** Fallos en LOCKOUT_MINUTES que bloquean una cuenta (exista o no: no revela qué emails existen). */
+const MAX_FAILURES_PER_ACCOUNT = 10;
+/** Fallos en LOCKOUT_MINUTES que bloquean una conexión, pruebe la cuenta que pruebe. */
+const MAX_FAILURES_PER_IP = 50;
+
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** Hash de referencia para que un email inexistente tarde lo mismo que una contraseña incorrecta. */
@@ -74,6 +84,29 @@ async function logSessionEvent(
     summary: event.summary,
     connection,
   });
+}
+
+/**
+ * ¿Demasiados intentos fallidos recientes con esta cuenta (desde su último inicio de sesión
+ * correcto) o desde esta conexión?
+ */
+async function isLockedOut(userId: string | null, email: string, ip: string): Promise<boolean> {
+  const row = await one<{ account: number; ip: number }>(
+    pool,
+    `select count(*) filter (
+              where (actor_id = $1::uuid or (actor_id is null and lower(actor_name) = lower($2)))
+                and created_at > coalesce(
+                  (select max(s.created_at) from audit_logs s
+                    where s.entity_type = 'session' and s.action = 'session.login' and s.actor_id = $1::uuid),
+                  '-infinity')
+            )::int as account,
+            count(*) filter (where ip = $3)::int as ip
+       from audit_logs
+      where entity_type = 'session' and action = 'session.login_failed'
+        and created_at > now() - make_interval(mins => $4)`,
+    [userId, email, ip, LOCKOUT_MINUTES],
+  );
+  return (row?.account ?? 0) >= MAX_FAILURES_PER_ACCOUNT || (row?.ip ?? 0) >= MAX_FAILURES_PER_IP;
 }
 
 async function createSession(db: Db, userId: string, remember: boolean): Promise<IssuedSession> {
@@ -136,8 +169,24 @@ export const authService = {
       `select ${userColumns()}, password_hash as "passwordHash" from users where email = $1`,
       [email],
     );
-    const valid = await verifyPassword(password, row?.passwordHash ?? DUMMY_PASSWORD_HASH);
     const user = row ? withoutPassword(row) : null;
+    // Bloqueada: ni se comprueba la contraseña (aunque sea la correcta) hasta que pase el tiempo.
+    if (await isLockedOut(user?.id ?? null, email, connection.ip)) {
+      await logSessionEvent(
+        user,
+        {
+          action: "session.login_locked",
+          summary: "Inicio de sesión bloqueado temporalmente por demasiados intentos fallidos",
+          attemptedEmail: user ? undefined : email,
+        },
+        connection,
+      );
+      throw new AppError(
+        "rate_limited",
+        `Demasiados intentos fallidos. Por seguridad, espera ${LOCKOUT_MINUTES} minutos antes de volver a intentarlo.`,
+      );
+    }
+    const valid = await verifyPassword(password, row?.passwordHash ?? DUMMY_PASSWORD_HASH);
     if (!user || !valid) {
       await logSessionEvent(
         user,

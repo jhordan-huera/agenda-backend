@@ -1,4 +1,6 @@
 // Contraseñas gestionadas por el super admin.
+import pg from "pg";
+
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
 const ok = (cond, label, extra) => {
@@ -91,13 +93,21 @@ r = await rosa("GET", `/businesses/${newBusinessId}/team`);
 ok(r.body?.length === 2, "el propietario ve al nuevo miembro", r.body?.length);
 
 console.log("Emails");
+// En el registro la contraseña queda oculta; el email que sale la lleva (ver security.test.ts).
 const emails = (await admin("GET", "/admin/emails")).body;
+const db = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
+const secretOf = async (id) => (await db.query("select secret from notifications where id = $1", [id])).rows[0]?.secret;
 const created = emails.find((e) => e.to === "rosa@example.com" && e.type === "business_created");
-ok(created && /Contraseña: RosaClave2026/.test(created.body) && !/temporal|cambia la contraseña/i.test(created.body), "alta de negocio: email con la contraseña elegida", created?.body);
+ok(
+  created && /Contraseña: ••••••••/.test(created.body) && !/temporal|cambia la contraseña/i.test(created.body) && (await secretOf(created.id)) === "RosaClave2026",
+  "alta de negocio: email con la contraseña elegida",
+  created?.body,
+);
 const changed = emails.find((e) => e.to === "miguel@demo.com" && e.type === "password_reset");
-ok(changed && /Contraseña: MiguelClave2026/.test(changed.body), "cambio de contraseña: email con la nueva", changed?.body);
+ok(changed && (await secretOf(changed.id)) === "MiguelClave2026", "cambio de contraseña: email con la nueva", changed?.body);
 const invite = emails.find((e) => e.to === "luis@example.com" && e.type === "team_invite");
-ok(invite && /Contraseña: LuisClave2026/.test(invite.body), "miembro nuevo: email con su contraseña", invite?.body);
+ok(invite && (await secretOf(invite.id)) === "LuisClave2026", "miembro nuevo: email con su contraseña", invite?.body);
+await db.end();
 const audit = (await admin("GET", "/admin/audit-logs?scope=admin")).body.entries.map((l) => l.action);
 ok(audit.includes("platform.user_password_changed") && audit.includes("platform.member_added"), "queda registrado en la auditoría", audit.slice(0, 6));
 

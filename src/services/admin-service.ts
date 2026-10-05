@@ -55,7 +55,7 @@ import { insertBusiness, isSlugTaken } from "./business-factory.ts";
 import { requireAssignableCategory } from "./category-service.ts";
 import { authorizeSuperAdmin, parseInput, type RequestContext } from "./context.ts";
 import { fileStorage } from "./file-storage.ts";
-import { appOrigin, queueEmail } from "./notifications.ts";
+import { appOrigin, PASSWORD_MASK, queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
 import { assertUserLimit } from "./plan-limits.ts";
 import { applyPlanChange } from "./subscriptions.ts";
@@ -265,11 +265,13 @@ export const adminService = {
         );
       }
       if (existing) {
-        // También a una cuenta existente se le pone la contraseña elegida: el super admin la conoce.
+        // También a una cuenta existente se le pone la contraseña elegida (el super admin la conoce)
+        // y se cierran sus sesiones abiertas, como al cambiarla desde Usuarios.
         await db.query("update users set password_hash = $2 where id = $1", [
           existing.id,
           await hashPassword(data.ownerPassword),
         ]);
+        await db.query("delete from sessions where user_id = $1", [existing.id]);
       }
       const owner =
         existing ??
@@ -311,11 +313,12 @@ export const adminService = {
         businessId: business.id,
         type: "business_created",
         to: owner.email,
+        secret: data.ownerPassword,
         ...emailTemplates.businessCreated({
           firstName: owner.firstName,
           businessName: business.name,
           email: owner.email,
-          password: data.ownerPassword,
+          password: PASSWORD_MASK,
           loginUrl: `${appOrigin()}/login`,
           bookingUrl: `${appOrigin()}/book/${business.slug}`,
         }),
@@ -587,7 +590,8 @@ export const adminService = {
         businessId: null,
         type: "password_reset",
         to: user.email,
-        ...emailTemplates.passwordChanged(user.firstName, user.email, password, `${appOrigin()}/login`),
+        secret: password,
+        ...emailTemplates.passwordChanged(user.firstName, user.email, PASSWORD_MASK, `${appOrigin()}/login`),
       });
       await logAudit(db, {
         businessId: null,
@@ -618,12 +622,13 @@ export const adminService = {
         businessId,
         type: "team_invite",
         to: user.email,
+        secret: data.password,
         ...emailTemplates.teamInvite({
           firstName: user.firstName,
           businessName: business.name,
           roleLabel: ROLE_LABELS[data.role],
           email: user.email,
-          password: data.password,
+          password: PASSWORD_MASK,
           loginUrl: `${appOrigin()}/login`,
         }),
       });

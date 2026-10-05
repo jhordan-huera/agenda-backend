@@ -660,14 +660,24 @@ export interface AdminAuditLog extends AuditLog {
 /** Franja ocupada expuesta a la página pública: sin datos personales del cliente. */
 export type BusySlot = Pick<Appointment, "date" | "startTime" | "endTime">;
 
+/** El negocio en la página pública: sin datos internos (propietario, estado, avisos…). */
+export type PublicBusiness = Omit<Business, "ownerId" | "status" | "notificationSettings" | "clinicalRecordsEnabled" | "createdAt">;
+export type PublicProfessional = Omit<Professional, "userId">;
+/** Con el precio oculto (`showPrice` false), `price` y `homeVisitFee` llegan a 0. */
+export type PublicService = Omit<Service, "clinicalTemplateId" | "isActive" | "createdAt">;
+/** Sin el motivo: el cliente sólo necesita saber que esas horas no están disponibles. */
+export type PublicBlockedTime = Omit<BlockedTime, "reason" | "createdAt">;
+
 /** Información pública de un negocio para la página de reservas. */
 export interface PublicBusinessProfile {
-  business: Business;
-  professional: Professional;
-  services: Service[];
+  business: PublicBusiness;
+  professional: PublicProfessional;
+  services: PublicService[];
   schedules: Schedule[];
-  blockedTimes: BlockedTime[];
+  blockedTimes: PublicBlockedTime[];
   busySlots: BusySlot[];
+  /** Site Key de Cloudflare Turnstile: buscar por cédula y reservar exigen el CAPTCHA. null: no se pide. */
+  captchaSiteKey: string | null;
 }
 
 /**
