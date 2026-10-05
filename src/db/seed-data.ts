@@ -376,7 +376,7 @@ function seedTenant(
   const age = tenant.createdDaysAgo ?? 120;
   const createdAt = daysAgoISO(age);
 
-  db.users.push({ id: userId, ...tenant.user, avatarUrl: null, platformRole: null, isActive: true, createdAt });
+  db.users.push({ id: userId, ...tenant.user, avatarUrl: null, platformRole: null, platformOwner: false, isActive: true, createdAt });
   db.credentials.push({ userId, email: tenant.user.email, password: tenant.password });
   db.businessUsers.push({ businessId, userId, role: "owner", clinicalAccess: true, createdAt });
   const ownerActor = { userId, name: `${tenant.user.firstName} ${tenant.user.lastName}`, role: "owner" as const };
@@ -424,7 +424,7 @@ function seedTenant(
   for (const member of tenant.members) {
     const memberId = crypto.randomUUID();
     const joinedAt = daysAgoISO(Math.min(40, age - 1));
-    db.users.push({ id: memberId, firstName: member.firstName, lastName: member.lastName, email: member.email, phone: "", avatarUrl: null, platformRole: null, isActive: true, createdAt: joinedAt });
+    db.users.push({ id: memberId, firstName: member.firstName, lastName: member.lastName, email: member.email, phone: "", avatarUrl: null, platformRole: null, platformOwner: false, isActive: true, createdAt: joinedAt });
     db.credentials.push({ userId: memberId, email: member.email, password: tenant.password });
     db.businessUsers.push({ businessId, userId: memberId, role: member.role, clinicalAccess: false, createdAt: joinedAt });
     db.auditLogs.push({
@@ -864,6 +864,7 @@ export function createSeedDatabase(): SeedDatabase {
     phone: "",
     avatarUrl: null,
     platformRole: "super_admin",
+    platformOwner: true,
     isActive: true,
     createdAt: daysAgoISO(200),
   });
@@ -875,7 +876,7 @@ export function createSeedDatabase(): SeedDatabase {
   for (const tenant of TENANTS) seedTenant(db, tenant, now, random, superAdmin);
 
   const pedroId = crypto.randomUUID();
-  db.users.push({ id: pedroId, ...UNFINISHED_SIGNUP, avatarUrl: null, platformRole: null, isActive: true, createdAt: daysAgoISO(2) });
+  db.users.push({ id: pedroId, ...UNFINISHED_SIGNUP, avatarUrl: null, platformRole: null, platformOwner: false, isActive: true, createdAt: daysAgoISO(2) });
   db.credentials.push({ userId: pedroId, email: UNFINISHED_SIGNUP.email, password: DEMO_ACCOUNT.password });
   return db;
 }

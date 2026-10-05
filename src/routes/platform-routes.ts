@@ -123,6 +123,14 @@ adminRoutes.put(
   handle((req) => adminService.setUserPassword(req.ctx, req.params.userId, req.body)),
 );
 adminRoutes.get(
+  "/platform-admins",
+  handle((req) => adminService.listPlatformAdmins(req.ctx)),
+);
+adminRoutes.post(
+  "/platform-admins",
+  handle((req) => adminService.addPlatformAdmin(req.ctx, req.body)),
+);
+adminRoutes.get(
   "/audit-logs",
   handle((req) => adminService.listAuditLogs(req.ctx, req.query)),
 );

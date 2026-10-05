@@ -27,6 +27,8 @@ export interface Session {
   role: BusinessRole | null;
   businessStatus: BusinessStatus | null;
   platformRole: PlatformRole | null;
+  /** Super admin principal: gestiona el equipo de super admins. */
+  platformOwner: boolean;
   /** Puede ver historias clínicas: propietario o miembro autorizado (el super admin, en modo soporte). */
   clinicalAccess: boolean;
 }
@@ -107,6 +109,7 @@ async function resolveSession(db: Db, user: User): Promise<Session | null> {
     role: membership?.role ?? null,
     businessStatus: membership?.status ?? null,
     platformRole: user.platformRole,
+    platformOwner: user.platformOwner,
     clinicalAccess: membership ? membership.role === "owner" || membership.clinicalAccess : false,
   };
 }

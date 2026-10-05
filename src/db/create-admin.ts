@@ -25,15 +25,26 @@ async function createAdmin() {
       "update users set platform_role = 'super_admin', is_active = true, password_hash = $2 where id = $1",
       [existing.id, await hashPassword(password)],
     );
+    await makeOwnerIfNone(existing.id);
     console.info(`✓ ${email.data} ahora es super admin (contraseña actualizada).`);
     return;
   }
-  await pool.query(
+  const created = await one<{ id: string }>(
+    pool,
     `insert into users (first_name, last_name, email, password_hash, platform_role)
-     values ($1, $2, $3, $4, 'super_admin')`,
+     values ($1, $2, $3, $4, 'super_admin') returning id`,
     [firstName, lastName, email.data, await hashPassword(password)],
   );
+  await makeOwnerIfNone(created!.id);
   console.info(`✓ Super admin creado: ${email.data}`);
+}
+
+/** Si aún no hay super admin principal (el que gestiona a los demás), lo es esta cuenta. */
+async function makeOwnerIfNone(userId: string): Promise<void> {
+  await pool.query(
+    "update users set platform_owner = true where id = $1 and not exists (select 1 from users where platform_owner)",
+    [userId],
+  );
 }
 
 try {

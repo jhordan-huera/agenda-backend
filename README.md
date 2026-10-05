@@ -141,6 +141,11 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   campo existente no cambia de tipo) o duplica uno de la plataforma. Cada servicio puede tener su
   formato. Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
   Storage (en local, carpeta `storage/` y rutas `/api/files`); no se borran.
+- **Equipo de la plataforma** (migración 020): `users.platform_owner` marca al super admin principal
+  (la migración lo pone en el que ya existía; `db:create-admin` lo pone si aún no hay ninguno).
+  `GET/POST /admin/platform-admins` lista y agrega super admins (agregar, sólo el principal). Las
+  rutas de usuarios (`/admin/users/:id/active` y `/password`) sólo dejan tocar a otro super admin al
+  principal, y nunca al principal ni a uno mismo.
 - **Avisos por WhatsApp** (migración 019): `notification_settings` lleva `whatsappOnStatusChange` y
   `whatsappFollowUps` (la migración los activa en los negocios que ya existían). El aviso lo abre el
   front con un enlace `wa.me`; `POST /businesses/:id/appointments/:id/whatsapp-notice` (`kind`:

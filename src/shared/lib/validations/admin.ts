@@ -49,6 +49,9 @@ export const userPasswordSchema = z.object({ password: passwordField });
 /** Miembro del equipo de un negocio, creado por el super admin con la contraseña que elige. */
 export const adminMemberSchema = teamInviteSchema.extend({ password: passwordField });
 
+/** Otro super admin para el equipo de soporte, con la contraseña que elige el principal. */
+export const platformAdminSchema = adminMemberSchema.omit({ role: true });
+
 /** Eliminar un negocio: hay que escribir su nombre para confirmar. */
 export const businessDeletionSchema = z.object({ confirmName: z.string().trim().min(1, "Escribe el nombre del negocio") });
 
@@ -68,4 +71,5 @@ export type UserPasswordInput = z.infer<typeof userPasswordSchema>;
 export type PlanRejectionInput = z.infer<typeof planRejectionSchema>;
 export type BusinessCategoryInput = z.infer<typeof businessCategoryInputSchema>;
 export type AdminMemberInput = z.infer<typeof adminMemberSchema>;
+export type PlatformAdminInput = z.infer<typeof platformAdminSchema>;
 export type BusinessDeletionInput = z.infer<typeof businessDeletionSchema>;

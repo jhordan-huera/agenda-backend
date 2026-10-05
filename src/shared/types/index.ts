@@ -29,6 +29,11 @@ export interface User {
   avatarUrl: string | null;
   /** "super_admin" para el operador de la plataforma; null para el resto de usuarios. */
   platformRole: PlatformRole | null;
+  /**
+   * Super admin principal: el único que agrega, desactiva o cambia la contraseña de los demás
+   * super admins (el equipo de soporte). Nadie puede tocar su cuenta.
+   */
+  platformOwner: boolean;
   /** false = el super admin desactivó el acceso de esta cuenta. */
   isActive: boolean;
   createdAt: ISODateTime;
@@ -327,7 +332,8 @@ export type EmailType =
   | "plan_change_requested"
   | "plan_change_approved"
   | "plan_changed"
-  | "plan_change_rejected";
+  | "plan_change_rejected"
+  | "platform_admin_added";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -673,6 +679,15 @@ export interface AdminBusinessSummary {
 export interface AdminBusinessDetail extends AdminBusinessSummary {
   members: TeamMember[];
   recentActivity: AuditLog[];
+}
+
+/** Un super admin del equipo de la plataforma (Configuración del panel /admin). */
+export interface PlatformAdmin {
+  user: User;
+  /** Tiene activada la verificación en dos pasos. */
+  twoFactorEnabled: boolean;
+  /** Último inicio de sesión (null si nunca entró). */
+  lastSignInAt: ISODateTime | null;
 }
 
 export interface AdminUserSummary {

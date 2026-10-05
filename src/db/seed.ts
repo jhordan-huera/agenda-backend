@@ -128,9 +128,9 @@ async function seed() {
     await insertRows(
       db,
       "users",
-      ["id", "first_name", "last_name", "email", "phone", "avatar_url", "platform_role", "is_active", "password_hash", "created_at"],
+      ["id", "first_name", "last_name", "email", "phone", "avatar_url", "platform_role", "platform_owner", "is_active", "password_hash", "created_at"],
       data.users.map((u) => [
-        u.id, u.firstName, u.lastName, u.email, u.phone, u.avatarUrl, u.platformRole, u.isActive, passwordOf.get(u.id), u.createdAt,
+        u.id, u.firstName, u.lastName, u.email, u.phone, u.avatarUrl, u.platformRole, u.platformOwner, u.isActive, passwordOf.get(u.id), u.createdAt,
       ]),
     );
     await insertRows(

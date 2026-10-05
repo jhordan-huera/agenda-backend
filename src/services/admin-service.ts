@@ -24,6 +24,7 @@ import {
   isSameBusinessName,
   planIdSchema,
   planRejectionSchema,
+  platformAdminSchema,
   platformSettingsSchema,
   userPasswordSchema,
 } from "../shared/lib/validations/admin.ts";
@@ -41,6 +42,7 @@ import type {
   EmailNotification,
   PlanChangeRequest,
   PlanId,
+  PlatformAdmin,
   PlatformSettings,
   PlatformStats,
   Subscription,
@@ -53,7 +55,7 @@ import { findTeamMember, listTeamMembers } from "./account-service.ts";
 import { logAudit } from "./audit.ts";
 import { insertBusiness, isSlugTaken } from "./business-factory.ts";
 import { requireAssignableCategory } from "./category-service.ts";
-import { authorizeSuperAdmin, parseInput, type RequestContext } from "./context.ts";
+import { authorizeSuperAdmin, parseInput, requireUser, type RequestContext } from "./context.ts";
 import { fileStorage } from "./file-storage.ts";
 import { appOrigin, PASSWORD_MASK, queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
@@ -165,6 +167,22 @@ async function findOwner(db: Db, businessId: string) {
 export const platformService = {
   getSettings: (): Promise<PlatformSettings> => getPlatformSettings(pool),
 };
+
+/**
+ * Cuentas de super admin: sólo el principal desactiva o cambia la contraseña de los demás; nadie
+ * toca la del principal ni la suya propia desde aquí (la propia se cambia en su configuración).
+ */
+function assertCanManageAccount(ctx: RequestContext, target: User, action: string): void {
+  if (!target.platformRole) return;
+  const me = requireUser(ctx);
+  if (target.id === me.id) {
+    throw new AppError("forbidden", "Tu propia cuenta se gestiona desde tu configuración.");
+  }
+  if (target.platformOwner) throw new AppError("forbidden", "No se puede " + action + " el super admin principal.");
+  if (!me.platformOwner) {
+    throw new AppError("forbidden", "Sólo el super admin principal puede " + action + " otro super admin.");
+  }
+}
 
 export const adminService = {
   async getStats(ctx: RequestContext): Promise<PlatformStats> {
@@ -556,7 +574,7 @@ export const adminService = {
     const active = parseInput(z.boolean(), isActive);
     return transaction(async (db) => {
       const current = await findUser(db, userId, true);
-      if (current.platformRole) throw new AppError("forbidden", "No se puede desactivar una cuenta de super admin.");
+      assertCanManageAccount(ctx, current, "desactivar");
       if (current.isActive === active) return current;
       const user = (await one<User>(db, `update users set is_active = $2 where id = $1 returning ${userColumns()}`, [
         userId,
@@ -581,9 +599,7 @@ export const adminService = {
     const { password } = parseInput(userPasswordSchema, input);
     await transaction(async (db) => {
       const user = await findUser(db, userId, true);
-      if (user.platformRole) {
-        throw new AppError("forbidden", "La contraseña del super admin se cambia desde su propia configuración.");
-      }
+      assertCanManageAccount(ctx, user, "cambiar la contraseña de");
       await db.query("update users set password_hash = $2 where id = $1", [userId, await hashPassword(password)]);
       await db.query("delete from sessions where user_id = $1", [userId]);
       await queueEmail(db, {
@@ -601,6 +617,64 @@ export const adminService = {
         entityId: userId,
         summary: `Cambió la contraseña de ${getFullName(user)} (${user.email})`,
       });
+    });
+  },
+
+  /** El equipo de la plataforma: los super admins, con su verificación en dos pasos y su último acceso. */
+  async listPlatformAdmins(ctx: RequestContext): Promise<PlatformAdmin[]> {
+    authorizeSuperAdmin(ctx);
+    const rows = await many<User & { twoFactorEnabled: boolean; lastSignInAt: string | null }>(
+      pool,
+      `select ${userColumns("u")}, u.two_factor_enabled_at is not null as "twoFactorEnabled",
+              (select max(a.created_at) from audit_logs a
+                where a.entity_type = 'session' and a.action = 'session.login' and a.actor_id = u.id) as "lastSignInAt"
+         from users u
+        where u.platform_role = 'super_admin'
+        order by u.platform_owner desc, u.created_at`,
+    );
+    return rows.map(({ twoFactorEnabled, lastSignInAt, ...user }) => ({ user, twoFactorEnabled, lastSignInAt }));
+  },
+
+  /**
+   * Agrega otro super admin para ayudar con el soporte (sólo el principal). Tiene los mismos
+   * permisos de plataforma salvo gestionar a otros super admins; sus acciones quedan con su nombre.
+   */
+  async addPlatformAdmin(ctx: RequestContext, input: unknown): Promise<PlatformAdmin> {
+    const actor = authorizeSuperAdmin(ctx);
+    if (!requireUser(ctx).platformOwner) {
+      throw new AppError("forbidden", "Sólo el super admin principal puede agregar a otros super admins.");
+    }
+    const data = parseInput(platformAdminSchema, input);
+    return transaction(async (db) => {
+      if (await isEmailRegistered(db, data.email)) throw new AppError("conflict", "Ya existe una cuenta con ese email.");
+      const created = await createUserAccount(db, data);
+      const user = (await one<User>(
+        db,
+        `update users set platform_role = 'super_admin' where id = $1 returning ${userColumns()}`,
+        [created.id],
+      ))!;
+      await queueEmail(db, {
+        businessId: null,
+        type: "platform_admin_added",
+        to: user.email,
+        secret: data.password,
+        ...emailTemplates.platformAdminAdded({
+          firstName: user.firstName,
+          addedBy: getFullName(requireUser(ctx)),
+          email: user.email,
+          password: PASSWORD_MASK,
+          loginUrl: `${appOrigin()}/login`,
+        }),
+      });
+      await logAudit(db, {
+        businessId: null,
+        actor,
+        action: "platform.admin_added",
+        entityType: "user",
+        entityId: user.id,
+        summary: `Agregó a ${getFullName(user)} (${user.email}) como super admin`,
+      });
+      return { user, twoFactorEnabled: false, lastSignInAt: null };
     });
   },
 

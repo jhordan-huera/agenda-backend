@@ -41,6 +41,7 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   plan_change_approved: ["Cambio de plan aprobado", "Cambios de plan aprobados"],
   plan_changed: ["Cambio de plan", "Cambios de plan"],
   plan_change_rejected: ["Cambio de plan rechazado", "Cambios de plan rechazados"],
+  platform_admin_added: ["Alta de super admin", "Altas de super admin"],
 };
 
 /** "mar 7 oct 10:00" */

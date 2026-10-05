@@ -17,6 +17,7 @@ export const userColumns = columns({
   phone: "phone",
   avatarUrl: "avatar_url",
   platformRole: "platform_role",
+  platformOwner: "platform_owner",
   isActive: "is_active",
   createdAt: "created_at",
 });

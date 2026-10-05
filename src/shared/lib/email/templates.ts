@@ -128,6 +128,26 @@ export const emailTemplates = {
       ],
     }),
 
+  platformAdminAdded: (data: { firstName: string; addedBy: string; email: string; password: string; loginUrl: string }): EmailContent =>
+    platformEmail({
+      subject: `Ahora eres super admin de ${APP_NAME}`,
+      preheader: "Ya puedes entrar al panel de plataforma para dar soporte.",
+      title: "Bienvenido al equipo de soporte",
+      greeting: `Hola ${data.firstName}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: `${data.addedBy} te agregó como super admin de ${APP_NAME}: podrás ver los negocios, gestionarlos en modo soporte y ayudar a sus usuarios. Todo lo que hagas queda registrado con tu nombre.`,
+        },
+        credentials(data.email, data.password),
+        { kind: "button", label: "Entrar al panel", url: data.loginUrl },
+        {
+          kind: "note",
+          text: "Por seguridad, activa la verificación en dos pasos en Configuración apenas entres. Guarda este email: si necesitas otra contraseña, pídesela a quien te agregó.",
+        },
+      ],
+    }),
+
   businessCreated: (data: {
     firstName: string;
     businessName: string;
