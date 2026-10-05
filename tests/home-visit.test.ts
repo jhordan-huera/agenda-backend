@@ -94,8 +94,8 @@ r = await call("PUT", `${B}/appointments/${apptId}`, { clientId: client.id, serv
 ok(r.status === 200 && r.body.homeVisit === null, "pasar la cita al local", r.body);
 r = await call("GET", `${B}/notifications`);
 const confirmation = r.body.find((n: { appointmentId: string; type: string }) => n.appointmentId === apptId && n.type === "appointment_confirmed");
-ok(confirmation && /Precio: \$45/.test(confirmation.body) && /a domicilio/.test(confirmation.body), "email con precio y lugar a domicilio", confirmation?.body);
-const received = r.body.find((n: { type: string; body: string }) => n.type === "booking_received" && n.body.includes("a domicilio"));
+ok(confirmation && /Precio: \$45/.test(confirmation.body) && /a domicilio/i.test(confirmation.body), "email con precio y lugar a domicilio", confirmation?.body);
+const received = r.body.find((n: { type: string; body: string }) => n.type === "booking_received" && /a domicilio/i.test(n.body));
 ok(received && /Ubicación: https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=-2\.9,-79/.test(received.body), "el negocio recibe el enlace al punto del mapa", received?.body);
 
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de domicilio pasaron");

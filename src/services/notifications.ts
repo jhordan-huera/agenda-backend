@@ -23,10 +23,10 @@ export async function queueEmail(
   message: { businessId: string | null; type: EmailType; to: string; appointmentId?: string | null } & EmailContent,
 ): Promise<boolean> {
   const result = await db.query(
-    `insert into notifications (business_id, type, to_email, subject, body, appointment_id, status)
-     values ($1, $2, $3, $4, $5, $6, 'queued')
+    `insert into notifications (business_id, type, to_email, subject, body, html, appointment_id, status)
+     values ($1, $2, $3, $4, $5, $6, $7, 'queued')
      on conflict do nothing`,
-    [message.businessId, message.type, message.to, message.subject, message.body, message.appointmentId ?? null],
+    [message.businessId, message.type, message.to, message.subject, message.body, message.html, message.appointmentId ?? null],
   );
   const inserted = (result.rowCount ?? 0) > 0;
   if (inserted) scheduleEmailDelivery();

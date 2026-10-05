@@ -42,6 +42,8 @@ interface QueuedEmail {
   to: string;
   subject: string;
   body: string;
+  /** Versión con diseño (null en los emails anteriores a la migración 012). */
+  html: string | null;
 }
 
 async function send(email: QueuedEmail): Promise<void> {
@@ -51,6 +53,7 @@ async function send(email: QueuedEmail): Promise<void> {
     to: redirectTo ?? email.to,
     subject: redirectTo ? `[Para ${email.to}] ${email.subject}` : email.subject,
     text: email.body,
+    ...(email.html ? { html: email.html } : {}),
   });
 }
 
@@ -96,7 +99,7 @@ export async function processEmailQueue(options: { maxBatches?: number } = {}): 
         // skip locked: varias instancias de la API nunca envían el mismo email.
         const batch = await many<QueuedEmail>(
           db,
-          `select id, to_email as "to", subject, body from notifications
+          `select id, to_email as "to", subject, body, html from notifications
             where status = 'queued'
             order by created_at
             limit $1
