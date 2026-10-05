@@ -16,6 +16,8 @@
     "db:seed": "node --env-file-if-exists=.env src/db/seed.ts",
     "db:create-admin": "node --env-file-if-exists=.env src/db/create-admin.ts",
     "db:reset-2fa": "node --env-file-if-exists=.env src/db/reset-two-factor.ts",
+    "backup": "node --env-file-if-exists=.env scripts/backup.ts",
+    "backup:decrypt": "node --env-file-if-exists=.env scripts/decrypt-backup.ts",
     "sync:shared": "node scripts/sync-shared.ts"
   },
   "dependencies": {

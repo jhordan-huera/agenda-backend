@@ -1,0 +1,93 @@
+name: Copia de seguridad
+
+# Copia diaria de la base de datos (el plan gratis de Supabase no hace copias). scripts/backup.ts
+# hace el volcado, lo restaura en una base de prueba (el servicio postgres de abajo) para comprobar
+# que está completo, lo cifra con BACKUP_PASSPHRASE y lo envía por Gmail a BACKUP_EMAIL. Avisa por
+# ntfy y da señal de vida a healthchecks.io. El registro (público) sólo muestra tamaños.
+on:
+  schedule:
+    # 08:17 UTC = 03:17 en Ecuador, cuando casi nadie usa la aplicación.
+    - cron: "17 8 * * *"
+  # "Run workflow" en la pestaña Actions: una copia en cualquier momento.
+  workflow_dispatch:
+
+# El job sólo lee el código: el token de GitHub de la ejecución no puede escribir en el repositorio.
+permissions:
+  contents: read
+
+concurrency:
+  group: agendo-backup
+  cancel-in-progress: false
+
+jobs:
+  copia:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      # Base vacía y desechable donde se comprueba que la copia se restaura entera.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: comprobacion
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
+      # pg_dump debe ser de la misma versión que el servidor (Supabase usa PostgreSQL 17).
+      - name: Instalar el cliente de PostgreSQL 17
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          . /etc/os-release
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 > /dev/null
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+      - name: Copia, comprobación y envío
+        env:
+          NODE_ENV: production
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_SSL: "true"
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+          BACKUP_EMAIL: ${{ vars.BACKUP_EMAIL }}
+          RESTORE_CHECK_URL: postgresql://postgres:comprobacion@localhost:5432/postgres
+          PG_DUMP: /usr/lib/postgresql/17/bin/pg_dump
+          PSQL: /usr/lib/postgresql/17/bin/psql
+          FRONTEND_URL: ${{ vars.APP_URL }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_FROM_NAME: ${{ vars.GMAIL_FROM_NAME || 'Agenda360' }}
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+          APP_URL: ${{ vars.APP_URL }}
+          NTFY_SERVER: ${{ vars.NTFY_SERVER }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: node scripts/backup.ts
+
+      # Señal de vida (opcional): healthchecks.io avisa si un día no llega la copia.
+      - name: Avisar a healthchecks.io
+        if: always()
+        env:
+          HEALTHCHECK_URL: ${{ secrets.BACKUP_HEALTHCHECK_URL }}
+          SUFIJO: ${{ job.status != 'success' && '/fail' || '' }}
+        run: |
+          if [ -z "$HEALTHCHECK_URL" ]; then exit 0; fi
+          curl -fsS -m 10 --retry 3 -o /dev/null "$HEALTHCHECK_URL$SUFIJO"

@@ -13,23 +13,10 @@
  * Prueba local: node --env-file=.env scripts/cron.ts
  */
 import type { ScheduledTasksReport } from "../src/jobs/scheduled-tasks.ts";
-
-interface Notice {
-  title: string;
-  message: string;
-  /** Escala de ntfy: 2 baja (sin sonido), 3 normal, 4 alta, 5 urgente (el cron no pudo trabajar). */
-  priority: 2 | 3 | 4 | 5;
-  tags: string[];
-}
+import { env, notify, type Notice } from "./notify.ts";
 
 /** Reintentos ante un fallo (p. ej. la base de datos no responde un momento). */
 const RETRY_DELAYS_MS = [5_000, 20_000];
-/** ntfy no muestra como texto los mensajes de más de 4096 bytes. */
-const NTFY_LIMIT = 4_000;
-
-function env(name: string): string | undefined {
-  return process.env[name]?.trim() || undefined;
-}
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
@@ -95,36 +82,6 @@ export function buildSecurityNotice(report: ScheduledTasksReport): Notice | null
     priority: 4,
     tags: ["lock"],
   };
-}
-
-async function notify(notice: Notice): Promise<void> {
-  const topic = env("NTFY_TOPIC");
-  // Sólo el título: el registro de Actions es público y el mensaje puede llevar cuentas.
-  console.info(`[ntfy] ${notice.title}`);
-  if (!topic) {
-    console.warn("Sin NTFY_TOPIC: el aviso sólo queda en este registro.");
-    return;
-  }
-  const server = (env("NTFY_SERVER") ?? "https://ntfy.sh").replace(/\/+$/, "");
-  const appUrl = env("APP_URL");
-  const message =
-    Buffer.byteLength(notice.message) <= NTFY_LIMIT
-      ? notice.message
-      : Buffer.from(notice.message).subarray(0, NTFY_LIMIT - 10).toString().replace(/�+$/, "") + "\n…";
-  const response = await fetch(`${server}/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      topic,
-      title: notice.title,
-      message,
-      priority: notice.priority,
-      tags: notice.tags,
-      ...(appUrl ? { click: `${appUrl.replace(/\/+$/, "")}/admin` } : {}),
-    }),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!response.ok) throw new Error(`ntfy respondió ${response.status}: ${(await response.text()).slice(0, 200)}`);
 }
 
 /** El cron no pudo trabajar: aviso urgente y el job de GitHub termina con error. */

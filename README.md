@@ -217,6 +217,38 @@ marca como enviados o, tras 5 intentos, fallidos (con el motivo en `last_error`)
 - Gmail gratuito permite unos 500 emails al día; para más volumen conviene un proveedor
   transaccional (Resend, SES…): sólo cambia `mailer.ts`.
 
+## Copias de seguridad
+
+El plan gratis de Supabase no hace copias. `.github/workflows/backup.yml` ejecuta cada día (03:17 en
+Ecuador) `scripts/backup.ts`:
+
+1. `pg_dump` del esquema `public` (estructura y datos de todas las tablas) por el pooler de
+   Supabase en modo sesión (puerto 5432; pg_dump no funciona en el 6543).
+2. **La restaura en un PostgreSQL vacío y desechable** del propio job y compara las filas de cada
+   tabla: cualquier error o fila que falte hace fallar el job (la copia se envía igual).
+3. La comprime y la **cifra** (AES-256-GCM, clave derivada de `BACKUP_PASSPHRASE` con scrypt):
+   sin la clave nadie puede abrirla, tampoco Google.
+4. La envía como adjunto a `BACKUP_EMAIL` por Gmail y avisa por ntfy (sin sonido si salió bien,
+   urgente si falló). Opcional: `BACKUP_HEALTHCHECK_URL` (healthchecks.io avisa si un día no llega).
+
+No incluye los archivos de la historia clínica (Supabase Storage), sólo la base de datos. Si la
+copia cifrada se acerca a 10 MB, el aviso recomienda pasar a otro almacenamiento (Gmail admite
+adjuntos de unos 18 MB).
+
+**Recuperar una copia:**
+
+1. Descarga el adjunto `agenda360-AAAA-MM-DD.sql.gz.enc` en la carpeta de este proyecto.
+2. `npm run backup:decrypt -- agenda360-AAAA-MM-DD.sql.gz.enc` (usa `BACKUP_PASSPHRASE` de `.env` o
+   te la pide) → `agenda360-AAAA-MM-DD.sql`.
+3. Restáurala en una base de datos **vacía** (un proyecto nuevo de Supabase o un PostgreSQL 17
+   local): `psql "<URL de la base nueva>" -f agenda360-AAAA-MM-DD.sql`. Luego apunta
+   `DATABASE_URL` (Vercel, secretos de GitHub y `.env`) a esa base. Nunca la restaures encima de
+   la base de producción con datos.
+4. Borra el `.sql` descifrado al terminar: tiene datos personales y de salud.
+
+Copia manual a una carpeta (necesita pg_dump 17: `brew install postgresql@17`):
+`PG_DUMP=/opt/homebrew/opt/postgresql@17/bin/pg_dump npm run backup -- --out ~/Copias`.
+
 ## Pruebas
 
 `npm test` crea un PostgreSQL temporal (con `initdb`; en macOS `brew install postgresql@16`) o usa
@@ -257,6 +289,9 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
      el celular) y, opcional, `HEALTHCHECK_URL` (healthchecks.io avisa si el cron deja de ejecutarse).
    - Variables: `APP_URL` (la del frontend: enlaces de los emails y del aviso) y, opcionales,
      `GMAIL_FROM_NAME` (por defecto "Agenda360") y `NTFY_SERVER`.
+   - Copias de seguridad: secreto `BACKUP_PASSPHRASE` (el de `.env`), variable `BACKUP_EMAIL`
+     (quién recibe las copias) y, opcional, secreto `BACKUP_HEALTHCHECK_URL`. Pruébalo en
+     **Actions → Copia de seguridad → Run workflow**.
    - Pruébalo en **Actions → Recordatorios y correos → Run workflow**.
 5. **Comprobación:** `https://<frontend>/api/health` responde `{"ok":true,"database":true}`, el
    login funciona (la cookie pasa por el proxy) y una reserva de prueba envía su email.
