@@ -97,7 +97,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 | Perfil | `GET/PUT /users/:userId` |
 | Negocio | `POST /businesses` (onboarding) · `GET /businesses/slug-availability` · `GET/PATCH /businesses/:id` · `GET …/professional` |
 | Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status`) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
-| Historia clínica | `GET /businesses/:id/clinical-templates` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
+| Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `POST /public/businesses/:slug/clients/lookup` · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` |
 | Super admin | `/admin/stats` · `/admin/businesses` (+ `status`, `plan`, `members`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` |
 | Estado | `GET /health` |
@@ -137,6 +137,15 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   él autoriza y el super admin en modo soporte (queda en la auditoría). Las evoluciones no se editan ni se
   borran (se añaden aclaraciones), cada consulta queda en la auditoría y un paciente con historia
   no se puede eliminar.
+- **Formatos propios, por servicio y archivos** (migración 010): en los planes Pro y Business el
+  propietario crea y edita sus formatos (`/clinical-templates`, cada cambio es una versión nueva; un
+  campo existente no cambia de tipo) o duplica uno de la plataforma. Cada servicio puede tener su
+  formato. Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
+  Storage (en local, carpeta `storage/` y rutas `/api/files`); no se borran.
+- **Odontograma, mapa del cuerpo y escalas** (migración 011): tipos de campo `odontogram` (FDI, por
+  superficie y pieza), `bodymap` (frente y espalda) y `questionnaire` (PHQ-9 y GAD-7 con puntaje,
+  interpretación y aviso en la pregunta 9 del PHQ-9). Versión 2 de atención médica, odontología,
+  fisioterapia y psicología, y plantilla de escalas.
 - **Plantillas de historia clínica** (migración 009): cada evolución se escribe con un formato
   (`clinical_templates` + `clinical_template_versions`) y guarda sus valores en `clinical_notes.data`
   (jsonb). Tipos de campo: texto, texto largo, número con unidad, escala, opción única o múltiple,
@@ -207,13 +216,14 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    | Variable | Valor |
    | --- | --- |
    | `NODE_ENV` | `production` (cookie `Secure` y emails a sus destinatarios reales) |
-   | `DATABASE_URL` | La de Supabase con el **pooler** (puerto 6543), como en `.env` |
+   | `DATABASE_URL` | La de `.env`: el **pooler compartido** `aws-0-us-west-2.pooler.supabase.com:6543` con usuario `postgres.<ref>`. La dirección directa `db.<ref>.supabase.co` sólo tiene IPv6 y Vercel no la alcanza |
    | `DATABASE_SSL` | `true` |
    | `DATABASE_POOL_MAX` | `5` |
    | `FRONTEND_URL` | URL pública del frontend (p. ej. `https://agenda-front.vercel.app`) |
    | `TRUST_PROXY` | `1` |
    | `GMAIL_USER`, `GMAIL_FROM_NAME`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` | Los de `.env` |
    | `CRON_SECRET` | El de `.env` (mismo valor que el secreto de GitHub) |
+   | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Para los archivos de la historia clínica (Supabase → Project Settings → API Keys) |
    | `PROXY_SECRET` | El de `.env` (mismo valor que en el frontend) |
 
 3. **Proyecto del frontend** (agenda-front): variables `API_URL` (URL de este proyecto, p. ej.
