@@ -81,6 +81,8 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   reminders: true,
   cancellations: true,
   reminderHoursBefore: 24,
+  whatsappOnStatusChange: true,
+  whatsappFollowUps: true,
 };
 
 /** Horario sugerido en el onboarding: lunes a viernes 08:00–17:00, sábado 09:00–13:00, domingo cerrado. */

@@ -76,6 +76,9 @@ export const notificationSettingsSchema = z.object({
   reminders: z.boolean(),
   cancellations: z.boolean(),
   reminderHoursBefore: z.number().int().min(1).max(72),
+  // Con valor por defecto: los negocios guardados antes de los avisos por WhatsApp no los traen.
+  whatsappOnStatusChange: z.boolean().default(true),
+  whatsappFollowUps: z.boolean().default(true),
 });
 
 /** Datos del negocio pedidos en el onboarding (pasos 1–3). */

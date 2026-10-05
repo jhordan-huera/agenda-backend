@@ -12,7 +12,7 @@ import { BLOCKING_STATUSES } from "../shared/lib/constants/appointment-status.ts
 import { formatNumericDate, formatTimeRange } from "../shared/lib/format.ts";
 import { documentIdError } from "../shared/lib/identity.ts";
 import { addMinutesToTime } from "../shared/lib/time.ts";
-import { appointmentSchema, appointmentStatusSchema } from "../shared/lib/validations/appointment.ts";
+import { appointmentSchema, appointmentStatusSchema, whatsAppNoticeSchema } from "../shared/lib/validations/appointment.ts";
 import { clientSchema } from "../shared/lib/validations/client.ts";
 import { dateField } from "../shared/lib/validations/fields.ts";
 import { blockedTimeSchema, weeklyScheduleSchema } from "../shared/lib/validations/schedule.ts";
@@ -27,6 +27,7 @@ import type {
   Professional,
   Schedule,
   Service,
+  WhatsAppNoticeKind,
 } from "../shared/types/index.ts";
 import { describeAppointment, logAudit } from "./audit.ts";
 import {
@@ -553,6 +554,42 @@ export const appointmentService = {
       return appointment;
     });
   },
+
+  /**
+   * El profesional abrió WhatsApp con el aviso ya escrito de un cambio de la cita (enlace wa.me).
+   * Sólo se sabe que lo abrió, no si lo envió: así lo dice la actividad.
+   */
+  async logWhatsAppNotice(ctx: RequestContext, businessId: string, appointmentId: string, kind: unknown): Promise<void> {
+    const notice = parseInput(whatsAppNoticeSchema, kind);
+    await transaction(async (db) => {
+      const actor = await authorize(db, ctx, businessId, "appointments.manage");
+      const appointment = await findOwned<Appointment>(
+        db,
+        "appointments",
+        appointmentColumns(),
+        businessId,
+        appointmentId,
+        "Cita no encontrada.",
+      );
+      await logAudit(db, {
+        businessId,
+        actor,
+        action: "appointment.whatsapp_notice",
+        entityType: "appointment",
+        entityId: appointment.id,
+        summary: `Abrió WhatsApp para avisar ${WHATSAPP_NOTICE_LABELS[notice]} a ${await describeAppointment(db, appointment)}`,
+      });
+    });
+  },
+};
+
+/** "Abrió WhatsApp para avisar que la cita está confirmada a María (06/10/2026 10:00)". */
+const WHATSAPP_NOTICE_LABELS: Record<WhatsAppNoticeKind, string> = {
+  confirmed: "que la cita está confirmada",
+  cancelled: "que la cita se canceló",
+  rescheduled: "el cambio de fecha u hora",
+  completed: "con un gracias por la visita",
+  no_show: "para reagendar (No asistió)",
 };
 
 /* --------------------------------- Horarios ---------------------------------- */

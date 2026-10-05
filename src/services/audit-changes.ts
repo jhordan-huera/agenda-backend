@@ -134,6 +134,8 @@ const NOTIFICATION_FIELDS: ChangeField<NotificationSettings>[] = [
   { key: "reminders", label: "Recordatorios", format: yesNo },
   { key: "cancellations", label: "Emails de cancelación", format: yesNo },
   { key: "reminderHoursBefore", label: "Recordatorio con antelación de", format: hours },
+  { key: "whatsappOnStatusChange", label: "Aviso por WhatsApp al confirmar, cancelar o reprogramar", format: yesNo },
+  { key: "whatsappFollowUps", label: "Aviso por WhatsApp al completar o marcar No asistió", format: yesNo },
 ];
 
 const BUSINESS_FIELDS: ChangeField<BusinessForAudit>[] = [

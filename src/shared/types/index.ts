@@ -86,7 +86,17 @@ export interface NotificationSettings {
   reminders: boolean;
   cancellations: boolean;
   reminderHoursBefore: number;
+  /**
+   * Al confirmar, cancelar o reprogramar una cita desde el panel, proponer el aviso por WhatsApp
+   * con el mensaje ya escrito (enlace wa.me: lo envía el profesional).
+   */
+  whatsappOnStatusChange: boolean;
+  /** Lo mismo al marcar Completada ("gracias por tu visita") o No asistió ("¿reagendamos?"). */
+  whatsappFollowUps: boolean;
 }
+
+/** Avisos por WhatsApp que se proponen al cambiar una cita. */
+export type WhatsAppNoticeKind = "confirmed" | "cancelled" | "rescheduled" | "completed" | "no_show";
 
 /** Un negocio suspendido no puede usar el panel ni recibir reservas online. */
 export type BusinessStatus = "active" | "suspended";
