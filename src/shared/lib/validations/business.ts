@@ -1,6 +1,5 @@
 // Copia de agenda-front/src/lib/validations/business.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
-import { PUBLIC_BOOKING_MIN_NOTICE_HOURS } from "../constants/business.ts";
 import { emailField, optionalEmailField, optionalText, phoneField, requiredText } from "./fields.ts";
 
 /** Categoría del negocio: la API comprueba que exista en la base de datos y esté activa. */
@@ -47,11 +46,8 @@ export const bookingSettingsSchema = z.object({
   minNoticeHours: z.coerce
     .number<string | number>("Ingresa un número")
     .int("Usa horas enteras")
-    .min(
-      PUBLIC_BOOKING_MIN_NOTICE_HOURS,
-      `Mínimo ${PUBLIC_BOOKING_MIN_NOTICE_HOURS} horas: los clientes reservan con al menos un día de anticipación`,
-    )
-    .max(720, "Máximo 720 horas"),
+    .min(0, "No puede ser negativo")
+    .max(720, "Máximo 720 horas (30 días)"),
   maxAdvanceDays: z.coerce
     .number<string | number>("Ingresa un número")
     .int("Usa días enteros")

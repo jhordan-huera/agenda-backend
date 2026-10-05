@@ -60,16 +60,16 @@ export const SLOT_INTERVAL_OPTIONS = [15, 30, 45, 60];
 export const DURATION_OPTIONS = [15, 30, 45, 60, 75, 90, 120, 150, 180];
 
 /**
- * Anticipación mínima de las reservas que hacen los clientes desde la página pública.
- * El negocio puede exigir más, nunca menos. El profesional, desde su panel, puede
+ * Anticipación mínima con que los clientes reservan desde la página pública, al crear un negocio.
+ * Cada profesional la cambia en Configuración → Agenda (de 0 a 720 horas). Desde su panel puede
  * agendar a cualquier hora (incluso para dentro de una hora).
  */
-export const PUBLIC_BOOKING_MIN_NOTICE_HOURS = 24;
+export const DEFAULT_MIN_NOTICE_HOURS = 24;
 
 export const DEFAULT_BOOKING_SETTINGS: BookingSettings = {
   alignSlotsToDuration: true,
   slotIntervalMinutes: 30,
-  minNoticeHours: PUBLIC_BOOKING_MIN_NOTICE_HOURS,
+  minNoticeHours: DEFAULT_MIN_NOTICE_HOURS,
   maxAdvanceDays: 60,
   allowCancellations: true,
   cancellationNoticeHours: 24,
