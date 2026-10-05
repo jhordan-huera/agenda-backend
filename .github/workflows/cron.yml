@@ -5,9 +5,10 @@ name: Recordatorios y correos
 # Los correos de reservas y avisos salen al momento; este cron cubre recordatorios y reintentos.
 on:
   schedule:
-    # Cada 10 minutos (repositorio público: minutos de Actions sin límite). GitHub puede
-    # retrasarlo en horas pico y lo pausa si el repositorio pasa 60 días sin actividad.
-    - cron: "*/10 * * * *"
+    # Cada 10 minutos (repositorio público: minutos de Actions sin límite), en los minutos
+    # 3, 13, 23… para esquivar el inicio de cada hora, cuando GitHub retrasa o descarta más
+    # ejecuciones. Lo pausa si el repositorio pasa 60 días sin actividad.
+    - cron: "3,13,23,33,43,53 * * * *"
   workflow_dispatch: # "Run workflow" en la pestaña Actions, para probarlo a mano
 
 concurrency:
