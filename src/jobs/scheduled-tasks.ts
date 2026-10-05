@@ -3,6 +3,7 @@ import { deleteExpiredSessions } from "../services/auth-service.ts";
 import { deleteStalePendingAttachments } from "../services/clinical-attachment-service.ts";
 import { processEmailQueue, type EmailQueueReport } from "../services/mailer.ts";
 import { runReminderJob } from "../services/notifications.ts";
+import type { EmailType } from "../shared/types/index.ts";
 
 /** Pone en cola los recordatorios de citas de todos los negocios activos. Devuelve cuántos. */
 export async function queueAllReminders(): Promise<number> {
@@ -24,6 +25,8 @@ export interface ScheduledTasksReport {
   emails: EmailQueueReport;
   /** Emails enviados desde la ejecución anterior: también los que salieron al momento (reservas, avisos). */
   sentSinceLastRun: number;
+  /** Detalle de esos emails (hasta MAX_SENT_DETAILS) para el aviso de ntfy. */
+  sentEmails: SentEmail[];
   /** Fecha de la ejecución anterior (null si es la primera). */
   since: string | null;
   /** Emails que siguen en cola al terminar (reintentos o lote máximo alcanzado). */
@@ -33,6 +36,29 @@ export interface ScheduledTasksReport {
   /** Registros de auditoría borrados por antigüedad (purge_audit_logs). */
   auditPurged: number;
   durationMs: number;
+}
+
+/**
+ * Un email enviado, tal como sale en el aviso de ntfy: el destinatario con el email enmascarado y
+ * el nombre abreviado ("María L."), sin más datos personales.
+ */
+export interface SentEmail {
+  type: EmailType;
+  to: string;
+  businessName: string | null;
+  /** Cliente de la cita (emails de citas). */
+  clientName: string | null;
+  date: string | null;
+  startTime: string | null;
+}
+
+/** Emails detallados en el aviso; del resto sólo se dice cuántos son. */
+const MAX_SENT_DETAILS = 40;
+
+/** "María López Vera" → "María L." */
+export function shortName(name: string): string {
+  const [first = "", second = ""] = name.trim().split(/\s+/);
+  return second ? `${first} ${second[0].toUpperCase()}.` : first;
 }
 
 /** Una cuenta (email enmascarado: el aviso sale por ntfy) con muchos intentos fallidos. */
@@ -96,10 +122,28 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
       where status = 'queued' or sent_at > coalesce($1::timestamptz, now() - interval '1 day')`,
     [previous?.ranAt ?? null],
   );
+  const sent = await many<SentEmail>(
+    pool,
+    `select n.type, n.to_email as "to", b.name as "businessName", c.name as "clientName",
+            to_char(a.date, 'YYYY-MM-DD') as date, to_char(a.start_time, 'HH24:MI') as "startTime"
+       from notifications n
+       left join businesses b on b.id = n.business_id
+       left join appointments a on a.id = n.appointment_id
+       left join clients c on c.id = a.client_id
+      where n.status = 'sent' and n.sent_at > coalesce($1::timestamptz, now() - interval '1 day') and n.sent_at <= $2
+      order by n.sent_at
+      limit $3`,
+    [previous?.ranAt ?? null, totals?.at ?? new Date().toISOString(), MAX_SENT_DETAILS],
+  );
   const report: ScheduledTasksReport = {
     reminders,
     emails,
     sentSinceLastRun: totals?.sent ?? 0,
+    sentEmails: sent.map((email) => ({
+      ...email,
+      to: maskEmail(email.to),
+      clientName: email.clientName ? shortName(email.clientName) : null,
+    })),
     since: previous?.ranAt ?? null,
     pending: totals?.pending ?? 0,
     security,

@@ -13,6 +13,8 @@ export interface Notice {
   /** Escala de ntfy: 2 baja (sin sonido), 3 normal, 4 alta, 5 urgente (un trabajo no pudo hacerse). */
   priority: 2 | 3 | 4 | 5;
   tags: string[];
+  /** Página del panel que abre el aviso al tocarlo (por defecto, /admin). */
+  click?: string;
 }
 
 /** ntfy no muestra como texto los mensajes de más de 4096 bytes. */
@@ -45,7 +47,7 @@ export async function notify(notice: Notice): Promise<void> {
       message,
       priority: notice.priority,
       tags: notice.tags,
-      ...(appUrl ? { click: `${appUrl.replace(/\/+$/, "")}/admin` } : {}),
+      ...(appUrl ? { click: `${appUrl.replace(/\/+$/, "")}${notice.click ?? "/admin"}` } : {}),
     }),
     signal: AbortSignal.timeout(30_000),
   });

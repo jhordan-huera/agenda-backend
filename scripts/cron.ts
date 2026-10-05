@@ -12,7 +12,9 @@
  *
  * Prueba local: node --env-file=.env scripts/cron.ts
  */
-import type { ScheduledTasksReport } from "../src/jobs/scheduled-tasks.ts";
+import type { ScheduledTasksReport, SentEmail } from "../src/jobs/scheduled-tasks.ts";
+import { formatShortDate } from "../src/shared/lib/format.ts";
+import type { EmailType } from "../src/shared/types/index.ts";
 import { env, notify, type Notice } from "./notify.ts";
 
 /** Reintentos ante un fallo (p. ej. la base de datos no responde un momento). */
@@ -21,13 +23,65 @@ const RETRY_DELAYS_MS = [5_000, 20_000];
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
+/** Grupos del aviso, en este orden: primero lo de las citas. [singular, plural] */
+const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
+  appointment_reminder: ["Recordatorio de cita", "Recordatorios de cita"],
+  booking_created: ["Reserva recibida (al cliente, pendiente de confirmar)", "Reservas recibidas (al cliente, pendientes de confirmar)"],
+  appointment_confirmed: ["Cita confirmada", "Citas confirmadas"],
+  appointment_updated: ["Cita modificada", "Citas modificadas"],
+  appointment_cancelled: ["Cita cancelada", "Citas canceladas"],
+  booking_received: ["Aviso de nueva reserva (al negocio)", "Avisos de nueva reserva (al negocio)"],
+  business_created: ["Negocio creado", "Negocios creados"],
+  team_invite: ["Alta en un equipo", "Altas en un equipo"],
+  password_reset: ["Contraseña cambiada", "Contraseñas cambiadas"],
+  welcome: ["Bienvenida", "Bienvenidas"],
+  business_suspended: ["Negocio suspendido", "Negocios suspendidos"],
+  business_reactivated: ["Negocio reactivado", "Negocios reactivados"],
+  plan_change_requested: ["Solicitud de cambio de plan", "Solicitudes de cambio de plan"],
+  plan_change_approved: ["Cambio de plan aprobado", "Cambios de plan aprobados"],
+  plan_changed: ["Cambio de plan", "Cambios de plan"],
+  plan_change_rejected: ["Cambio de plan rechazado", "Cambios de plan rechazados"],
+};
+
+/** "mar 7 oct 10:00" */
+const when = (email: SentEmail) => (email.date ? `${formatShortDate(email.date)}${email.startTime ? ` ${email.startTime}` : ""}` : null);
+
+/** Una línea por email: a quién (nombre abreviado y email enmascarado), de qué negocio y la cita. */
+function describeEmail(email: SentEmail): string {
+  const appointment = when(email);
+  if (email.type === "booking_received") {
+    const booking = email.clientName ? `reserva de ${email.clientName}${appointment ? ` para el ${appointment}` : ""}` : null;
+    return `• ${[email.businessName ?? email.to, booking].filter(Boolean).join(" · ")} (${email.to})`;
+  }
+  const recipient = email.clientName ? `${email.clientName} (${email.to})` : email.to;
+  return `• ${[recipient, appointment, email.businessName].filter(Boolean).join(" · ")}`;
+}
+
+/**
+ * Los emails enviados agrupados por tipo ("Recordatorios de cita · 3" y uno por línea). Si hubo
+ * más de los que trae el detalle, se dice cuántos faltan.
+ */
+export function describeSentEmails(sent: SentEmail[], total: number): string[] {
+  const groups = new Map<EmailType, SentEmail[]>();
+  for (const type of Object.keys(EMAIL_GROUPS) as EmailType[]) {
+    const ofType = sent.filter((email) => email.type === type);
+    if (ofType.length > 0) groups.set(type, ofType);
+  }
+  const lines: string[] = [];
+  for (const [type, ofType] of groups) {
+    const [one, many] = EMAIL_GROUPS[type];
+    if (lines.length > 0) lines.push("");
+    lines.push(`${ofType.length === 1 ? one : many} · ${ofType.length}`, ...ofType.map(describeEmail));
+  }
+  if (total > sent.length) lines.push("", `…y ${total - sent.length} más (detalle en el panel: Actividad → Emails).`);
+  return lines;
+}
+
 /** Qué avisar según el resumen (null: nada que contar). */
 export function buildNotice(report: ScheduledTasksReport, options: { gmailConfigured?: boolean } = {}): Notice | null {
   const { emails } = report;
+  const sentDetail = describeSentEmails(report.sentEmails ?? [], report.sentSinceLastRun);
   const lines = [
-    report.sentSinceLastRun > 0 &&
-      `Enviados desde la revisión anterior: ${report.sentSinceLastRun}` +
-        (report.reminders > 0 ? ` (${plural(report.reminders, "recordatorio nuevo", "recordatorios nuevos")})` : ""),
     emails.retrying > 0 && `Se reintentarán en la próxima revisión: ${emails.retrying}`,
     emails.failed > 0 && `No se enviarán (5 intentos fallidos): ${emails.failed}`,
     report.pending > 0 && `Siguen en cola: ${report.pending}`,
@@ -52,18 +106,26 @@ export function buildNotice(report: ScheduledTasksReport, options: { gmailConfig
         problems > 0
           ? `Agenda360: ${plural(problems, "correo no se pudo enviar", "correos no se pudieron enviar")}`
           : "Agenda360: error al procesar los correos",
-      message: [...lines, "", "Errores:", ...emails.errors.map((error) => `• ${error}`)].join("\n"),
+      message: [
+        ...lines,
+        "",
+        "Errores:",
+        ...emails.errors.map((error) => `• ${error}`),
+        ...(sentDetail.length > 0 ? ["", `Sí se enviaron (${report.sentSinceLastRun}):`, "", ...sentDetail] : []),
+      ].join("\n"),
       // Fallo definitivo: alta. Sólo reintentos (p. ej. Gmail caído un momento): normal.
       priority: emails.failed > 0 ? 4 : 3,
       tags: ["warning"],
+      click: "/admin/activity",
     };
   }
   if (report.sentSinceLastRun > 0) {
     return {
       title: `Agenda360: ${plural(report.sentSinceLastRun, "correo enviado", "correos enviados")}`,
-      message: lines.join("\n"),
+      message: [...sentDetail, ...(lines.length > 0 ? ["", ...lines] : [])].join("\n"),
       priority: 2,
       tags: ["white_check_mark"],
+      click: "/admin/activity",
     };
   }
   return null;
