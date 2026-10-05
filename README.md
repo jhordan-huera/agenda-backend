@@ -101,7 +101,6 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `POST /public/businesses/:slug/clients/lookup` · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` |
 | Super admin | `/admin/stats` · `/admin/businesses` (+ `status`, `plan`, `members`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` |
 | Estado | `GET /health` |
-| Cron | `POST /cron/run` con `Authorization: Bearer <CRON_SECRET>` (ver "Despliegue en Vercel") |
 
 ## Contraseñas, modo soporte e historia clínica
 
@@ -188,10 +187,13 @@ marca como enviados o, tras 5 intentos, fallidos (con el motivo en `last_error`)
   cuenta de Gmail), con el destinatario original en el asunto. Así nunca se escribe a clientes de prueba.
 - Las direcciones de los datos demo (`@demo.com`, `@example.com`) nunca reciben emails.
 - En local, los recordatorios se ponen en cola cada `REMINDER_JOB_INTERVAL_MINUTES` minutos y la cola
-  se revisa cada minuto. **En Vercel** no hay proceso siempre encendido: cada email sale al momento
-  (con `waitUntil`, la función sigue viva tras responder) y el **cron de GitHub** llama cada 10 min a
-  `POST /api/cron/run` (recordatorios, reintentos, limpieza de sesiones) y **avisa por ntfy** de los
-  correos enviados o fallidos. Cada ejecución queda en la tabla `cron_runs` (30 días).
+  se revisa cada minuto. **En producción** el trabajo se reparte:
+  - **La API en Vercel** envía al momento las confirmaciones y avisos de las citas (con `waitUntil`,
+    la función sigue viva tras responder). No envía recordatorios.
+  - **El cron de GitHub** (`scripts/cron.ts`, cada 10 min) trabaja **aislado de Vercel**: se conecta
+    directamente a la base y a Gmail, pone en cola y envía los recordatorios, reintenta los correos
+    que la API no pudo enviar y limpia lo caducado. **Avisa por ntfy** de lo enviado o fallido y da
+    señal de vida a healthchecks.io. Cada ejecución queda en la tabla `cron_runs` (30 días).
 - Gmail gratuito permite unos 500 emails al día; para más volumen conviene un proveedor
   transaccional (Resend, SES…): sólo cambia `mailer.ts`.
 
@@ -222,24 +224,29 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    | `FRONTEND_URL` | URL pública del frontend (p. ej. `https://agenda-front.vercel.app`) |
    | `TRUST_PROXY` | `1` |
    | `GMAIL_USER`, `GMAIL_FROM_NAME`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` | Los de `.env` |
-   | `CRON_SECRET` | El de `.env` (mismo valor que el secreto de GitHub) |
    | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Para los archivos de la historia clínica (Supabase → Project Settings → API Keys) |
    | `PROXY_SECRET` | El de `.env` (mismo valor que en el frontend) |
 
 3. **Proyecto del frontend** (agenda-front): variables `API_URL` (URL de este proyecto, p. ej.
    `https://agenda-backend.vercel.app`) y `PROXY_SECRET`.
-4. **GitHub → Settings → Secrets and variables → Actions** de este repositorio:
-   - Secrets: `CRON_SECRET`, `NTFY_TOPIC` (canal de ntfy al que te suscribes en el celular) y,
-     opcional, `HEALTHCHECK_URL` (healthchecks.io avisa si el cron deja de ejecutarse).
-   - Variables: `API_URL` (la de la API) y `APP_URL` (la del frontend: el aviso abre `/admin`).
+4. **GitHub → Settings → Secrets and variables → Actions** de este repositorio (el cron se conecta
+   por su cuenta a la base y a Gmail, sin pasar por Vercel):
+   - Secrets: `DATABASE_URL` (la misma de Vercel), `GMAIL_USER`, `GMAIL_CLIENT_ID`,
+     `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `NTFY_TOPIC` (canal de ntfy al que te suscribes en
+     el celular) y, opcional, `HEALTHCHECK_URL` (healthchecks.io avisa si el cron deja de ejecutarse).
+   - Variables: `APP_URL` (la del frontend: enlaces de los emails y del aviso) y, opcionales,
+     `GMAIL_FROM_NAME` (por defecto "Agenda360") y `NTFY_SERVER`.
    - Pruébalo en **Actions → Recordatorios y correos → Run workflow**.
 5. **Comprobación:** `https://<frontend>/api/health` responde `{"ok":true,"database":true}`, el
    login funciona (la cookie pasa por el proxy) y una reserva de prueba envía su email.
 
 El cron corre cada 10 minutos (el repositorio es público: GitHub Actions no tiene límite de
-minutos). Sus registros son públicos, por eso sólo muestran cifras. GitHub pausa los cron de los
-repositorios públicos tras 60 días sin actividad (avisa por email antes): basta con un commit o
-con reactivarlo en Actions.
+minutos). Sus registros son públicos, por eso sólo muestran cifras. El programador de GitHub puede
+retrasar o saltarse ejecuciones: para un horario fiable, un servicio externo (cron-job.org) puede
+lanzar el workflow con la API de GitHub (`POST /repos/<dueño>/agenda-backend/actions/workflows/cron.yml/dispatches`
+con `{"ref":"main"}` y un token con permiso *Actions: write* sólo para este repositorio). GitHub
+pausa los cron de los repositorios públicos tras 60 días sin actividad (avisa por email antes):
+basta con un commit o con reactivarlo en Actions.
 
 ## Pendiente
 

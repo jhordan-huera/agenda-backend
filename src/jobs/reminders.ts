@@ -3,8 +3,8 @@ import { deleteExpiredSessions } from "../services/auth-service.ts";
 import { queueAllReminders } from "./scheduled-tasks.ts";
 
 /**
- * Trabajo programado del servidor local (en Vercel lo sustituye el cron de GitHub, ver
- * src/routes/cron-routes.ts): envía los recordatorios de citas de todos los negocios activos
+ * Trabajo programado del servidor local (en producción lo sustituye el cron de GitHub, ver
+ * scripts/cron.ts): envía los recordatorios de citas de todos los negocios activos
  * (aunque nadie tenga el panel abierto) y limpia las sesiones caducadas.
  * Devuelve una función para detenerlo al apagar el servidor.
  */

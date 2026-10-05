@@ -16,7 +16,7 @@ export async function queueAllReminders(): Promise<number> {
   return queued;
 }
 
-/** Resumen de una ejecución del cron (POST /api/cron/run). */
+/** Resumen de una ejecución del cron (scripts/cron.ts). */
 export interface ScheduledTasksReport {
   /** Recordatorios puestos en cola en esta ejecución. */
   reminders: number;
@@ -31,12 +31,13 @@ export interface ScheduledTasksReport {
   durationMs: number;
 }
 
-/** Lotes de 10 emails por ejecución: margen de sobra frente al tiempo máximo de una función. */
-const MAX_EMAIL_BATCHES = 10;
+/** Hasta 30 lotes de 10 emails por ejecución; lo que quede sale en la siguiente. */
+const MAX_EMAIL_BATCHES = 30;
 
 /**
- * Tareas periódicas: recordatorios, envío y reintentos de la cola de emails y limpieza de
- * sesiones caducadas. En Vercel las dispara el cron de GitHub; en local, el propio servidor.
+ * Tareas periódicas: recordatorios, reintentos de la cola de emails y limpieza. En producción
+ * las ejecuta el cron de GitHub (scripts/cron.ts) directamente contra la base y Gmail, sin
+ * pasar por Vercel; en local, el propio servidor.
  */
 export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const started = Date.now();

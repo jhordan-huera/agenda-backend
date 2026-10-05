@@ -155,7 +155,8 @@ put = await fetch(ORIGIN + upload.url, { method: "PUT", headers: upload.headers,
 ok(put.status === 200, "el navegador sube el archivo", put.status);
 put = await fetch(ORIGIN + upload.url, { method: "PUT", headers: upload.headers, body: pdf });
 ok(put.status === 409, "no se puede sobrescribir", put.status);
-put = await fetch(ORIGIN + upload.url.replace(/.$/, "x"), { method: "PUT", headers: upload.headers, body: pdf });
+// Cambia el último carácter de la firma (si ya era "x", por "y": si no, el enlace seguiría siendo válido).
+put = await fetch(ORIGIN + upload.url.replace(/.$/, (c) => (c === "x" ? "y" : "x")), { method: "PUT", headers: upload.headers, body: pdf });
 ok(put.status === 403, "un enlace manipulado → 403", put.status);
 r = await ricardo("POST", `${B}/clinical-attachments/${attachment.id}/complete`);
 ok(r.status === 200 && r.body.sizeBytes === pdf.length && r.body.fileName === "Radiografía panorámica.pdf", "queda subido con su tamaño real", r.body);

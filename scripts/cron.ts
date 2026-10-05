@@ -1,41 +1,28 @@
 /**
- * Cliente del cron (lo ejecuta .github/workflows/cron.yml cada 10 min): llama a POST /api/cron/run de la
- * API en Vercel y avisa por ntfy de los correos enviados o de cualquier fallo. Si no hubo
- * correos ni errores, no avisa.
+ * Cron de recordatorios (lo ejecuta .github/workflows/cron.yml cada 10 min). Trabaja aislado de
+ * Vercel: se conecta directamente a la base de datos y a Gmail, pone en cola y envía los
+ * recordatorios de citas, reintenta los correos que la API no pudo enviar al momento y limpia lo
+ * caducado. Avisa por ntfy de los correos enviados o de cualquier fallo; si no hubo correos ni
+ * errores, no avisa. Los registros de Actions son públicos: sólo cifras, nunca datos de clientes.
  *
- * Variables: API_URL (p. ej. https://agenda-backend.vercel.app), CRON_SECRET, NTFY_TOPIC y,
- * opcionales, NTFY_SERVER (por defecto https://ntfy.sh) y APP_URL (enlace del aviso).
+ * Variables: DATABASE_URL, DATABASE_SSL, GMAIL_USER, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET,
+ * GMAIL_REFRESH_TOKEN, GMAIL_FROM_NAME, FRONTEND_URL (enlaces de los emails), NODE_ENV=production
+ * (si no, los emails se redirigen a la cuenta de Gmail), NTFY_TOPIC y, opcionales, NTFY_SERVER
+ * (por defecto https://ntfy.sh) y APP_URL (enlace del aviso).
  *
- * Prueba local: API_URL=http://localhost:4000 CRON_SECRET=… NTFY_TOPIC=… node scripts/cron.ts
+ * Prueba local: node --env-file=.env scripts/cron.ts
  */
-
-interface EmailQueueReport {
-  sent: number;
-  retrying: number;
-  failed: number;
-  skipped: number;
-  errors: string[];
-}
-
-interface CronReport {
-  reminders: number;
-  emails: EmailQueueReport;
-  sentSinceLastRun: number;
-  since: string | null;
-  pending: number;
-  durationMs: number;
-}
+import type { ScheduledTasksReport } from "../src/jobs/scheduled-tasks.ts";
 
 interface Notice {
   title: string;
   message: string;
-  /** Escala de ntfy: 2 baja (sin sonido), 3 normal, 4 alta, 5 urgente (la API no responde). */
+  /** Escala de ntfy: 2 baja (sin sonido), 3 normal, 4 alta, 5 urgente (el cron no pudo trabajar). */
   priority: 2 | 3 | 4 | 5;
   tags: string[];
 }
 
-const REQUEST_TIMEOUT_MS = 120_000;
-/** Reintentos ante errores de red o 5xx (arranque en frío, base de datos ocupada). */
+/** Reintentos ante un fallo (p. ej. la base de datos no responde un momento). */
 const RETRY_DELAYS_MS = [5_000, 20_000];
 /** ntfy no muestra como texto los mensajes de más de 4096 bytes. */
 const NTFY_LIMIT = 4_000;
@@ -47,36 +34,8 @@ function env(name: string): string | undefined {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
-class CronError extends Error {}
-
-async function callApi(apiUrl: string, secret: string): Promise<CronReport> {
-  const url = `${apiUrl.replace(/\/+$/, "")}/api/cron/run`;
-  for (let attempt = 0; ; attempt++) {
-    let failure: string;
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${secret}` },
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-      const text = await response.text();
-      if (response.ok) return JSON.parse(text) as CronReport;
-      failure = `La API respondió ${response.status}: ${text.slice(0, 300)}`;
-      // 4xx (secreto incorrecto, ruta desactivada): reintentar no lo arregla.
-      if (response.status < 500) throw new CronError(failure);
-    } catch (error) {
-      if (error instanceof CronError) throw error;
-      failure = `No se pudo conectar con la API: ${error instanceof Error ? error.message : String(error)}`;
-    }
-    const delay = RETRY_DELAYS_MS[attempt];
-    if (delay === undefined) throw new CronError(failure);
-    console.warn(`${failure}. Reintento en ${delay / 1000} s…`);
-    await sleep(delay);
-  }
-}
-
 /** Qué avisar según el resumen (null: nada que contar). */
-export function buildNotice(report: CronReport): Notice | null {
+export function buildNotice(report: ScheduledTasksReport, options: { gmailConfigured?: boolean } = {}): Notice | null {
   const { emails } = report;
   const lines = [
     report.sentSinceLastRun > 0 &&
@@ -87,6 +46,18 @@ export function buildNotice(report: CronReport): Notice | null {
     report.pending > 0 && `Siguen en cola: ${report.pending}`,
   ].filter(Boolean) as string[];
 
+  if (options.gmailConfigured === false && report.pending > 0) {
+    return {
+      title: "Agenda360: el cron no tiene acceso a Gmail",
+      message: [
+        ...lines,
+        "",
+        "Faltan las credenciales de Gmail (GMAIL_*) en los secretos del repositorio: los recordatorios quedan en cola sin enviarse.",
+      ].join("\n"),
+      priority: 4,
+      tags: ["warning"],
+    };
+  }
   if (emails.retrying > 0 || emails.failed > 0 || emails.errors.length > 0) {
     const problems = emails.failed + emails.retrying;
     return {
@@ -140,38 +111,54 @@ async function notify(notice: Notice): Promise<void> {
   if (!response.ok) throw new Error(`ntfy respondió ${response.status}: ${(await response.text()).slice(0, 200)}`);
 }
 
+/** El cron no pudo trabajar: aviso urgente y el job de GitHub termina con error. */
+async function fail(reason: string): Promise<void> {
+  await notify({
+    title: "Agenda360: el cron de correos falló",
+    message: `${reason}\n\nLos recordatorios y correos pendientes se intentarán en la próxima ejecución.`,
+    priority: 5,
+    tags: ["rotating_light"],
+  });
+  process.exitCode = 1;
+}
+
 async function main(): Promise<void> {
-  const apiUrl = env("API_URL");
-  const secret = env("CRON_SECRET");
-  if (!apiUrl || !secret) {
-    console.error("Faltan API_URL o CRON_SECRET (variables del repositorio en GitHub).");
-    process.exitCode = 1;
-    return;
-  }
+  if (!env("DATABASE_URL")) return fail("Falta DATABASE_URL (secreto del repositorio en GitHub).");
 
-  let report: CronReport;
+  // Se cargan aquí y no arriba: validan la configuración al importarse (las pruebas sólo usan buildNotice).
+  const { config } = await import("../src/config.ts");
+  const { pool } = await import("../src/db/pool.ts");
+  const { disableImmediateDelivery } = await import("../src/services/mailer.ts");
+  const { runScheduledTasks } = await import("../src/jobs/scheduled-tasks.ts");
+  // Este proceso envía él mismo, al final, lo que pone en cola.
+  disableImmediateDelivery();
+  if (!config.isProduction) console.warn(`NODE_ENV=${config.env}: los emails se redirigen a ${config.emailRedirectTo ?? "(nadie)"}.`);
+
   try {
-    report = await callApi(apiUrl, secret);
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    await notify({
-      title: "Agenda360: el cron de correos falló",
-      message: `${reason}\n\nLos correos y recordatorios pendientes se intentarán en la próxima ejecución.`,
-      priority: 5,
-      tags: ["rotating_light"],
-    });
-    process.exitCode = 1;
-    return;
-  }
+    let report: ScheduledTasksReport;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        report = await runScheduledTasks();
+        break;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        const delay = RETRY_DELAYS_MS[attempt];
+        if (delay === undefined) return await fail(`No se pudo completar: ${reason}`);
+        console.warn(`Fallo: ${reason}. Reintento en ${delay / 1000} s…`);
+        await sleep(delay);
+      }
+    }
 
-  // Los registros de Actions son públicos: sólo cifras, nunca datos de clientes.
-  console.info(
-    `Recordatorios: ${report.reminders} · enviados desde la anterior: ${report.sentSinceLastRun} · ` +
-      `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ${report.durationMs} ms`,
-  );
-  const notice = buildNotice(report);
-  if (notice) await notify(notice);
-  else console.info("Sin correos ni errores: no se envía aviso.");
+    console.info(
+      `Recordatorios: ${report.reminders} · enviados desde la anterior: ${report.sentSinceLastRun} · ` +
+        `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ${report.durationMs} ms`,
+    );
+    const notice = buildNotice(report, { gmailConfigured: Boolean(config.gmail) });
+    if (notice) await notify(notice);
+    else console.info("Sin correos ni errores: no se envía aviso.");
+  } finally {
+    await pool.end().catch(() => undefined);
+  }
 }
 
 // Sólo al ejecutarlo como script (las pruebas importan buildNotice).

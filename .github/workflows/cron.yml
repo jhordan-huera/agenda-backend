@@ -1,15 +1,17 @@
 name: Recordatorios y correos
 
-# En Vercel la API no tiene un proceso siempre encendido: este cron dispara las tareas
-# periódicas (recordatorios, reintentos de correos, limpieza) y avisa por ntfy.
-# Los correos de reservas y avisos salen al momento; este cron cubre recordatorios y reintentos.
+# Recordatorios de citas, aislados de Vercel: este job se conecta directamente a la base de datos
+# y a Gmail (scripts/cron.ts), así no gasta la CPU de Vercel. Las confirmaciones y avisos de las
+# citas los envía la API al momento; aquí se envían los recordatorios, se reintentan los correos
+# que fallaron y se limpia lo caducado. Avisa por ntfy y da señal de vida a healthchecks.io.
 on:
   schedule:
     # Cada 10 minutos (repositorio público: minutos de Actions sin límite), en los minutos
     # 3, 13, 23… para esquivar el inicio de cada hora, cuando GitHub retrasa o descarta más
     # ejecuciones. Lo pausa si el repositorio pasa 60 días sin actividad.
     - cron: "3,13,23,33,43,53 * * * *"
-  workflow_dispatch: # "Run workflow" en la pestaña Actions, para probarlo a mano
+  # "Run workflow" en la pestaña Actions, y despertador externo (cron-job.org) por la API de GitHub.
+  workflow_dispatch:
 
 concurrency:
   group: agendo-cron
@@ -21,24 +23,33 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
-        with:
-          sparse-checkout: scripts/cron.ts
-          sparse-checkout-cone-mode: false
 
       - uses: actions/setup-node@v5
         with:
           node-version: 24
+          cache: npm
 
-      - name: Ejecutar tareas y avisar por ntfy
+      - name: Instalar dependencias
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+
+      - name: Enviar recordatorios y avisar por ntfy
         env:
-          API_URL: ${{ vars.API_URL }}
+          NODE_ENV: production
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_SSL: "true"
+          DATABASE_POOL_MAX: "3"
+          FRONTEND_URL: ${{ vars.APP_URL }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_FROM_NAME: ${{ vars.GMAIL_FROM_NAME || 'Agenda360' }}
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
           APP_URL: ${{ vars.APP_URL }}
           NTFY_SERVER: ${{ vars.NTFY_SERVER }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: node scripts/cron.ts
 
-      # Señal de vida opcional para healthchecks.io: si deja de llegar, avisa que el cron se detuvo.
+      # Señal de vida para healthchecks.io: si deja de llegar, avisa que el cron se detuvo.
       - name: Avisar a healthchecks.io
         if: always()
         env:

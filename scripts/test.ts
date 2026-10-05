@@ -87,7 +87,6 @@ const env: NodeJS.ProcessEnv = {
   PORT: String(apiPort),
   FRONTEND_URL: "http://localhost:5173",
   REMINDER_JOB_INTERVAL_MINUTES: "0",
-  CRON_SECRET: randomBytes(24).toString("hex"),
   PROXY_SECRET: randomBytes(24).toString("hex"),
   TEST_DATABASE_URL: databaseUrl,
   // Archivos de la historia clínica en una carpeta temporal (almacenamiento local).

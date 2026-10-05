@@ -23,9 +23,6 @@ const envSchema = z.object({
     .transform((value) => (/^\d+$/.test(value) ? Number(value) : value)),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
   REMINDER_JOB_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(5),
-  // Tareas periódicas por HTTP (POST /api/cron/run): las llama el cron de GitHub cuando la API
-  // corre en Vercel, donde no hay un proceso siempre encendido. Sin secreto, la ruta está desactivada.
-  CRON_SECRET: z.string().trim().min(24, "CRON_SECRET debe tener al menos 24 caracteres").optional(),
   // Secreto compartido con el proxy del frontend en Vercel, que reenvía la IP real del visitante.
   PROXY_SECRET: z.string().trim().min(24, "PROXY_SECRET debe tener al menos 24 caracteres").optional(),
   // Envío de emails con Gmail (OAuth2). Sin estas variables los emails quedan en cola sin enviarse.
@@ -73,7 +70,6 @@ export const config = {
   databasePoolMax: env.DATABASE_POOL_MAX,
   /** La API corre como función de Vercel (sin servidor siempre encendido). */
   onVercel: process.env.VERCEL === "1",
-  cronSecret: env.CRON_SECRET ?? null,
   supabaseUrl: env.SUPABASE_URL ?? null,
   supabaseServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY ?? null,
   storageBucket: env.STORAGE_BUCKET,

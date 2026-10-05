@@ -8,7 +8,6 @@ import { errorHandler, notFoundHandler } from "./http/errors.ts";
 import { loadSession, requireAjaxHeader } from "./http/session.ts";
 import { authRoutes } from "./routes/auth-routes.ts";
 import { businessRoutes, userRoutes } from "./routes/business-routes.ts";
-import { cronRoutes } from "./routes/cron-routes.ts";
 import { fileRoutes } from "./routes/file-routes.ts";
 import { adminRoutes, publicRoutes } from "./routes/platform-routes.ts";
 
@@ -60,9 +59,8 @@ api.get("/health", async (_req, res) => {
   res.status(failure ? 503 : 200).json({ ok: !failure, database: !failure, ...failure });
 });
 
-// Antes de la cabecera anti-CSRF y la sesión: la llama el cron de GitHub con su secreto.
-api.use("/cron", cronRoutes);
-// Archivos con el almacenamiento local (desarrollo): el token firmado de la URL es la autorización.
+// Antes de la cabecera anti-CSRF y la sesión. Archivos con el almacenamiento local (desarrollo):
+// el token firmado de la URL es la autorización.
 api.use("/files", fileRoutes);
 
 api.use(requireAjaxHeader);

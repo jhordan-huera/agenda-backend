@@ -80,9 +80,12 @@ let pendingRun = false;
 
 /**
  * Envía los emails en cola. Si ya está trabajando, se repite al terminar (y devuelve un
- * resumen vacío). `maxBatches` limita la pasada para no agotar el tiempo de una función.
+ * resumen vacío). `maxBatches` limita la pasada; `skipReminders` deja los recordatorios
+ * de citas para el cron de GitHub (scripts/cron.ts), que es quien los envía.
  */
-export async function processEmailQueue(options: { maxBatches?: number } = {}): Promise<EmailQueueReport> {
+export async function processEmailQueue(
+  options: { maxBatches?: number; skipReminders?: boolean } = {},
+): Promise<EmailQueueReport> {
   const report: EmailQueueReport = { sent: 0, retrying: 0, failed: 0, skipped: 0, errors: [] };
   if (!transporter) return report;
   if (processing) {
@@ -100,7 +103,7 @@ export async function processEmailQueue(options: { maxBatches?: number } = {}): 
         const batch = await many<QueuedEmail>(
           db,
           `select id, to_email as "to", subject, body, html from notifications
-            where status = 'queued'
+            where status = 'queued' ${options.skipReminders ? "and type <> 'appointment_reminder'" : ""}
             order by created_at
             limit $1
             for update skip locked`,
@@ -125,7 +128,8 @@ export async function processEmailQueue(options: { maxBatches?: number } = {}): 
           } catch (error) {
             failed = true;
             const message = error instanceof Error ? error.message : String(error);
-            console.error(`[email] No se pudo enviar a ${email.to}: ${message}`);
+            // Sin la dirección: el cron corre en GitHub Actions, cuyos registros son públicos.
+            console.error(`[email] No se pudo enviar el email ${email.id}: ${scrubEmails(message)}`);
             const { rows } = await db.query(
               `update notifications
                   set attempts = attempts + 1, last_error = $2,
@@ -150,7 +154,7 @@ export async function processEmailQueue(options: { maxBatches?: number } = {}): 
     } while (pendingRun && batches < (options.maxBatches ?? Number.POSITIVE_INFINITY));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error("[email] Error al procesar la cola:", message);
+    console.error("[email] Error al procesar la cola:", scrubEmails(message));
     report.errors.push(scrubEmails(message).slice(0, 200));
   } finally {
     processing = false;
@@ -159,17 +163,27 @@ export async function processEmailQueue(options: { maxBatches?: number } = {}): 
 }
 
 let scheduled: NodeJS.Timeout | null = null;
+let immediateDelivery = true;
+
+/**
+ * Para el cron de GitHub: envía él mismo, al final, todo lo que pone en cola. Sin esto, cada
+ * recordatorio programaría un envío inmediato en paralelo al suyo.
+ */
+export function disableImmediateDelivery(): void {
+  immediateDelivery = false;
+}
 
 /**
  * Pide un envío en breve. Se llama al guardar un email: el pequeño retraso deja que la
  * transacción que lo creó termine; si aún no terminó, lo recoge la siguiente pasada.
+ * Envía confirmaciones y avisos al momento; los recordatorios quedan para el cron.
  */
 export function scheduleEmailDelivery(): void {
-  if (!transporter || scheduled) return;
+  if (!transporter || scheduled || !immediateDelivery) return;
   const delivery = new Promise<void>((resolve) => {
     scheduled = setTimeout(() => {
       scheduled = null;
-      void processEmailQueue().then(() => resolve());
+      void processEmailQueue({ skipReminders: true }).then(() => resolve());
     }, 1_000);
   });
   // En Vercel la función se congela al responder: waitUntil la mantiene viva hasta enviar.
