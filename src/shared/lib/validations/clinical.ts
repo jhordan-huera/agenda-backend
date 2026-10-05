@@ -1,6 +1,14 @@
 // Copia de agenda-front/src/lib/validations/clinical.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
-import type { ClinicalField, ClinicalFieldValue, ClinicalListRow, ClinicalNoteData } from "../../types/index.ts";
+import type {
+  BodyMapMark,
+  ClinicalField,
+  ClinicalFieldValue,
+  ClinicalListRow,
+  ClinicalNoteData,
+  OdontogramValue,
+  ToothState,
+} from "../../types/index.ts";
 import { optionalDigitsField, optionalText, requiredText, stripControlChars } from "./fields.ts";
 
 const optionalDate = z.string().refine((value) => value === "" || /^\d{4}-\d{2}-\d{2}$/.test(value), "Fecha inválida");
@@ -41,6 +49,76 @@ const MAX_LONG_TEXT = 5000;
 const MAX_LIST_ROWS = 50;
 
 type Parsed = { value?: ClinicalFieldValue; error?: string };
+
+/* Odontograma (numeración FDI): permanentes por cuadrante y temporales (de leche). */
+const quadrant = (q: number, count: number) => Array.from({ length: count }, (_, i) => `${q}${i + 1}`);
+export const PERMANENT_TEETH = [1, 2, 3, 4].flatMap((q) => quadrant(q, 8));
+export const PRIMARY_TEETH = [5, 6, 7, 8].flatMap((q) => quadrant(q, 5));
+const ALL_TEETH = new Set([...PERMANENT_TEETH, ...PRIMARY_TEETH]);
+export const TOOTH_SURFACES = ["O", "M", "D", "V", "L"] as const;
+export const TOOTH_SURFACE_STATES = ["caries", "obturado", "sellante", "fractura"] as const;
+export const TOOTH_WHOLE_STATES = ["corona", "endodoncia", "extraccion", "ausente", "implante"] as const;
+const MAX_BODY_MARKS = 30;
+
+function parseOdontogram(raw: unknown): { value?: OdontogramValue; error?: string } {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { error: "odontograma inválido" };
+  const value: OdontogramValue = {};
+  for (const [tooth, state] of Object.entries(raw as Record<string, unknown>)) {
+    if (!ALL_TEETH.has(tooth)) return { error: `la pieza ${tooth} no existe` };
+    if (typeof state !== "object" || state === null) return { error: `pieza ${tooth} inválida` };
+    const { surfaces, whole, note } = state as Record<string, unknown>;
+    const clean: ToothState = {};
+    if (surfaces !== undefined) {
+      if (typeof surfaces !== "object" || surfaces === null) return { error: `pieza ${tooth} inválida` };
+      const entries = Object.entries(surfaces as Record<string, unknown>).filter(([, v]) => v !== null && v !== undefined);
+      for (const [surface, surfaceState] of entries) {
+        if (!(TOOTH_SURFACES as readonly string[]).includes(surface) || !(TOOTH_SURFACE_STATES as readonly unknown[]).includes(surfaceState)) {
+          return { error: `pieza ${tooth}: superficie inválida` };
+        }
+      }
+      if (entries.length) clean.surfaces = Object.fromEntries(entries) as ToothState["surfaces"];
+    }
+    if (whole !== undefined && whole !== null) {
+      if (!(TOOTH_WHOLE_STATES as readonly unknown[]).includes(whole)) return { error: `pieza ${tooth}: estado inválido` };
+      clean.whole = whole as ToothState["whole"];
+    }
+    if (note !== undefined && note !== null && note !== "") {
+      if (typeof note !== "string" || note.length > 200) return { error: `pieza ${tooth}: nota inválida` };
+      clean.note = stripControlChars(note).trim();
+    }
+    if (clean.surfaces || clean.whole || clean.note) value[tooth] = clean;
+  }
+  return Object.keys(value).length ? { value } : {};
+}
+
+function parseBodyMap(raw: unknown): { value?: BodyMapMark[]; error?: string } {
+  if (!Array.isArray(raw)) return { error: "mapa inválido" };
+  if (raw.length > MAX_BODY_MARKS) return { error: `admite hasta ${MAX_BODY_MARKS} marcas` };
+  const marks: BodyMapMark[] = [];
+  for (const [index, item] of raw.entries()) {
+    const mark = item as Partial<BodyMapMark> | null;
+    const inRange = (n: unknown) => typeof n === "number" && n >= 0 && n <= 1;
+    if (!mark || (mark.view !== "front" && mark.view !== "back") || !inRange(mark.x) || !inRange(mark.y)) {
+      return { error: `marca ${index + 1} inválida` };
+    }
+    const note = typeof mark.note === "string" ? stripControlChars(mark.note).trim() : "";
+    if (note.length > 200) return { error: `marca ${index + 1}: la nota admite hasta 200 caracteres` };
+    marks.push({ view: mark.view, x: Math.round(mark.x! * 1000) / 1000, y: Math.round(mark.y! * 1000) / 1000, note });
+  }
+  return marks.length ? { value: marks } : {};
+}
+
+/** Total de un cuestionario e interpretación según sus rangos. */
+export function questionnaireScore(
+  field: Extract<ClinicalField, { type: "questionnaire" }>,
+  answers: number[],
+): { total: number; max: number; label: string | null; alerts: string[] } {
+  const total = answers.reduce((sum, points) => sum + points, 0);
+  const max = field.items.length * Math.max(...field.options.map((option) => option.points));
+  const label = field.ranges.find((range) => total >= range.min && total <= range.max)?.label ?? null;
+  const alerts = (field.alerts ?? []).filter((alert) => (answers[alert.item] ?? 0) >= alert.minPoints).map((alert) => alert.message);
+  return { total, max, label, alerts };
+}
 
 /** "38,5" → 38.5; "" o null → null; lo que no es número → NaN. */
 export function parseClinicalNumber(raw: unknown): number | null {
@@ -129,6 +207,30 @@ export function parseClinicalFieldValue(field: ClinicalField, raw: unknown): Par
       if (text === "") return empty();
       return isIsoDate(text) ? { value: text } : { error: `«${field.label}»: fecha inválida` };
     }
+    case "questionnaire": {
+      if (raw === null || raw === undefined) return empty();
+      if (!Array.isArray(raw) || raw.length !== field.items.length) return { error: `«${field.label}» no es válido` };
+      const allowed = new Set(field.options.map((option) => option.points));
+      const answered = raw.filter((points) => points !== null && points !== undefined);
+      if (answered.length === 0) return empty();
+      if (answered.length !== field.items.length) {
+        return { error: `Responde las ${field.items.length} preguntas de «${field.label}»` };
+      }
+      if (answered.some((points) => typeof points !== "number" || !allowed.has(points))) return { error: `Respuesta no válida en «${field.label}»` };
+      return { value: answered as number[] };
+    }
+    case "odontogram": {
+      if (raw === null || raw === undefined) return empty();
+      const { value, error } = parseOdontogram(raw);
+      if (error) return { error: `«${field.label}»: ${error}` };
+      return value ? { value } : empty();
+    }
+    case "bodymap": {
+      if (raw === null || raw === undefined) return empty();
+      const { value, error } = parseBodyMap(raw);
+      if (error) return { error: `«${field.label}»: ${error}` };
+      return value ? { value } : empty();
+    }
     case "list": {
       if (raw === null || raw === undefined) return empty();
       if (!Array.isArray(raw)) return { error: `«${field.label}» no es válido` };
@@ -209,6 +311,23 @@ const clinicalFieldSchema = z.discriminatedUnion("type", [
       .max(8),
   }),
   z.object({ ...base, type: z.literal("bmi"), weightField: fieldId, heightField: fieldId }),
+  z.object({
+    ...base,
+    type: z.literal("questionnaire"),
+    prompt: optionalText(300).optional(),
+    items: z.array(requiredText("La pregunta", 2, 300)).min(1).max(40),
+    options: z
+      .array(z.object({ label: requiredText("La respuesta", 1, 80), points: z.number().int().min(0).max(100) }))
+      .min(2)
+      .max(10),
+    ranges: z.array(z.object({ min: z.number().int(), max: z.number().int(), label: requiredText("La interpretación", 1, 80) })).max(10),
+    alerts: z
+      .array(z.object({ item: z.number().int().min(0), minPoints: z.number().int().min(0), message: requiredText("El aviso", 2, 200) }))
+      .max(10)
+      .optional(),
+  }),
+  z.object({ ...base, type: z.literal("odontogram") }),
+  z.object({ ...base, type: z.literal("bodymap") }),
 ]);
 
 /** Campos de una plantilla: ids únicos y referencias válidas (el IMC usa dos campos numéricos). */
@@ -226,6 +345,9 @@ export const clinicalTemplateFieldsSchema = z
       }
       if (field.type === "list" && new Set(field.columns.map((column) => column.id)).size !== field.columns.length) {
         ctx.addIssue({ code: "custom", message: `«${field.label}»: columnas repetidas`, path: [index, "columns"] });
+      }
+      if (field.type === "questionnaire" && field.alerts?.some((alert) => alert.item >= field.items.length)) {
+        ctx.addIssue({ code: "custom", message: `«${field.label}»: un aviso apunta a una pregunta que no existe`, path: [index] });
       }
       if (field.type === "select" || field.type === "multiselect") {
         if (new Set(field.options).size !== field.options.length) {

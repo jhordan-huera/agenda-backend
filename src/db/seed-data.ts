@@ -672,6 +672,12 @@ const CLINICAL_SAMPLES: Partial<Record<BusinessCategory, { templateId: string; d
         reason: "Dolor en molar inferior derecho al masticar.",
         pain: 6,
         intraoral: "Caries profunda en pieza 46, sin afectación pulpar.",
+        odontogram: {
+          "46": { surfaces: { O: "obturado" } },
+          "36": { surfaces: { O: "caries", M: "caries" } },
+          "18": { whole: "ausente" },
+          "11": { whole: "corona" },
+        },
         procedures: [{ tooth: "46", surface: "O", procedure: "Restauración con resina compuesta", notes: "" }],
         anesthesia: "Lidocaína 2 % · 1 cartucho",
         diagnoses: [{ description: "Caries de la dentina", cie10: "K02.1" }],
@@ -711,6 +717,7 @@ const CLINICAL_SAMPLES: Partial<Record<BusinessCategory, { templateId: string; d
         session_number: 1,
         pain_before: 7,
         pain_after: 5,
+        pain_map: [{ view: "back", x: 0.5, y: 0.47, note: "Contractura paravertebral lumbar" }],
         assessment: "Contractura paravertebral lumbar tras levantar peso. Flexión de tronco limitada.",
         treatment: [
           { technique: "Terapia manual", sets: null, reps: "15 min", notes: "" },
@@ -741,6 +748,10 @@ const CLINICAL_SAMPLES: Partial<Record<BusinessCategory, { templateId: string; d
   ],
   psychology: [
     {
+      templateId: "psicologia-escalas",
+      data: { phq9: [1, 1, 2, 1, 0, 1, 1, 0, 0], gad7: [1, 1, 1, 2, 0, 1, 1], observations: "Mejoría respecto de la evaluación inicial." },
+    },
+    {
       templateId: "psicologia-sesion",
       data: {
         topic: "Registro de pensamientos",
@@ -752,6 +763,10 @@ const CLINICAL_SAMPLES: Partial<Record<BusinessCategory, { templateId: string; d
         homework: "Registro de pensamientos diario.",
         next_session: "En una semana",
       },
+    },
+    {
+      templateId: "psicologia-escalas",
+      data: { phq9: [2, 2, 3, 2, 1, 2, 2, 1, 0], gad7: [3, 2, 2, 3, 1, 2, 2] },
     },
     {
       templateId: "psicologia-evaluacion",

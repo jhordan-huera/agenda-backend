@@ -1,5 +1,6 @@
 // Plantillas de historia clínica: formatos por especialidad, validación según la plantilla y versiones.
 import { execFileSync } from "node:child_process";
+import { isDeepStrictEqual } from "node:util";
 import { clinicalTemplateFieldsSchema } from "../src/shared/lib/validations/clinical.ts";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
@@ -41,7 +42,7 @@ const addNote = (templateVersionId, data, clientId = patient.id) =>
 console.log("Plantillas disponibles");
 let r = await ricardo("GET", `${B}/clinical-templates`);
 const templates = r.body;
-ok(r.status === 200 && templates.length === 10, "10 plantillas de la plataforma", templates?.map((t) => t.id));
+ok(r.status === 200 && templates.length === 11, "11 plantillas de la plataforma", templates?.map((t) => t.id));
 ok(templates[0].id === "odontologia-consulta" && templates[0].recommended === true, "la de su especialidad (odontología) va primero y recomendada", templates.slice(0, 2));
 ok(templates.filter((t) => t.recommended).length === 1 && templates.find((t) => t.id === "evolucion-general").recommended === false, "las demás no se recomiendan");
 const invalid = templates.filter((t) => !clinicalTemplateFieldsSchema.safeParse(t.fields).success);
@@ -72,6 +73,36 @@ ok(JSON.stringify(medicalNote.data.exam_regions) === JSON.stringify(["Cabeza", "
 ok(medicalNote.data.diagnoses.length === 1 && medicalNote.data.prescription[0].quantity === 15, "filas vacías descartadas y columnas numéricas convertidas", medicalNote.data);
 ok(medicalNote.data.refuses_treatment === false, "«No» se guarda (no es un campo vacío)", medicalNote.data);
 ok(!("campo_inventado" in medicalNote.data) && !("blood_pressure" in medicalNote.data), "sólo se guardan campos de la plantilla con contenido", Object.keys(medicalNote.data));
+
+console.log("Odontograma, mapa del cuerpo y escalas (versión 2)");
+const dental = byId["odontologia-consulta"];
+ok(dental.version === 2 && dental.fields.some((f) => f.type === "odontogram"), "odontología trae odontograma", dental.fields.map((f) => f.type));
+ok(byId["atencion-medica"].fields.some((f) => f.id === "injury_map" && f.type === "bodymap"), "atención médica trae el mapa de lesiones");
+ok(byId["psicologia-escalas"]?.fields.filter((f) => f.type === "questionnaire").length === 2, "plantilla de escalas con PHQ-9 y GAD-7");
+r = await addNote(dental.versionId, {
+  reason: "Control",
+  odontogram: { "16": { surfaces: { O: "caries", M: null }, note: "  vigilar  " }, "21": { whole: "corona" }, "48": {} },
+});
+ok(
+  r.status === 200 && isDeepStrictEqual(r.body.data.odontogram, { "16": { surfaces: { O: "caries" }, note: "vigilar" }, "21": { whole: "corona" } }),
+  "odontograma normalizado (sin piezas vacías)",
+  r.body.data?.odontogram,
+);
+r = await addNote(dental.versionId, { reason: "x", odontogram: { "19": { whole: "corona" } } });
+ok(r.status === 400 && /19 no existe/.test(r.body.error.message), "pieza inexistente → 400", r.body);
+r = await addNote(dental.versionId, { reason: "x", odontogram: { "11": { surfaces: { X: "caries" } } } });
+ok(r.status === 400, "superficie inválida → 400", r.body);
+r = await addNote(byId["atencion-medica"].versionId, { reason: "Caída", injury_map: [{ view: "front", x: 0.4, y: 0.8, note: "Herida en rodilla" }] });
+ok(r.status === 200 && r.body.data.injury_map[0].note === "Herida en rodilla", "marca en el mapa del cuerpo", r.body.data?.injury_map);
+r = await addNote(byId["atencion-medica"].versionId, { reason: "x", injury_map: [{ view: "side", x: 2, y: 0 }] });
+ok(r.status === 400, "marca fuera del mapa → 400", r.body);
+const scales = byId["psicologia-escalas"];
+r = await addNote(scales.versionId, { phq9: [1, 1, 1, 1, 1, 1, 1, 1, 1], gad7: [0, 0, 0, 0, 0, 0, 0] });
+ok(r.status === 200 && r.body.data.phq9.length === 9, "cuestionarios completos", r.body);
+r = await addNote(scales.versionId, { phq9: [1, 1, null, 1, 1, 1, 1, 1, 1] });
+ok(r.status === 400 && /Responde las 9 preguntas/.test(r.body.error.message), "cuestionario a medias → 400", r.body);
+r = await addNote(scales.versionId, { phq9: [5, 1, 1, 1, 1, 1, 1, 1, 1] });
+ok(r.status === 400, "respuesta con puntos inexistentes → 400", r.body);
 
 console.log("Validación según la plantilla");
 r = await addNote(medical.versionId, { current_illness: "Sin motivo" });
