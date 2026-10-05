@@ -167,6 +167,13 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   correcto) o 50 desde una conexión, en 15 minutos, bloquean el inicio de sesión hasta que pasen
   (aunque la contraseña sea la correcta). Se cuentan en la auditoría, así que valen para todas
   las instancias de Vercel. Un email no registrado se bloquea igual: no revela qué cuentas existen.
+- **Verificación en dos pasos** (TOTP: Google Authenticator, Microsoft Authenticator…) para la
+  cuenta de super admin, desde Configuración. Tras la contraseña, el login devuelve
+  `{ twoFactorRequired, challenge }` y la sesión se abre en `POST /api/auth/login/two-factor` con
+  el código de 6 dígitos (cada uno sirve una vez) o un código de recuperación (10, guardados como
+  hash). 5 códigos incorrectos anulan el paso; cuentan para el bloqueo de la cuenta. Desactivarla
+  pide la contraseña y un código (`src/services/two-factor.ts`, `src/services/totp.ts`).
+  **Emergencia** (celular y códigos perdidos): `npm run db:reset-2fa -- <email>` desde tu ordenador.
 - **Contraseñas fuera del registro de emails:** los emails con datos de acceso se guardan con la
   contraseña oculta (`••••••••`); ésta va aparte (`notifications.secret`) sólo hasta que el email
   se envía o se descarta.

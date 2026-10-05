@@ -3,6 +3,7 @@ import { clientIp } from "../http/client-ip.ts";
 import { handle, limitRequests } from "../http/handlers.ts";
 import { clearSessionCookie, setSessionCookie } from "../http/session.ts";
 import { authService } from "../services/auth-service.ts";
+import { twoFactorService } from "../services/two-factor.ts";
 
 /** /api/auth: sesión con cookie httpOnly (ver src/http/session.ts). */
 export const authRoutes = Router();
@@ -27,7 +28,18 @@ authRoutes.get(
 );
 
 authRoutes.post("/login", loginLimit, async (req, res) => {
-  const { session, issued } = await authService.signIn(req.body, connectionOf(req));
+  const result = await authService.signIn(req.body, connectionOf(req));
+  // Con la verificación en dos pasos todavía no hay sesión: falta el código.
+  if ("twoFactor" in result) {
+    res.json(result.twoFactor);
+    return;
+  }
+  setSessionCookie(res, result.issued);
+  res.json(result.session);
+});
+
+authRoutes.post("/login/two-factor", loginLimit, async (req, res) => {
+  const { session, issued } = await authService.verifyTwoFactor(req.body, connectionOf(req));
   setSessionCookie(res, issued);
   res.json(session);
 });
@@ -48,4 +60,29 @@ authRoutes.post(
   "/change-password",
   loginLimit,
   handle((req) => authService.changePassword(req.ctx, req.body)),
+);
+
+/* Verificación en dos pasos de la propia cuenta (hoy, sólo el super admin). */
+authRoutes.get(
+  "/two-factor",
+  handle((req) => twoFactorService.status(req.ctx)),
+);
+authRoutes.post(
+  "/two-factor/setup",
+  handle((req) => twoFactorService.setup(req.ctx)),
+);
+authRoutes.post(
+  "/two-factor/enable",
+  loginLimit,
+  handle((req) => twoFactorService.enable(req.ctx, req.body, connectionOf(req))),
+);
+authRoutes.post(
+  "/two-factor/disable",
+  loginLimit,
+  handle((req) => twoFactorService.disable(req.ctx, req.body, connectionOf(req))),
+);
+authRoutes.post(
+  "/two-factor/recovery-codes",
+  loginLimit,
+  handle((req) => twoFactorService.regenerateRecoveryCodes(req.ctx, req.body, connectionOf(req))),
 );

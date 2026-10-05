@@ -657,6 +657,31 @@ export interface AdminAuditLog extends AuditLog {
   userAgent: string | null;
 }
 
+/** Inicio de sesión con la verificación en dos pasos activada: la contraseña es correcta y falta el código. */
+export interface TwoFactorChallenge {
+  twoFactorRequired: true;
+  /** Token del paso intermedio (unos minutos): se envía junto con el código. */
+  challenge: string;
+}
+
+export interface TwoFactorStatus {
+  enabled: boolean;
+  enabledAt: ISODateTime | null;
+  /** Códigos de recuperación sin usar. */
+  recoveryCodesLeft: number;
+}
+
+/** Clave para la app de autenticación: el QR lleva `otpauthUrl`; `secret`, para escribirla a mano. */
+export interface TwoFactorSetup {
+  secret: string;
+  otpauthUrl: string;
+}
+
+/** Códigos de recuperación de un solo uso: sólo se muestran al generarlos. */
+export interface RecoveryCodes {
+  recoveryCodes: string[];
+}
+
 /** Franja ocupada expuesta a la página pública: sin datos personales del cliente. */
 export type BusySlot = Pick<Appointment, "date" | "startTime" | "endTime">;
 

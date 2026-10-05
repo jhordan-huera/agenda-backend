@@ -3,14 +3,22 @@ import { userColumns } from "../db/columns.ts";
 import { one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
-import { formatSupportContact, getFullName } from "../shared/lib/format.ts";
-import { changePasswordSchema, loginSchema, registerSchema } from "../shared/lib/validations/auth.ts";
-import type { BusinessRole, BusinessStatus, PlatformRole, User } from "../shared/types/index.ts";
+import { formatSupportContact } from "../shared/lib/format.ts";
+import { changePasswordSchema, loginSchema, registerSchema, twoFactorLoginSchema } from "../shared/lib/validations/auth.ts";
+import type { BusinessRole, BusinessStatus, PlatformRole, TwoFactorChallenge, User } from "../shared/types/index.ts";
 import { hashPassword, verifyPassword } from "./accounts.ts";
-import { logAudit } from "./audit.ts";
-import { parseInput, requireUser, type AuditActor, type RequestContext } from "./context.ts";
+import { parseInput, requireUser, type RequestContext } from "./context.ts";
 import { queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
+import { isLockedOut, lockedOutError, logSessionEvent, type ClientConnection } from "./session-security.ts";
+import {
+  createLoginChallenge,
+  findLoginChallenge,
+  MAX_CHALLENGE_ATTEMPTS,
+  verifySecondFactor,
+} from "./two-factor.ts";
+
+export type { ClientConnection };
 
 /** Lo que el frontend necesita saber de la sesión (igual que `Session` en agenda-front/src/lib/auth/types.ts). */
 export interface Session {
@@ -34,79 +42,25 @@ export interface IssuedSession {
 const REMEMBER_DAYS = 30;
 const SESSION_HOURS = 24;
 
-/**
- * Bloqueo ante intentos de adivinar contraseñas. Los fallos se cuentan en la auditoría (no en la
- * memoria de cada servidor), así que valen para todas las instancias de Vercel a la vez.
- */
-const LOCKOUT_MINUTES = 15;
-/** Fallos en LOCKOUT_MINUTES que bloquean una cuenta (exista o no: no revela qué emails existen). */
-const MAX_FAILURES_PER_ACCOUNT = 10;
-/** Fallos en LOCKOUT_MINUTES que bloquean una conexión, pruebe la cuenta que pruebe. */
-const MAX_FAILURES_PER_IP = 50;
-
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** Hash de referencia para que un email inexistente tarde lo mismo que una contraseña incorrecta. */
 const DUMMY_PASSWORD_HASH = await hashPassword(randomBytes(16).toString("hex"));
 
-const withoutPassword = ({ passwordHash: _, ...user }: User & { passwordHash: string }): User => user;
+const withoutSecrets = ({
+  passwordHash: _password,
+  twoFactor: _twoFactor,
+  ...user
+}: User & { passwordHash: string; twoFactor: boolean }): User => user;
 
-/** Desde dónde se conecta (IP y navegador). Sólo se guarda en los eventos de sesión. */
-export interface ClientConnection {
-  ip: string;
-  userAgent: string | null;
-}
+/** Resultado del inicio de sesión: la sesión, o el paso del código si tiene la verificación en dos pasos. */
+export type SignInResult = { session: Session; issued: IssuedSession } | { twoFactor: TwoFactorChallenge };
 
-/**
- * Inicio y cierre de sesión e intentos fallidos, en la auditoría (entityType "session"). Sólo los
- * ve el super admin; el cron avisa por ntfy si una cuenta acumula intentos fallidos.
- */
-async function logSessionEvent(
-  user: User | null,
-  event: { action: string; summary: string; attemptedEmail?: string },
-  connection: ClientConnection,
-): Promise<void> {
-  const membership = user
-    ? await one<{ businessId: string }>(pool, 'select business_id as "businessId" from business_users where user_id = $1 limit 1', [
-        user.id,
-      ])
-    : null;
-  const actor: AuditActor | null = user
-    ? { userId: user.id, name: user.platformRole === "super_admin" ? `${getFullName(user)} (Super admin)` : getFullName(user) }
-    : null;
-  await logAudit(pool, {
-    businessId: membership?.businessId ?? null,
-    actor,
-    actorName: event.attemptedEmail?.slice(0, 120),
-    action: event.action,
-    entityType: "session",
-    entityId: user?.id ?? null,
-    summary: event.summary,
-    connection,
-  });
-}
-
-/**
- * ¿Demasiados intentos fallidos recientes con esta cuenta (desde su último inicio de sesión
- * correcto) o desde esta conexión?
- */
-async function isLockedOut(userId: string | null, email: string, ip: string): Promise<boolean> {
-  const row = await one<{ account: number; ip: number }>(
-    pool,
-    `select count(*) filter (
-              where (actor_id = $1::uuid or (actor_id is null and lower(actor_name) = lower($2)))
-                and created_at > coalesce(
-                  (select max(s.created_at) from audit_logs s
-                    where s.entity_type = 'session' and s.action = 'session.login' and s.actor_id = $1::uuid),
-                  '-infinity')
-            )::int as account,
-            count(*) filter (where ip = $3)::int as ip
-       from audit_logs
-      where entity_type = 'session' and action = 'session.login_failed'
-        and created_at > now() - make_interval(mins => $4)`,
-    [userId, email, ip, LOCKOUT_MINUTES],
-  );
-  return (row?.account ?? 0) >= MAX_FAILURES_PER_ACCOUNT || (row?.ip ?? 0) >= MAX_FAILURES_PER_IP;
+/** Cuenta desactivada: no entra, ni con la contraseña ni con el código. */
+async function blockInactive(user: User, connection: ClientConnection): Promise<never> {
+  await logSessionEvent(user, { action: "session.login_blocked", summary: "Intento de inicio de sesión con la cuenta desactivada" }, connection);
+  const supportContact = formatSupportContact(await getPlatformSettings(pool));
+  throw new AppError("forbidden", `Tu cuenta está desactivada. Escribe a ${supportContact} para recuperar el acceso.`);
 }
 
 async function createSession(db: Db, userId: string, remember: boolean): Promise<IssuedSession> {
@@ -162,14 +116,15 @@ export const authService = {
     return ctx.user ? resolveSession(pool, ctx.user) : null;
   },
 
-  async signIn(input: unknown, connection: ClientConnection): Promise<{ session: Session; issued: IssuedSession }> {
+  async signIn(input: unknown, connection: ClientConnection): Promise<SignInResult> {
     const { email, password, remember } = parseInput(loginSchema, input);
-    const row = await one<User & { passwordHash: string }>(
+    const row = await one<User & { passwordHash: string; twoFactor: boolean }>(
       pool,
-      `select ${userColumns()}, password_hash as "passwordHash" from users where email = $1`,
+      `select ${userColumns()}, password_hash as "passwordHash", two_factor_secret is not null as "twoFactor"
+         from users where email = $1`,
       [email],
     );
-    const user = row ? withoutPassword(row) : null;
+    const user = row ? withoutSecrets(row) : null;
     // Bloqueada: ni se comprueba la contraseña (aunque sea la correcta) hasta que pase el tiempo.
     if (await isLockedOut(user?.id ?? null, email, connection.ip)) {
       await logSessionEvent(
@@ -181,10 +136,7 @@ export const authService = {
         },
         connection,
       );
-      throw new AppError(
-        "rate_limited",
-        `Demasiados intentos fallidos. Por seguridad, espera ${LOCKOUT_MINUTES} minutos antes de volver a intentarlo.`,
-      );
+      throw lockedOutError();
     }
     const valid = await verifyPassword(password, row?.passwordHash ?? DUMMY_PASSWORD_HASH);
     if (!user || !valid) {
@@ -197,13 +149,70 @@ export const authService = {
       );
       throw new AppError("unauthorized", "Email o contraseña incorrectos.");
     }
-    if (!user.isActive) {
-      await logSessionEvent(user, { action: "session.login_blocked", summary: "Intento de inicio de sesión con la cuenta desactivada" }, connection);
-      const supportContact = formatSupportContact(await getPlatformSettings(pool));
-      throw new AppError("forbidden", `Tu cuenta está desactivada. Escribe a ${supportContact} para recuperar el acceso.`);
+    if (!user.isActive) return blockInactive(user, connection);
+    // Con la verificación en dos pasos, la sesión se abre al escribir el código (verifyTwoFactor).
+    if (row?.twoFactor) {
+      return { twoFactor: { twoFactorRequired: true, challenge: await createLoginChallenge(pool, user.id, remember) } };
     }
     const issued = await createSession(pool, user.id, remember);
     await logSessionEvent(user, { action: "session.login", summary: "Inició sesión" }, connection);
+    return { session: (await resolveSession(pool, user))!, issued };
+  },
+
+  /**
+   * Segundo paso del inicio de sesión: el código de la app o uno de recuperación. Los códigos
+   * incorrectos cuentan como intentos fallidos (y para el bloqueo de la cuenta).
+   */
+  async verifyTwoFactor(input: unknown, connection: ClientConnection): Promise<{ session: Session; issued: IssuedSession }> {
+    const { challenge: token, code } = parseInput(twoFactorLoginSchema, input);
+    const challenge = await findLoginChallenge(pool, token);
+    if (!challenge) throw new AppError("unauthorized", "Pasó demasiado tiempo. Vuelve a escribir tu contraseña.");
+    const user = (await one<User>(pool, `select ${userColumns()} from users where id = $1`, [challenge.userId]))!;
+    if (!user.isActive) {
+      await pool.query("delete from login_challenges where user_id = $1", [user.id]);
+      return blockInactive(user, connection);
+    }
+    if (await isLockedOut(user.id, user.email, connection.ip)) {
+      await pool.query("delete from login_challenges where id = $1", [challenge.id]);
+      await logSessionEvent(
+        user,
+        { action: "session.login_locked", summary: "Inicio de sesión bloqueado temporalmente por demasiados intentos fallidos" },
+        connection,
+      );
+      throw lockedOutError();
+    }
+
+    const result = await verifySecondFactor(pool, user.id, code);
+    if (!result) {
+      const attempts = challenge.attempts + 1;
+      if (attempts >= MAX_CHALLENGE_ATTEMPTS) await pool.query("delete from login_challenges where id = $1", [challenge.id]);
+      else await pool.query("update login_challenges set attempts = $2 where id = $1", [challenge.id, attempts]);
+      await logSessionEvent(
+        user,
+        { action: "session.login_failed", summary: "Intento de inicio de sesión fallido: código de verificación incorrecto" },
+        connection,
+      );
+      if (attempts >= MAX_CHALLENGE_ATTEMPTS) {
+        throw new AppError("unauthorized", "Demasiados códigos incorrectos. Vuelve a escribir tu contraseña.");
+      }
+      throw new AppError("validation", "El código no es correcto. Revisa que la hora del celular esté bien y escribe el código nuevo.");
+    }
+
+    // Cada paso intermedio sirve para una sola sesión.
+    const consumed = await one(pool, "delete from login_challenges where id = $1 returning id", [challenge.id]);
+    if (!consumed) throw new AppError("unauthorized", "Pasó demasiado tiempo. Vuelve a escribir tu contraseña.");
+    const issued = await createSession(pool, user.id, challenge.remember);
+    await logSessionEvent(
+      user,
+      {
+        action: "session.login",
+        summary:
+          result.method === "app"
+            ? "Inició sesión con verificación en dos pasos"
+            : `Inició sesión con un código de recuperación (quedan ${result.left})`,
+      },
+      connection,
+    );
     return { session: (await resolveSession(pool, user))!, issued };
   },
 
@@ -265,4 +274,5 @@ export const authService = {
 /** Limpieza periódica de las sesiones caducadas. */
 export async function deleteExpiredSessions(): Promise<void> {
   await pool.query("delete from sessions where expires_at <= now()");
+  await pool.query("delete from login_challenges where expires_at <= now()");
 }
