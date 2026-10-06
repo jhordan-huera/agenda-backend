@@ -54,7 +54,7 @@ const profileNow = async () => (await visitor("GET", `/public/businesses/${slug}
 /** Días con al menos `count` horas libres para el servicio. */
 async function freeDay(count: number, after?: string) {
   const profile = await profileNow();
-  const service = profile.services.find((s: { location: string }) => s.location !== "home");
+  const service = profile.services.find((s: { modes: string[] }) => s.modes.includes("business"));
   const now = getZonedNow(profile.business.timezone);
   for (let d = 1; d < 40; d++) {
     const date = addDaysISO(now.date, d);

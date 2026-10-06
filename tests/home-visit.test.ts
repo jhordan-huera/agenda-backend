@@ -26,7 +26,8 @@ async function call(method: string, path: string, body?: any) {
 }
 
 const profile = (await call("GET", "/public/businesses/fisioactiva")).body;
-const both = profile.services.find((s: { location: string }) => s.location === "both");
+type Modes = { modes: string[] };
+const both = profile.services.find((s: Modes) => s.modes.includes("business") && s.modes.includes("home"));
 ok(both && both.homeVisitFee === 10 && both.showPrice === true, "perfil público con lugar, recargo y precio visible", both);
 const now = getZonedNow(profile.business.timezone);
 const freeSlots = (count: number) => {
@@ -53,8 +54,8 @@ r = await call("POST", "/public/businesses/fisioactiva/bookings", { documentId: 
 ok(r.status === 200 && r.body.price === both.price && r.body.homeVisit === null, "mismo servicio en el local, sin recargo", r.body);
 
 const jhordan = (await call("GET", "/public/businesses/jhordan")).body;
-const homeOnly = jhordan.services.find((s: { location: string }) => s.location === "home");
-const localOnly = jhordan.services.find((s: { location: string }) => s.location === "business");
+const homeOnly = jhordan.services.find((s: Modes) => s.modes.join() === "home");
+const localOnly = jhordan.services.find((s: Modes) => s.modes.join() === "business");
 const nowJ = getZonedNow(jhordan.business.timezone);
 let slotJ: { date: string; startTime: string } | null = null;
 for (let d = 1; d < 40 && !slotJ; d++) {
@@ -79,12 +80,12 @@ r = await call("GET", `${B}/clients`);
 const created = r.body.find((c: { email: string }) => c.email === "domicilio@example.com");
 ok(created?.address === visit.address, "la dirección queda en la ficha del cliente nuevo", created);
 r = await call("POST", `${B}/services`, { name: "Masaje a domicilio", description: "", durationMinutes: 60, price: 40, showPrice: false, location: "home", homeVisitFee: 5, isActive: true });
-ok(r.status === 200 && r.body.showPrice === false && r.body.location === "home" && r.body.homeVisitFee === 5, "crear servicio a domicilio con precio oculto", r.body);
+ok(r.status === 200 && r.body.showPrice === false && r.body.modes.join() === "home" && r.body.homeVisitFee === 5, "crear servicio a domicilio con precio oculto (versión anterior del panel: `location`)", r.body);
 const hidden = r.body;
-r = await call("PUT", `${B}/services/${hidden.id}`, { ...hidden, showPrice: true, location: "both", homeVisitFee: 7.5 });
-ok(r.body?.showPrice === true && r.body.homeVisitFee === 7.5, "editar lugar, recargo y precio visible", r.body);
+r = await call("PUT", `${B}/services/${hidden.id}`, { ...hidden, showPrice: true, modes: ["business", "home"], homeVisitFee: 7.5 });
+ok(r.body?.showPrice === true && r.body.modes.join() === "business,home" && r.body.homeVisitFee === 7.5, "editar lugar, recargo y precio visible", r.body);
 r = await call("POST", `${B}/services`, { name: "Sin campos nuevos", description: "", durationMinutes: 30, price: 10, isActive: true });
-ok(r.body?.showPrice === true && r.body.location === "business" && r.body.homeVisitFee === 0, "valores por defecto si no se envían", r.body);
+ok(r.body?.showPrice === true && r.body.modes.join() === "business" && r.body.homeVisitFee === 0, "valores por defecto si no se envían", r.body);
 const client = created;
 const [slotC] = freeSlots(3).slice(2);
 r = await call("POST", `${B}/appointments`, { clientId: client.id, serviceId: hidden.id, ...slotC, durationMinutes: 60, price: 45, status: "confirmed", notes: "", homeVisit: { address: "Calle Larga 1-23", reference: "", lat: null, lng: null } });

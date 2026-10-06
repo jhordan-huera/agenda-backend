@@ -1,6 +1,6 @@
 // Copia de agenda-front/src/lib/email/templates.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { APP_NAME } from "../constants/app.ts";
-import { capitalize, formatCurrency, formatLongDate, formatTimeRange } from "../format.ts";
+import { capitalize, formatLongDate, formatPrice, formatTimeRange } from "../format.ts";
 import { describeHomeVisit, getDirectionsUrl, getPlaceMapsUrl, hasMapPoint } from "../maps.ts";
 import type { HomeVisitAddress, ISODate } from "../../types/index.ts";
 import { composeEmail, type EmailBlock, type EmailContent, type EmailMessage } from "./layout.ts";
@@ -31,8 +31,11 @@ export interface AppointmentEmailData {
   currency: string;
   cancellationPolicy: string;
   bookingUrl: string;
-  /** null = en el local del negocio. */
+  /** null = en el local del negocio (o virtual). */
   homeVisit: HomeVisitAddress | null;
+  /** Por videollamada, con el enlace del profesional (null: aún no lo configuró). */
+  isVirtual: boolean;
+  meetingUrl: string | null;
 }
 
 /* ------------------------------------------------------------------ Piezas -- */
@@ -74,8 +77,15 @@ function appointmentDetails(data: AppointmentEmailData, title = "Tu cita"): Emai
     { label: "Fecha", value: capitalize(formatLongDate(data.date)) },
     { label: "Hora", value: formatTimeRange(data.startTime, data.endTime) },
   ];
-  if (data.showPrice) rows.push({ label: "Precio", value: formatCurrency(data.price, data.currency) });
-  if (data.homeVisit) {
+  if (data.showPrice) rows.push({ label: "Precio", value: formatPrice(data.price, data.currency) });
+  if (data.isVirtual) {
+    rows.push({ label: "Lugar", value: "Virtual (videollamada)" });
+    rows.push(
+      data.meetingUrl
+        ? { label: "Videollamada", value: "Unirse a la videollamada", href: data.meetingUrl }
+        : { label: "Videollamada", value: "Te enviaremos el enlace antes de la cita" },
+    );
+  } else if (data.homeVisit) {
     rows.push({ label: "Lugar", value: `A domicilio: ${describeHomeVisit(data.homeVisit)}` });
     rows.push({ label: "Ubicación", value: "Ver en el mapa", href: getPlaceMapsUrl(data.homeVisit) });
   } else {
@@ -340,7 +350,7 @@ export const emailTemplates = {
     professionalName: string;
     businessName: string;
     date: ISODate;
-    appointments: { time: string; clientName: string; serviceName: string; homeVisit: HomeVisitAddress | null }[];
+    appointments: { time: string; clientName: string; serviceName: string; homeVisit: HomeVisitAddress | null; isVirtual?: boolean }[];
     agendaUrl: string;
   }): EmailContent => {
     const count = data.appointments.length;
@@ -358,7 +368,11 @@ export const emailTemplates = {
           kind: "details",
           rows: data.appointments.map((appointment) => ({
             label: appointment.time,
-            value: [appointment.clientName, appointment.serviceName, appointment.homeVisit ? "a domicilio" : ""]
+            value: [
+              appointment.clientName,
+              appointment.serviceName,
+              appointment.homeVisit ? "a domicilio" : appointment.isVirtual ? "virtual" : "",
+            ]
               .filter(Boolean)
               .join(" · "),
           })),

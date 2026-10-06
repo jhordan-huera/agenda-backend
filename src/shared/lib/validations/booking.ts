@@ -28,15 +28,18 @@ export const publicBookingSchema = z
     email: optionalEmailField,
     phone: phoneField,
     notes: optionalText(500),
-    /** null = cita en el local. A domicilio, la ubicación exacta marcada en el mapa es obligatoria. */
+    /** null = cita en el local (o virtual). A domicilio, la ubicación exacta marcada en el mapa es obligatoria. */
     homeVisit: homeVisitSchema.nullable().default(null),
+    /** Por videollamada. */
+    isVirtual: z.boolean().default(false),
     /** Con quién se atiende; null: el primer profesional libre a esa hora. */
     professionalId: z.string().nullable().default(null),
   })
   .refine((data) => !data.homeVisit || (data.homeVisit.lat !== null && data.homeVisit.lng !== null), {
     path: ["homeVisit", "lat"],
     message: "Marca tu ubicación en el mapa",
-  });
+  })
+  .refine((data) => !(data.isVirtual && data.homeVisit), { path: ["isVirtual"], message: "Una cita virtual no es a domicilio" });
 
 /** Datos obligatorios de un cliente nuevo en la reserva online. */
 export const newClientContactSchema = z.object({

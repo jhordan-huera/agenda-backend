@@ -176,11 +176,11 @@ async function seed() {
       db,
       "services",
       [
-        "id", "business_id", "name", "description", "duration_minutes", "price", "show_price", "location",
+        "id", "business_id", "name", "description", "duration_minutes", "price", "show_price", "modes",
         "home_visit_fee", "is_active", "created_at",
       ],
       data.services.map((s) => [
-        s.id, s.businessId, s.name, s.description, s.durationMinutes, s.price, s.showPrice, s.location,
+        s.id, s.businessId, s.name, s.description, s.durationMinutes, s.price, s.showPrice, s.modes,
         s.homeVisitFee, s.isActive, s.createdAt,
       ]),
     );
@@ -217,11 +217,11 @@ async function seed() {
       "appointments",
       [
         "id", "business_id", "client_id", "service_id", "professional_id", "date", "start_time", "end_time",
-        "status", "notes", "price", "home_visit", "source", "created_at", "updated_at",
+        "status", "notes", "price", "home_visit", "is_virtual", "source", "created_at", "updated_at",
       ],
       data.appointments.map((a) => [
         a.id, a.businessId, a.clientId, a.serviceId, a.professionalId, a.date, a.startTime, a.endTime,
-        a.status, a.notes, a.price, a.homeVisit ? JSON.stringify(a.homeVisit) : null, a.source, a.createdAt, a.updatedAt,
+        a.status, a.notes, a.price, a.homeVisit ? JSON.stringify(a.homeVisit) : null, a.isVirtual, a.source, a.createdAt, a.updatedAt,
       ]),
     );
     await insertRows(

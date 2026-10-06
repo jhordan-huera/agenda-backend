@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { createBusinessWithOwner } from "./helpers/business.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 const ORIGIN = BASE.replace(/\/api$/, "");
@@ -119,11 +120,12 @@ ok(count("select count(*) from users where platform_role = 'super_admin'") === 1
 ok(count("select count(*) from clinical_templates where business_id is null") >= 11, "los formatos de la plataforma siguen");
 
 console.log("El email queda libre");
-r = await admin("POST", "/admin/businesses", {
-  name: "Clínica Nueva", category: "dentistry", slug, timezone: "America/Guayaquil", phone: "", email: "", address: "",
-  plan: "free", ownerFirstName: "Ricardo", ownerLastName: "Paredes", ownerEmail: "ricardo@demo.com", ownerPassword: "NuevaClave1",
-});
-ok(r.status === 200 && r.body.existingAccount === false, "se puede crear otro negocio con ese email y ese enlace", r.body);
+r = await createBusinessWithOwner(
+  admin,
+  { name: "Clínica Nueva", category: "dentistry", slug },
+  { firstName: "Ricardo", lastName: "Paredes", email: "ricardo@demo.com", password: "NuevaClave1" },
+);
+ok(r.status === 200 && r.body.owner.email === "ricardo@demo.com", "se puede crear otro negocio con ese email y ese enlace", r.body);
 
 if (failures) {
   console.log(`\n${failures} comprobación(es) fallaron`);

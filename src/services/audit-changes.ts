@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { APPOINTMENT_STATUS_CONFIG } from "../shared/lib/constants/appointment-status.ts";
-import { SERVICE_LOCATIONS, WEEK_DAYS, getTimezoneInfo } from "../shared/lib/constants/business.ts";
+import { WEEK_DAYS, describeServiceModes, getTimezoneInfo } from "../shared/lib/constants/business.ts";
 import { formatCurrency, formatDuration, formatNumericDate } from "../shared/lib/format.ts";
 import type {
   AppointmentStatus,
@@ -12,6 +12,7 @@ import type {
   NotificationSettings,
   Schedule,
   Service,
+  ServiceMode,
 } from "../shared/types/index.ts";
 
 /**
@@ -67,11 +68,7 @@ export const SERVICE_FIELDS: ChangeField<ServiceForAudit>[] = [
   { key: "durationMinutes", label: "Duración", format: formatDuration },
   { key: "price", label: "Precio", format: money },
   { key: "showPrice", label: "Precio visible", format: yesNo },
-  {
-    key: "location",
-    label: "Lugar",
-    format: (value: string) => SERVICE_LOCATIONS.find((option) => option.value === value)?.label ?? value,
-  },
+  { key: "modes", label: "Modalidad", format: (value: ServiceMode[]) => describeServiceModes(value) },
   { key: "homeVisitFee", label: "Recargo a domicilio", format: money },
   { key: "clinicalTemplateName", label: "Formato de historia clínica" },
   { key: "isActive", label: "Activo", format: yesNo },
@@ -88,6 +85,8 @@ export interface AppointmentForAudit {
   price: number;
   notes: string;
   homeAddress: string | null;
+  /** "En el local", "A domicilio" o "Virtual". */
+  modality: string;
 }
 
 export const APPOINTMENT_FIELDS: ChangeField<AppointmentForAudit>[] = [
@@ -98,6 +97,7 @@ export const APPOINTMENT_FIELDS: ChangeField<AppointmentForAudit>[] = [
   { key: "professionalName", label: "Profesional" },
   { key: "status", label: "Estado", format: (value: AppointmentStatus) => APPOINTMENT_STATUS_CONFIG[value].label },
   { key: "price", label: "Precio", format: money },
+  { key: "modality", label: "Modalidad" },
   { key: "homeAddress", label: "Dirección a domicilio" },
   { key: "notes", label: "Notas", hideValues: true },
 ];
@@ -123,6 +123,7 @@ export interface ProfessionalForAudit {
   avatarUrl: string | null;
   color: string;
   email: string;
+  meetingUrl: string;
   memberName: string | null;
   servicesLabel: string;
   notifyNewAppointments: boolean;
@@ -136,6 +137,7 @@ export const PROFESSIONAL_FIELDS: ChangeField<ProfessionalForAudit>[] = [
   { key: "avatarUrl", label: "Foto", hideValues: true },
   { key: "color", label: "Color", format: (value: string) => value.toUpperCase() },
   { key: "email", label: "Email de avisos" },
+  { key: "meetingUrl", label: "Enlace de videollamada" },
   { key: "memberName", label: "Usuario del equipo", format: (value: string | null) => value ?? "Sin usuario" },
   { key: "servicesLabel", label: "Servicios que atiende" },
   { key: "notifyNewAppointments", label: "Aviso de cada cita nueva", format: yesNo },

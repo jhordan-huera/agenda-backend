@@ -3,7 +3,7 @@ import type {
   BookingSettings,
   DayOfWeek,
   NotificationSettings,
-  ServiceLocation,
+  ServiceMode,
   TimeRange,
 } from "../../types/index.ts";
 
@@ -39,11 +39,19 @@ export function getTimezoneInfo(timezone: string) {
 }
 
 /** Dónde se presta un servicio (formulario de servicios y página pública). */
-export const SERVICE_LOCATIONS: { value: ServiceLocation; label: string; description: string }[] = [
+export const SERVICE_MODES: { value: ServiceMode; label: string; description: string }[] = [
   { value: "business", label: "En el local", description: "El cliente viene a tu negocio." },
   { value: "home", label: "A domicilio", description: "Vas a casa del cliente: marca su ubicación al reservar." },
-  { value: "both", label: "En el local o a domicilio", description: "El cliente elige al reservar." },
+  { value: "virtual", label: "Virtual", description: "Por videollamada: el paciente recibe el enlace de cada profesional (Profesionales → Editar)." },
 ];
+
+/** "En el local", "Virtual", "En el local o virtual", "En el local, a domicilio o virtual". */
+export function describeServiceModes(modes: ServiceMode[]): string {
+  const labels = SERVICE_MODES.filter((mode) => modes.includes(mode.value)).map((mode, index) =>
+    index === 0 ? mode.label : mode.label.toLowerCase(),
+  );
+  return labels.length <= 1 ? (labels[0] ?? "") : `${labels.slice(0, -1).join(", ")} o ${labels.at(-1)}`;
+}
 
 /** Días ordenados de lunes a domingo, como se muestran en la interfaz. */
 export const WEEK_DAYS: { value: DayOfWeek; label: string; short: string }[] = [

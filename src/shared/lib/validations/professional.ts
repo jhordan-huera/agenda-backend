@@ -16,6 +16,13 @@ export const professionalSchema = z
       .regex(/^#[0-9a-f]{6}$/, "Elige un color"),
     /** A dónde se le avisa de sus citas; vacío: sin avisos. */
     email: optionalEmailField,
+    /** Su sala de videollamada para las citas virtuales (Meet, Zoom…); vacío: sin enlace. */
+    meetingUrl: z
+      .string()
+      .trim()
+      .max(300, "El enlace es demasiado largo")
+      .refine((value) => value === "" || /^https:\/\/\S+$/.test(value), "Pega el enlace completo (empieza con https://)")
+      .default(""),
     /** Miembro del equipo que usa esta agenda (null: no entra al sistema). */
     userId: z.string().nullable().default(null),
     allServices: z.boolean(),

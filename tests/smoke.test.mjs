@@ -1,3 +1,4 @@
+import { createBusinessWithOwner } from "./helpers/business.mjs";
 import { cedulaFor } from "./helpers/cedula.mjs";
 // Pruebas de extremo a extremo contra la API de prueba.
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
@@ -220,7 +221,7 @@ r = await admin("GET", "/admin/businesses");
 ok(r.status === 200 && r.body.length === 6 && r.body[0].usage && r.body[0].owner, "listado de negocios", r.body?.[0]?.usage);
 r = await admin("GET", `/admin/businesses/${businessId}`);
 ok(r.body?.members?.length === 3 && r.body.recentActivity.length > 0, "detalle de negocio", Object.keys(r.body ?? {}));
-r = await admin("POST", "/admin/businesses", { name: "Negocio Admin", category: "beauty", slug: "negocio-admin", timezone: "America/Guayaquil", phone: "", email: "", address: "", plan: "pro", ownerFirstName: "Dueño", ownerLastName: "Nuevo", ownerEmail: "dueno@example.com", ownerPassword: "DuenoClave1" });
+r = await createBusinessWithOwner(admin, { name: "Negocio Admin", slug: "negocio-admin", plan: "pro" }, { firstName: "Dueño", lastName: "Nuevo", email: "dueno@example.com", password: "DuenoClave1" });
 ok(r.status === 200 && r.body.business.slug === "negocio-admin", "crear negocio + propietario", r.body);
 const newBusinessId = r.body.business?.id;
 const newOwner = agent();

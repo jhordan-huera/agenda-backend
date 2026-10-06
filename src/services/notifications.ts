@@ -68,6 +68,8 @@ interface AppointmentContext {
   professionalEmail: string;
   professionalNotify: boolean;
   professionalUserId: string | null;
+  /** Sala de videollamada del profesional ("" = sin enlace). */
+  meetingUrl: string;
 }
 
 async function loadAppointmentContext(db: Db, appointment: Appointment): Promise<AppointmentContext | null> {
@@ -77,7 +79,8 @@ async function loadAppointmentContext(db: Db, appointment: Appointment): Promise
   const details = await one<Omit<AppointmentContext, "business">>(
     db,
     `select c.name as "clientName", c.email as "clientEmail", s.name as "serviceName",
-            s.show_price and s.price > 0 as "showPrice",
+            s.show_price as "showPrice",
+            coalesce(p.meeting_url, '') as "meetingUrl",
             p.display_name as "professionalName",
             coalesce(p.email, '') as "professionalEmail",
             coalesce(p.notify_new_appointments, false) as "professionalNotify",
@@ -109,6 +112,8 @@ function buildEmailData(context: AppointmentContext, appointment: Appointment): 
     cancellationPolicy: business.bookingSettings.allowCancellations ? business.bookingSettings.cancellationPolicy : "",
     bookingUrl: `${appOrigin()}/book/${business.slug}`,
     homeVisit: appointment.homeVisit,
+    isVirtual: appointment.isVirtual,
+    meetingUrl: appointment.isVirtual ? context.meetingUrl || null : null,
   };
 }
 
@@ -267,10 +272,16 @@ export async function runDailyAgendaJob(db: Db, businessId: string, at?: ZonedNo
   );
   let sent = 0;
   for (const professional of professionals) {
-    const appointments = await many<{ time: string; clientName: string; serviceName: string; homeVisit: Appointment["homeVisit"] }>(
+    const appointments = await many<{
+      time: string;
+      clientName: string;
+      serviceName: string;
+      homeVisit: Appointment["homeVisit"];
+      isVirtual: boolean;
+    }>(
       db,
       `select to_char(a.start_time, 'HH24:MI') || '–' || to_char(a.end_time, 'HH24:MI') as time,
-              c.name as "clientName", s.name as "serviceName", a.home_visit as "homeVisit"
+              c.name as "clientName", s.name as "serviceName", a.home_visit as "homeVisit", a.is_virtual as "isVirtual"
          from appointments a join clients c on c.id = a.client_id join services s on s.id = a.service_id
         where a.professional_id = $1 and a.date = $2 and a.status in ('pending', 'confirmed')
         order by a.start_time`,

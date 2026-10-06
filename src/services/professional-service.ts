@@ -109,6 +109,7 @@ async function professionalForAudit(db: Db, professional: Professional): Promise
     avatarUrl: professional.avatarUrl,
     color: professional.color,
     email: professional.email,
+    meetingUrl: professional.meetingUrl,
     memberName: member ? getFullName(member) : null,
     servicesLabel: services,
     notifyNewAppointments: professional.notifyNewAppointments,
@@ -158,8 +159,8 @@ export const professionalService = {
         db,
         `insert into professionals
            (business_id, user_id, display_name, title, avatar_url, color, email, all_services,
-            notify_new_appointments, daily_agenda, is_active, sort_order)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            notify_new_appointments, daily_agenda, is_active, sort_order, meeting_url)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          returning id`,
         [
           businessId,
@@ -174,6 +175,7 @@ export const professionalService = {
           data.dailyAgenda,
           data.isActive,
           next?.order ?? 1,
+          data.meetingUrl,
         ],
       ))!;
       await saveServices(db, id, data);
@@ -203,7 +205,8 @@ export const professionalService = {
       await db.query(
         `update professionals
             set user_id = $2, display_name = $3, title = $4, avatar_url = $5, color = $6, email = $7,
-                all_services = $8, notify_new_appointments = $9, daily_agenda = $10, is_active = $11
+                all_services = $8, notify_new_appointments = $9, daily_agenda = $10, is_active = $11,
+                meeting_url = $12
           where id = $1`,
         [
           professionalId,
@@ -217,6 +220,7 @@ export const professionalService = {
           data.notifyNewAppointments,
           data.dailyAgenda,
           data.isActive,
+          data.meetingUrl,
         ],
       );
       await saveServices(db, professionalId, data);
