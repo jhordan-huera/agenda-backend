@@ -127,6 +127,11 @@ const BOOKING_FIELDS: ChangeField<BookingSettings>[] = [
   { key: "allowCancellations", label: "El cliente puede cancelar", format: yesNo },
   { key: "cancellationNoticeHours", label: "Antelación para cancelar", format: hours },
   { key: "cancellationPolicy", label: "Política de cancelación", hideValues: true },
+  {
+    key: "maxClientBookingsPerDay",
+    label: "Citas por día por cliente desde la página",
+    format: (value: number) => (value === 0 ? "Sin límite" : String(value)),
+  },
 ];
 
 const NOTIFICATION_FIELDS: ChangeField<NotificationSettings>[] = [

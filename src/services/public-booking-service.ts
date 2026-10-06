@@ -10,6 +10,7 @@ import { config } from "../config.ts";
 import { many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { isSlotAvailable } from "../shared/lib/availability.ts";
+import { DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY } from "../shared/lib/constants/business.ts";
 import { isPriceVisible } from "../shared/lib/format.ts";
 import { addMinutesToTime, getZonedNow } from "../shared/lib/time.ts";
 import { documentIdError } from "../shared/lib/identity.ts";
@@ -86,6 +87,29 @@ async function findClientByDocument(db: Db, businessId: string, documentId: stri
     businessId,
     documentId,
   ]);
+}
+
+/**
+ * Una misma persona (identificada por su cédula) no reserva desde la página más citas en un día de
+ * las que permite el negocio (`maxClientBookingsPerDay`; 0 = sin límite). Cuenta todas sus citas
+ * activas de ese día, también las que agendó el profesional. Va dentro de la transacción, después
+ * de lockBusiness: dos reservas a la vez de la misma persona no se cuelan juntas.
+ */
+async function assertClientDailyLimit(db: Db, business: Business, clientId: string, date: string): Promise<void> {
+  const limit = business.bookingSettings.maxClientBookingsPerDay ?? DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY;
+  if (limit <= 0) return;
+  const sameDay = await one<{ count: number }>(
+    db,
+    `select count(*)::int as count from appointments
+      where business_id = $1 and client_id = $2 and date = $3 and status in ('pending', 'confirmed', 'completed')`,
+    [business.id, clientId, date],
+  );
+  if ((sameDay?.count ?? 0) < limit) return;
+  const already = limit === 1 ? "Ya tienes una cita" : `Ya tienes ${limit} citas`;
+  throw new AppError(
+    "daily_limit",
+    `${already} ese día con ${business.name}. Si necesitas otra, escríbele al negocio o elige otro día.`,
+  );
 }
 
 /* Lo que ve la página pública: nada de datos internos (propietario, avisos, plantillas clínicas…). */
@@ -243,6 +267,7 @@ export const publicBookingService = {
           ))!;
         }
       }
+      await assertClientDailyLimit(db, business, client.id, data.date);
       if (!client.address && data.homeVisit) {
         // La dirección de la visita queda en la ficha del cliente si aún no tenía una.
         await db.query("update clients set address = $2 where id = $1", [client.id, data.homeVisit.address]);

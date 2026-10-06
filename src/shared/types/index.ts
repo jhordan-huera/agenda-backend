@@ -82,6 +82,11 @@ export interface BookingSettings {
   cancellationNoticeHours: number;
   /** Texto de la política de cancelación que ve el cliente al reservar. */
   cancellationPolicy: string;
+  /**
+   * Citas que una misma persona (su cédula) puede tener el mismo día al reservar desde la página
+   * pública; 0 = sin límite. Desde el panel, el profesional agenda las que quiera.
+   */
+  maxClientBookingsPerDay: number;
 }
 
 /** Qué emails automáticos se envían a los clientes. */

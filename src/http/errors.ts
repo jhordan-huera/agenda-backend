@@ -3,6 +3,8 @@ import type { ErrorRequestHandler, RequestHandler } from "express";
 export type AppErrorCode =
   | "not_found"
   | "conflict"
+  /** Reserva pública: esa persona ya tiene el máximo de citas de ese día. */
+  | "daily_limit"
   | "validation"
   | "unauthorized"
   | "forbidden"
@@ -18,6 +20,7 @@ const STATUS_BY_CODE: Record<AppErrorCode, number> = {
   forbidden: 403,
   not_found: 404,
   conflict: 409,
+  daily_limit: 409,
   rate_limited: 429,
   server: 500,
   unavailable: 503,

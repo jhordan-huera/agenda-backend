@@ -66,6 +66,12 @@ export const DURATION_OPTIONS = [15, 30, 45, 60, 75, 90, 120, 150, 180];
  */
 export const DEFAULT_MIN_NOTICE_HOURS = 24;
 
+/**
+ * Citas por día que una misma persona puede reservar desde la página pública (lo cambia cada
+ * negocio en Configuración → Agenda; 0 = sin límite).
+ */
+export const DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY = 1;
+
 export const DEFAULT_BOOKING_SETTINGS: BookingSettings = {
   alignSlotsToDuration: true,
   slotIntervalMinutes: 30,
@@ -74,6 +80,7 @@ export const DEFAULT_BOOKING_SETTINGS: BookingSettings = {
   allowCancellations: true,
   cancellationNoticeHours: 24,
   cancellationPolicy: "Puedes cancelar o reprogramar tu cita sin costo hasta 24 horas antes.",
+  maxClientBookingsPerDay: DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY,
 };
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {

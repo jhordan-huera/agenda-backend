@@ -175,6 +175,17 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   nutrición, fisioterapia, fonoaudiología, medicina estética); se recomiendan según la categoría del
   negocio. `db:seed -- --reset` las conserva.
 
+## Doble reserva
+
+- **Nunca dos citas a la misma hora**: la reserva bloquea el negocio en su transacción
+  (`lockBusiness`), vuelve a comprobar la hora y, además, la base lo impide con la restricción
+  `appointments_no_overlap` (exclusión por profesional y franja en citas activas).
+- **Citas por persona y día desde la página** (migración 021): `bookingSettings.maxClientBookingsPerDay`
+  (1 por defecto; 0 = sin límite). Cuenta las citas activas de esa cédula ese día (también las del
+  panel) y responde 409 con código `daily_limit`. Desde el panel no hay límite.
+- Pruebas: `tests/concurrency.test.ts` y `tests/booking-limits.test.ts` (reservas simultáneas de la
+  misma persona y de personas distintas).
+
 ## Rendimiento y crecimiento
 
 - **El panel no descarga el historial**: cada pantalla pide sólo su rango de citas (`from`/`to`);

@@ -65,13 +65,15 @@ const service = profile.services.find((s) => s.location === "business" && s.dura
 const { getAvailableSlots } = await import("../src/shared/lib/availability.ts");
 const { addDaysISO, getZonedNow } = await import("../src/shared/lib/time.ts");
 const now = getZonedNow(profile.business.timezone);
+// Una hora libre por día, en días en que María no tiene cita: cada persona reserva como mucho una
+// cita por día desde la página (maxClientBookingsPerDay = 1 por defecto).
+const mariaDates = new Set((await owner("GET", `${B}/appointments?clientId=${maria.id}`)).body.map((a) => a.date));
 const freeSlots = [];
-for (let d = 2; d < 40 && freeSlots.length < 6; d++) {
+for (let d = 2; d < 60 && freeSlots.length < 6; d++) {
   const date = addDaysISO(now.date, d);
-  for (const startTime of getAvailableSlots(date, service.durationMinutes, { ...profile, settings: profile.business.bookingSettings, now })) {
-    freeSlots.push({ date, startTime });
-    if (freeSlots.length === 6) break;
-  }
+  if (mariaDates.has(date)) continue;
+  const [startTime] = getAvailableSlots(date, service.durationMinutes, { ...profile, settings: profile.business.bookingSettings, now });
+  if (startTime) freeSlots.push({ date, startTime });
 }
 const countClients = async () => (await owner("GET", `${B}/clients`)).body.length;
 const before = await countClients();
