@@ -2,6 +2,7 @@ import { subscriptionColumns } from "../db/columns.ts";
 import { one, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { getEffectiveLimits, getPlan } from "../shared/lib/constants/plans.ts";
+import { plural } from "../shared/lib/format.ts";
 import type { PlanId, Subscription } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
 import type { AuditActor } from "./context.ts";
@@ -45,6 +46,19 @@ export async function applyPlanChange(
       "conflict",
       `El plan ${plan.name} permite ${agendas === 1 ? "una agenda" : `${agendas} agendas`} y el negocio tiene ${activeProfessionals} profesionales activos. Desactiva los que sobran antes de cambiar.`,
     );
+  }
+  if (!plan.multipleAgendas) {
+    const professionals = await one<{ count: number }>(
+      db,
+      "select count(*)::int as count from business_users where business_id = $1 and role = 'professional'",
+      [businessId],
+    );
+    if (professionals!.count > 0) {
+      throw new AppError(
+        "conflict",
+        `El plan ${plan.name} no tiene el rol Profesional y ${plural(professionals!.count, "miembro lo tiene", "miembros lo tienen")}. Cámbiales el rol antes de cambiar.`,
+      );
+    }
   }
   const previous = getPlan(subscription.plan);
   const updated = (await one<Subscription>(

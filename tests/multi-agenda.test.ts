@@ -271,5 +271,23 @@ ok(r.status === 204 || r.status === 200, "el propietario quita a Valeria del equ
 professionals = (await ricardo("GET", `${B}/professionals`)).body;
 ok(professionals.find((p) => p.id === valeriaAgenda.id)?.userId === null, "su agenda sigue, sin usuario");
 
+console.log("Cuenta individual (Pro): sin profesionales ni rol Profesional");
+const { a: jhordan, session: js } = await login("jhordan@demo.com");
+const J = `/businesses/${js.businessId}`;
+r = await jhordan("POST", `${J}/professionals`, { ...newProfessional, isActive: false });
+ok(r.status === 402 && /individual/.test(r.body.error.message), "no se agregan profesionales, ni inactivos", r.body);
+const [ownAgenda] = (await jhordan("GET", `${J}/professionals`)).body;
+const { id: _id, businessId: _b, sortOrder: _s, createdAt: _c, ...ownInput } = ownAgenda;
+r = await jhordan("PUT", `${J}/professionals/${ownAgenda.id}`, { ...ownInput, title: "Psicólogo clínico", meetingUrl: "https://meet.google.com/jho-rdan-123" });
+ok(r.status === 200 && r.body.title === "Psicólogo clínico" && r.body.meetingUrl.endsWith("jho-rdan-123"), "sí edita su única agenda (especialidad y videollamada)", r.body);
+const jTeam = (await jhordan("GET", `${J}/team`)).body;
+const miguel = jTeam.find((m: { email: string }) => m.email === "miguel@demo.com");
+r = await jhordan("PATCH", `${J}/team/${miguel.userId}`, { role: "professional" });
+ok(r.status === 402 && /varias agendas/.test(r.body.error.message), "no se da el rol Profesional", r.body);
+r = await jhordan("PATCH", `${J}/team/${miguel.userId}`, { role: "admin" });
+ok(r.status === 204 || r.status === 200, "los demás roles sí", r.body);
+r = await admin("POST", `/admin/businesses/${js.businessId}/members`, { firstName: "Pía", lastName: "Mora", email: "pia@example.com", role: "professional", password: "PiaClave2026" });
+ok(r.status === 402 && /varias agendas/.test(r.body.error.message), "ni el super admin agrega a alguien con ese rol", r.body);
+
 console.log(failures === 0 ? "\nTodo bien." : `\n${failures} fallos.`);
 process.exitCode = failures === 0 ? 0 : 1;

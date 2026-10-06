@@ -176,6 +176,9 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   fija, `https://…`; no sale en la página pública). La reserva se rechaza si la modalidad no es una
   del servicio. `show_price` false = sin precio; true con precio 0 = "Gratis" (la migración ocultó
   los servicios que ya tenían precio 0, que antes significaba "no mostrar").
+- **Cuentas individuales** (Free y Pro, `multipleAgendas: false` en `plans.ts`): no se crean
+  profesionales (`assertMultipleAgendas`), ni se da el rol Profesional (`assertRoleAllowed`), y no se
+  pasa a esos planes con miembros que lo tienen. Su única agenda sí se edita (especialidad, enlace).
 - **Varias agendas** (migración 022, plan Business): cada profesional (`professionals`) tiene su
   horario (`schedules.professional_id`), sus bloqueos (`blocked_times.professional_id`; null = todo el
   negocio) y los servicios que atiende (`all_services` o `professional_services`). Free y Pro tienen

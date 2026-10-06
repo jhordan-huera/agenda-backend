@@ -58,7 +58,7 @@ import { authorizeSuperAdmin, parseInput, requireUser, type RequestContext } fro
 import { fileStorage } from "./file-storage.ts";
 import { appOrigin, PASSWORD_MASK, queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
-import { assertUserLimit } from "./plan-limits.ts";
+import { assertRoleAllowed, assertUserLimit } from "./plan-limits.ts";
 import { applyPlanChange } from "./subscriptions.ts";
 
 /**
@@ -760,6 +760,7 @@ export const adminService = {
     return transaction(async (db) => {
       const business = await findBusiness(db, businessId, true);
       if (await isEmailRegistered(db, data.email)) throw new AppError("conflict", "Ya existe una cuenta con ese email.");
+      await assertRoleAllowed(db, businessId, data.role);
       await assertUserLimit(db, businessId);
       const user = await createUserAccount(db, data);
       await db.query("insert into business_users (business_id, user_id, role) values ($1, $2, $3)", [

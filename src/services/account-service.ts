@@ -41,7 +41,7 @@ import { businessChanges, type BusinessForAudit } from "./audit-changes.ts";
 import { insertBusiness, isSlugTaken, uniqueSlug } from "./business-factory.ts";
 import { requireAssignableCategory } from "./category-service.ts";
 import { authorize, parseInput, requireUser, type RequestContext } from "./context.ts";
-import { countUsers, getPlanUsage } from "./plan-limits.ts";
+import { assertRoleAllowed, countUsers, getPlanUsage } from "./plan-limits.ts";
 import { appOrigin, queueEmail } from "./notifications.ts";
 import { listProfessionals } from "./professional-service.ts";
 
@@ -324,6 +324,7 @@ export const teamService = {
       const member = isUuid(userId) ? await findTeamMember(db, businessId, userId) : null;
       if (!member) throw new AppError("not_found", "Miembro no encontrado.");
       if (member.role === "owner") throw new AppError("forbidden", "No se puede cambiar el rol del propietario.");
+      await assertRoleAllowed(db, businessId, newRole);
       await db.query("update business_users set role = $3 where business_id = $1 and user_id = $2", [
         businessId,
         userId,

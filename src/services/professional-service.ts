@@ -8,7 +8,7 @@ import type { Professional, Schedule } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
 import { diffChanges, PROFESSIONAL_FIELDS, type ProfessionalForAudit } from "./audit-changes.ts";
 import { authorize, parseInput, type RequestContext } from "./context.ts";
-import { assertProfessionalLimit } from "./plan-limits.ts";
+import { assertMultipleAgendas, assertProfessionalLimit } from "./plan-limits.ts";
 
 /**
  * Profesionales del negocio: cada uno es una agenda con su horario, sus bloqueos y los servicios que
@@ -147,6 +147,7 @@ export const professionalService = {
     const data = parseInput(professionalSchema, input);
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "professionals.manage", { lock: true });
+      await assertMultipleAgendas(db, businessId);
       if (data.isActive) await assertProfessionalLimit(db, businessId);
       await assertAssignableMember(db, businessId, data.userId);
       await assertOwnServices(db, businessId, data);
