@@ -230,6 +230,8 @@ export interface Professional {
   notifyNewAppointments: boolean;
   /** Email cada mañana con sus citas del día. */
   dailyAgenda: boolean;
+  /** Enlace de su sala de videollamada (Meet, Zoom…) para las citas virtuales ("" = sin enlace). */
+  meetingUrl: string;
   /** Inactivo: no recibe citas nuevas ni aparece en la página de reservas; su historial se conserva. */
   isActive: boolean;
   sortOrder: number;
@@ -284,8 +286,8 @@ export interface Client {
   createdAt: ISODateTime;
 }
 
-/** Dónde se presta un servicio: en el local, en casa del cliente o en ambos sitios. */
-export type ServiceLocation = "business" | "home" | "both";
+/** Modalidades de un servicio: en el local, en casa del cliente o por videollamada. */
+export type ServiceMode = "business" | "home" | "virtual";
 
 export interface Service {
   id: string;
@@ -295,11 +297,12 @@ export interface Service {
   durationMinutes: number;
   price: number;
   /**
-   * Si es false, o si el precio es 0, los clientes no ven ningún precio (ni en la página
-   * pública ni en los emails). El profesional siempre ve y edita el precio real.
+   * Si es false, los clientes no ven ningún precio (ni en la página pública ni en los emails); con
+   * precio 0, ven "Gratis". El profesional siempre ve y edita el precio real.
    */
   showPrice: boolean;
-  location: ServiceLocation;
+  /** Dónde se atiende (al menos una). Con varias, el cliente elige al reservar. */
+  modes: ServiceMode[];
   /** Recargo por atender a domicilio; se suma al precio. */
   homeVisitFee: number;
   /** Formato de historia clínica propuesto al registrar la evolución de una cita de este servicio. */
@@ -342,8 +345,10 @@ export interface Appointment {
   notes: string;
   /** Precio congelado al crear la cita: los cambios de tarifa no alteran el historial. */
   price: number;
-  /** null = en el local del negocio. */
+  /** null = en el local del negocio (o virtual). */
   homeVisit: HomeVisitAddress | null;
+  /** Por videollamada: el enlace es el del profesional (Professional.meetingUrl). */
+  isVirtual: boolean;
   source: AppointmentSource;
   /** Cuándo llegó el paciente (recepción lo marca); null: aún no llegó o no se registró. */
   arrivedAt: ISODateTime | null;
@@ -853,6 +858,9 @@ export interface BookingConfirmation {
   /** false: no se muestra el precio al cliente. */
   showPrice: boolean;
   homeVisit: HomeVisitAddress | null;
+  isVirtual: boolean;
+  /** Enlace de la videollamada (citas virtuales, si el profesional lo configuró). */
+  meetingUrl: string | null;
   clientEmail: string;
   /** true si se envió el email de confirmación al cliente. */
   emailSent: boolean;

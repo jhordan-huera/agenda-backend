@@ -61,7 +61,7 @@ ok(r.status === 400, "documento demasiado corto → 400", r.body);
 
 console.log("Reservas sin duplicados");
 const profile = (await pub("GET", "/public/businesses/jhordan")).body;
-const service = profile.services.find((s) => s.location === "business" && s.durationMinutes === 60);
+const service = profile.services.find((s) => s.modes.join() === "business" && s.durationMinutes === 60);
 const { getAvailableSlots } = await import("../src/shared/lib/availability.ts");
 const { addDaysISO, getZonedNow } = await import("../src/shared/lib/time.ts");
 const now = getZonedNow(profile.business.timezone);

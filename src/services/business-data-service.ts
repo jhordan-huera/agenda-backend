@@ -273,7 +273,7 @@ export const serviceService = {
       const service = (await one<Service>(
         db,
         `insert into services
-           (business_id, name, description, duration_minutes, price, show_price, location, home_visit_fee,
+           (business_id, name, description, duration_minutes, price, show_price, modes, home_visit_fee,
             clinical_template_id, is_active)
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          returning ${serviceColumns()}`,
@@ -284,7 +284,7 @@ export const serviceService = {
           data.durationMinutes,
           data.price,
           data.showPrice,
-          data.location,
+          data.modes,
           data.homeVisitFee,
           data.clinicalTemplateId,
           data.isActive,
@@ -312,7 +312,7 @@ export const serviceService = {
         db,
         `update services
             set name = $2, description = $3, duration_minutes = $4, price = $5,
-                show_price = $6, location = $7, home_visit_fee = $8, clinical_template_id = $9, is_active = $10
+                show_price = $6, modes = $7, home_visit_fee = $8, clinical_template_id = $9, is_active = $10
           where id = $1
           returning ${serviceColumns()}`,
         [
@@ -322,7 +322,7 @@ export const serviceService = {
           data.durationMinutes,
           data.price,
           data.showPrice,
-          data.location,
+          data.modes,
           data.homeVisitFee,
           data.clinicalTemplateId,
           data.isActive,
@@ -459,6 +459,7 @@ async function buildAppointmentFields(db: Db, businessId: string, input: unknown
     notes: data.notes,
     price: data.price,
     homeVisit: data.homeVisit,
+    isVirtual: data.isVirtual,
     /** Vacío: sin elegir (ver resolveAppointmentProfessional). */
     requestedProfessionalId: data.professionalId,
   };
@@ -473,7 +474,8 @@ async function saveAppointment(db: Db, appointment: Appointment): Promise<Appoin
     db,
     `update appointments
         set client_id = $2, service_id = $3, date = $4, start_time = $5, end_time = $6,
-            status = $7, notes = $8, price = $9, home_visit = $10, professional_id = $11, updated_at = now()
+            status = $7, notes = $8, price = $9, home_visit = $10, professional_id = $11, is_virtual = $12,
+            updated_at = now()
       where id = $1
       returning ${appointmentColumns()}`,
     [
@@ -488,6 +490,7 @@ async function saveAppointment(db: Db, appointment: Appointment): Promise<Appoin
       appointment.price,
       homeVisitJson(appointment.homeVisit),
       appointment.professionalId,
+      appointment.isVirtual,
     ],
   ))!;
 }
@@ -511,6 +514,7 @@ async function appointmentForAudit(db: Db, appointment: Appointment): Promise<Ap
     price: appointment.price,
     notes: appointment.notes,
     homeAddress: appointment.homeVisit?.address ?? null,
+    modality: appointment.isVirtual ? "Virtual" : appointment.homeVisit ? "A domicilio" : "En el local",
   };
 }
 
@@ -590,8 +594,8 @@ export const appointmentService = {
         db,
         `insert into appointments
            (business_id, client_id, service_id, professional_id, date, start_time, end_time, status, notes, price,
-            home_visit, source)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'dashboard')
+            home_visit, is_virtual, source)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'dashboard')
          returning ${appointmentColumns()}`,
         [
           businessId,
@@ -605,6 +609,7 @@ export const appointmentService = {
           fields.notes,
           fields.price,
           homeVisitJson(fields.homeVisit),
+          fields.isVirtual,
         ],
       ))!;
       await notifyAppointmentChange(db, null, appointment, "dashboard", actor.userId);

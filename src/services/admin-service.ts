@@ -324,7 +324,7 @@ export const adminService = {
           ...suggestion,
           description: "",
           showPrice: true,
-          location: "business",
+          modes: ["business"],
           homeVisitFee: 0,
           clinicalTemplateId: null,
           isActive: true,

@@ -14,12 +14,14 @@ export function formatCurrency(amount: number, currency: string = DEFAULT_CURREN
   }).format(amount);
 }
 
-/**
- * ¿Ven los clientes el precio de este servicio? No, si el profesional lo ocultó o si el
- * precio es 0 (significa que no quiere publicarlo, no que sea gratis).
- */
-export function isPriceVisible(service: Pick<Service, "price" | "showPrice">): boolean {
-  return service.showPrice && service.price > 0;
+/** ¿Los clientes ven el precio? Con precio 0 ven "Gratis" (ver formatPrice). */
+export function isPriceVisible(service: Pick<Service, "showPrice">): boolean {
+  return service.showPrice;
+}
+
+/** El precio para los clientes: "$25.00" o "Gratis". */
+export function formatPrice(amount: number, currency: string = DEFAULT_CURRENCY): string {
+  return amount === 0 ? "Gratis" : formatCurrency(amount, currency);
 }
 
 export function formatDate(iso: ISODate, pattern: string): string {

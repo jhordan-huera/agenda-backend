@@ -165,6 +165,12 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   exacto (sin punto, a la dirección escrita). Latitud y longitud van juntas o ninguna.
 - **Fechas de la historia clínica**: la del consentimiento informado (casilla "firmó") y la de cada
   evolución las pone la API con el día actual; triggers de PostgreSQL impiden cambiarlas después.
+- **Modalidades y precio "Gratis"** (migración 023): `services.modes` (`business`, `home`, `virtual`;
+  al menos una) reemplaza a `location` (la API aún acepta `location` de un panel anterior).
+  `appointments.is_virtual` (no puede ser a la vez a domicilio) y `professionals.meeting_url` (sala
+  fija, `https://…`; no sale en la página pública). La reserva se rechaza si la modalidad no es una
+  del servicio. `show_price` false = sin precio; true con precio 0 = "Gratis" (la migración ocultó
+  los servicios que ya tenían precio 0, que antes significaba "no mostrar").
 - **Varias agendas** (migración 022, plan Business): cada profesional (`professionals`) tiene su
   horario (`schedules.professional_id`), sus bloqueos (`blocked_times.professional_id`; null = todo el
   negocio) y los servicios que atiende (`all_services` o `professional_services`). Free y Pro tienen
@@ -195,8 +201,8 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   historia no se puede eliminar.
 - **Formatos propios, por servicio y archivos** (migración 010): en los planes Pro y Business el
   propietario crea y edita sus formatos (`/clinical-templates`, cada cambio es una versión nueva; un
-  campo existente no cambia de tipo) o duplica uno de la plataforma. Cada servicio puede tener su
-  formato. Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
+  campo existente no cambia de tipo) o duplica uno de la plataforma. (`services.clinical_template_id` sigue en la API, pero el panel
+  ya no lo ofrece: se usa el formato del negocio.) Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
   Storage (en local, carpeta `storage/` y rutas `/api/files`); no se borran.
 - **Equipo de la plataforma** (migración 020): `users.platform_owner` marca al super admin principal
   (la migración lo pone en el que ya existía; `db:create-admin` lo pone si aún no hay ninguno).

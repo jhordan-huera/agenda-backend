@@ -92,7 +92,7 @@ export async function insertBusiness(
   const service = params.firstService;
   await db.query(
     `insert into services
-       (business_id, name, description, duration_minutes, price, show_price, location, home_visit_fee, is_active)
+       (business_id, name, description, duration_minutes, price, show_price, modes, home_visit_fee, is_active)
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [
       business.id,
@@ -100,8 +100,9 @@ export async function insertBusiness(
       service.description,
       service.durationMinutes,
       service.price,
-      service.showPrice,
-      service.location,
+      // Precio 0 en el alta: aún sin precio (no "Gratis"), hasta que el negocio lo elija.
+      service.showPrice && service.price > 0,
+      service.modes,
       service.homeVisitFee,
       service.isActive,
     ],

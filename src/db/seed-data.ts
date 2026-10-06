@@ -40,7 +40,7 @@ import type {
   Professional,
   Schedule,
   Service,
-  ServiceLocation,
+  ServiceMode,
   Subscription,
   TimeRange,
   User,
@@ -89,7 +89,7 @@ type ServiceSeed = [
   durationMinutes: number,
   price: number,
   isActive?: boolean,
-  location?: ServiceLocation,
+  modes?: ServiceMode[],
   homeVisitFee?: number,
 ];
 /** Emails de clientes con el dominio reservado example.com: el servidor nunca les envía nada. */
@@ -163,8 +163,8 @@ const TENANTS: TenantSeed[] = [
       ["Seguimiento", "Revisión de avances y ajustes del plan.", 45, 20],
       ["Evaluación", "Evaluación completa con informe de resultados.", 90, 40],
       ["Sesión estándar", "Sesión individual de trabajo.", 60, 30],
-      ["Sesión online", "Sesión por videollamada.", 45, 22, false],
-      ["Visita a domicilio", "Atención en tu casa u oficina. Marca tu ubicación al reservar.", 60, 35, true, "home"],
+      ["Sesión online", "Sesión por videollamada.", 45, 22, false, ["virtual"]],
+      ["Visita a domicilio", "Atención en tu casa u oficina. Marca tu ubicación al reservar.", 60, 35, true, ["home"]],
     ],
     coordinates: [-0.1807, -78.4678],
     clients: [
@@ -304,7 +304,7 @@ const TENANTS: TenantSeed[] = [
     members: [],
     professionalTitle: "Fisioterapeuta",
     services: [
-      ["Sesión de fisioterapia", "Tratamiento personalizado, en el centro o en tu casa.", 60, 30, true, "both", 10],
+      ["Sesión de fisioterapia", "Tratamiento personalizado, en el centro o en tu casa.", 60, 30, true, ["business", "home"], 10],
       ["Masaje deportivo", "Recuperación muscular.", 45, 25],
     ],
     clients: [
@@ -500,7 +500,7 @@ function seedTenant(
     professionalScope: "all",
     createdAt,
   });
-  const professionalBase = { businessId, avatarUrl: null, email: "", allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, isActive: true, createdAt };
+  const professionalBase = { businessId, avatarUrl: null, email: "", meetingUrl: "", allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, isActive: true, createdAt };
   db.professionals.push({
     ...professionalBase,
     id: professionalId,
@@ -533,7 +533,7 @@ function seedTenant(
   }
 
   const services = tenant.services.map(
-    ([name, description, durationMinutes, price, isActive = true, location = "business", homeVisitFee = 0]) => ({
+    ([name, description, durationMinutes, price, isActive = true, modes = ["business"], homeVisitFee = 0]) => ({
     id: crypto.randomUUID(),
     businessId,
     name,
@@ -541,7 +541,7 @@ function seedTenant(
     durationMinutes,
     price,
     showPrice: true,
-    location,
+    modes,
     homeVisitFee,
     clinicalTemplateId: null,
     isActive,
@@ -654,7 +654,9 @@ function seedTenant(
     const startTime = minutesToTime(startMinutes);
     const endTime = minutesToTime(startMinutes + service.durationMinutes);
     const createdAt = new Date(Date.parse(`${date}T12:00:00Z`) - 6 * 86_400_000).toISOString();
-    const isHome = service.location === "home" || (service.location === "both" && placeRandom.next() < 0.3);
+    const isHome =
+      service.modes.includes("home") && (!service.modes.includes("business") || placeRandom.next() < 0.3);
+    const isVirtual = !isHome && !service.modes.includes("business") && service.modes.includes("virtual");
     const appointment: Appointment = {
       id: crypto.randomUUID(),
       businessId,
@@ -668,6 +670,7 @@ function seedTenant(
       notes: random.next() < 0.25 ? random.pick(APPOINTMENT_NOTES) : "",
       price: service.price + (isHome ? service.homeVisitFee : 0),
       homeVisit: isHome ? homeVisitFor(clientId) : null,
+      isVirtual,
       source: random.next() < 0.25 ? "booking_page" : "dashboard",
       arrivedAt: null,
       createdAt,

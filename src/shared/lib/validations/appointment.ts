@@ -23,8 +23,10 @@ export const appointmentSchema = z
     price: moneyField,
     status: appointmentStatusSchema,
     notes: optionalText(1000),
-    /** null = en el local. */
+    /** null = en el local (o virtual). */
     homeVisit: homeVisitSchema.nullable().default(null),
+    /** Por videollamada. */
+    isVirtual: z.boolean().default(false),
     /** Agenda de la cita. Vacío: la de quien la crea o, si el negocio tiene una sola, esa. */
     professionalId: z.string().default(""),
   })
@@ -34,6 +36,7 @@ export const appointmentSchema = z
       return hours * 60 + minutes + data.durationMinutes <= 24 * 60;
     },
     { path: ["durationMinutes"], message: "La cita no puede terminar después de medianoche" },
-  );
+  )
+  .refine((data) => !(data.isVirtual && data.homeVisit), { path: ["isVirtual"], message: "Una cita virtual no es a domicilio" });
 
 export type AppointmentInput = z.infer<typeof appointmentSchema>;

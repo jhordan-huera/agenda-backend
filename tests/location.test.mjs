@@ -47,7 +47,7 @@ ok(r.status === 200 && r.body.business.lat === point.lat && r.body.business.lng 
 
 console.log("Emails");
 const services = (await owner("GET", `${B}/services`)).body;
-const service = services.find((s) => s.isActive && s.location !== "home");
+const service = services.find((s) => s.isActive && s.modes.includes("business"));
 const clients = (await owner("GET", `${B}/clients`)).body;
 r = await owner("POST", `${B}/appointments`, { clientId: clients[0].id, serviceId: service.id, date: "2026-12-02", startTime: "20:00", durationMinutes: service.durationMinutes, price: service.price, status: "confirmed", notes: "" });
 ok(r.status === 200, "crear cita en el local", r.body);

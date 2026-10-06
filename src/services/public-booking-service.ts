@@ -239,12 +239,19 @@ export const publicBookingService = {
         [data.serviceId, business.id],
       );
       if (!service) throw new AppError("not_found", "El servicio ya no está disponible.");
-      // El lugar debe ser uno de los que admite el servicio.
-      if (data.homeVisit && service.location === "business") {
-        throw new AppError("validation", "Este servicio no se realiza a domicilio.");
-      }
-      if (!data.homeVisit && service.location === "home") {
-        throw new AppError("validation", "Marca en el mapa dónde será la visita a domicilio.");
+      // La modalidad debe ser una de las que admite el servicio.
+      const mode = data.isVirtual ? "virtual" : data.homeVisit ? "home" : "business";
+      if (!service.modes.includes(mode)) {
+        throw new AppError(
+          "validation",
+          mode === "home"
+            ? "Este servicio no se realiza a domicilio."
+            : mode === "virtual"
+              ? "Este servicio no se atiende por videollamada."
+              : service.modes.includes("home")
+                ? "Marca en el mapa dónde será la visita a domicilio."
+                : "Elige cómo quieres la cita.",
+        );
       }
 
       // Con quién: el que eligió el paciente (si el negocio lo permite) o el primero libre a esa hora.
@@ -312,8 +319,8 @@ export const publicBookingService = {
         db,
         `insert into appointments
            (business_id, client_id, service_id, professional_id, date, start_time, end_time, status, notes, price,
-            home_visit, source)
-         values ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, 'booking_page')
+            home_visit, is_virtual, source)
+         values ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11, 'booking_page')
          returning ${appointmentColumns()}`,
         [
           business.id,
@@ -327,6 +334,7 @@ export const publicBookingService = {
           // A domicilio se suma el recargo del servicio.
           service.price + (data.homeVisit ? service.homeVisitFee : 0),
           data.homeVisit ? JSON.stringify(data.homeVisit) : null,
+          data.isVirtual,
         ],
       ))!;
       const emailSent = await notifyAppointmentChange(db, null, appointment, "booking_page");
@@ -351,6 +359,9 @@ export const publicBookingService = {
         price: appointment.price,
         showPrice: isPriceVisible(service),
         homeVisit: appointment.homeVisit,
+        isVirtual: appointment.isVirtual,
+        // La sala del profesional: el paciente la recibe al reservar (no sale en la página pública).
+        meetingUrl: appointment.isVirtual ? professional.meetingUrl || null : null,
         // A quien reservó con la cédula de un cliente existente no se le muestra su email completo.
         clientEmail: knownClient ? maskEmail(client.email) : client.email,
         emailSent,
