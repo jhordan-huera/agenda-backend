@@ -3,7 +3,7 @@ import { AppError } from "../http/errors.ts";
 import { getEffectiveLimits, getPlan, type Plan } from "../shared/lib/constants/plans.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { getZonedNow } from "../shared/lib/time.ts";
-import type { ISODate, PlanId, PlanLimits, PlanUsage } from "../shared/types/index.ts";
+import type { BusinessRole, ISODate, PlanId, PlanLimits, PlanUsage } from "../shared/types/index.ts";
 
 /**
  * Límites de cada plan. Se comprueban dentro de la transacción que bloquea la fila del
@@ -98,6 +98,27 @@ export async function assertProfessionalLimit(db: Db, businessId: string, exclud
         ? "Tu plan incluye una sola agenda. Para sumar profesionales, escríbenos."
         : `Tu plan incluye ${professionals} agendas y ya están en uso. Para sumar profesionales, escríbenos.`,
     );
+  }
+}
+
+/**
+ * Varios profesionales sólo en los planes con varias agendas (Business). Free y Pro son cuentas
+ * individuales: su única agenda se crea con el negocio (sí se puede volver a crear si no queda ninguna).
+ */
+export async function assertMultipleAgendas(db: Db, businessId: string) {
+  if ((await planOf(db, businessId)).multipleAgendas) return;
+  if (await one(db, "select 1 from professionals where business_id = $1", [businessId])) {
+    throw new AppError(
+      "plan_limit",
+      "Tu cuenta es individual: tiene una sola agenda. Para sumar profesionales, escríbenos.",
+    );
+  }
+}
+
+/** El rol Profesional (ve sólo su agenda) existe sólo con varias agendas. */
+export async function assertRoleAllowed(db: Db, businessId: string, role: BusinessRole) {
+  if (role === "professional" && !(await planOf(db, businessId)).multipleAgendas) {
+    throw new AppError("plan_limit", "El rol Profesional es para negocios con varias agendas. Elige Administrador o Recepción.");
   }
 }
 
