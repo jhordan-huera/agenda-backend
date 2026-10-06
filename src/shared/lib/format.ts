@@ -48,6 +48,13 @@ export function formatDateTime(iso: string, timezone: string = DEFAULT_TIMEZONE)
   );
 }
 
+/** "14:35" de un instante, en la zona horaria del negocio (p. ej. la llegada de un paciente). */
+export function formatClockTime(iso: string, timezone: string = DEFAULT_TIMEZONE): string {
+  return new Intl.DateTimeFormat("es-EC", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: timezone }).format(
+    new Date(iso),
+  );
+}
+
 export function formatTimeRange(start: TimeString, end: TimeString): string {
   return `${start} – ${end}`;
 }

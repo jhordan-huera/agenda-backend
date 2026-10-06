@@ -342,6 +342,7 @@ export const publicBookingService = {
       return {
         appointmentId: appointment.id,
         serviceName: service.name,
+        professionalId: professional.id,
         professionalName: professional.displayName,
         businessName: business.name,
         date: appointment.date,

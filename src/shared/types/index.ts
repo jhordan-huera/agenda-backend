@@ -842,6 +842,8 @@ export interface PublicClientLookup {
 export interface BookingConfirmation {
   appointmentId: string;
   serviceName: string;
+  /** Quién atiende (también si el paciente eligió "el primero disponible"). */
+  professionalId: string;
   professionalName: string;
   businessName: string;
   date: ISODate;

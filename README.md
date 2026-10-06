@@ -66,8 +66,11 @@ Publica primero la API y después agenda-front si el cambio toca a los dos.
    ```
 
    Con los datos demo, todas las cuentas usan la contraseña `demo1234`: `jhordan@demo.com` (propietario,
-   plan Pro), `andrea@demo.com` (admin), `miguel@demo.com` (staff), `laura@demo.com` (plan Free),
+   plan Pro), `andrea@demo.com` (admin), `miguel@demo.com` (recepción), `laura@demo.com` (plan Free),
    `carolina@demo.com` (negocio suspendido), `pedro@demo.com` (sin negocio) y `admin@demo.com` (super admin).
+   Varias agendas (plan Business, 3 contratadas): `ricardo@demo.com` (propietario de Clínica Dental
+   Sonrisa), `valeria@demo.com` (rol Profesional, sólo su agenda) y `elena@demo.com` (recepción); el
+   Dr. Andrés Vega es un profesional sin usuario.
 
 5. **Arranca la API**
 
@@ -162,6 +165,27 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   exacto (sin punto, a la dirección escrita). Latitud y longitud van juntas o ninguna.
 - **Fechas de la historia clínica**: la del consentimiento informado (casilla "firmó") y la de cada
   evolución las pone la API con el día actual; triggers de PostgreSQL impiden cambiarlas después.
+- **Varias agendas** (migración 022, plan Business): cada profesional (`professionals`) tiene su
+  horario (`schedules.professional_id`), sus bloqueos (`blocked_times.professional_id`; null = todo el
+  negocio) y los servicios que atiende (`all_services` o `professional_services`). Free y Pro tienen
+  una agenda; Business, las contratadas (`subscriptions.max_professionals`, las fija el super admin con
+  `PUT /admin/businesses/:id/max-professionals`; null = sin tope): `assertProfessionalLimit` al crear
+  o reactivar (`plan_limit`), y no se baja de plan con más agendas activas. `GET/POST/PUT/DELETE
+  /businesses/:id/professionals` (gestionan propietario y administradores; con citas sólo se
+  desactiva); el horario se guarda con `PUT /businesses/:id/professionals/:pid/schedule`. Dos citas
+  sólo chocan si son de la misma agenda. Reserva online: `professionalId` o null ("el primero
+  disponible": el que tiene menos citas ese día y está libre); `bookingSettings.chooseProfessional`
+  false no pregunta. Llegada del paciente: `PATCH /appointments/:id/arrival` (`arrived_at`).
+  Avisos al profesional (si tiene `email`): cita nueva que no agendó él y, de 6:00 a 11:00, su agenda
+  del día (una vez por día: `notifications.dedupe_key`), la envía el cron.
+- **Roles**: `owner`, `admin`, `staff` (se muestra como Recepción: todas las agendas) y
+  `professional` (sólo su agenda: `agenda-scope.ts` filtra citas, horario, bloqueos y reportes; con
+  `businesses.professional_scope = 'own'`, también los pacientes y su historia clínica: los que
+  tienen citas en su agenda o registró él, `clients.created_by`). Sin agenda asignada, el rol
+  Profesional no ve nada (`forbidden`).
+- **Planes y precios**: los negocios no los ven (ni la página de inicio): los precios se acuerdan con
+  cada negocio y el plan lo cambia el super admin. Los límites siguen aplicándose; al llegar a uno,
+  el mensaje invita a escribir a soporte.
 - **Modo soporte**: el super admin opera en cualquier negocio (también suspendido) con permisos de
   propietario desde "Gestionar negocio"; lo que crea o cambia queda en la auditoría como
   "Nombre (Super admin)", lo que sólo consulta no.

@@ -7,7 +7,8 @@ export const professionalSchema = z
   .object({
     displayName: requiredText("El nombre", 2, 80),
     title: optionalText(80),
-    avatarUrl: z.string().trim().max(500).nullable().default(null),
+    /** Foto: data URL (como la del perfil) o URL pública. */
+    avatarUrl: z.string().trim().max(700_000, "La foto es demasiado grande").nullable().default(null),
     color: z
       .string()
       .trim()
