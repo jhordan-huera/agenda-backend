@@ -6,6 +6,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import pg from "pg";
 import { outgoingContent } from "../src/services/mailer.ts";
+import { createBusinessWithOwner } from "./helpers/business.mjs";
 import { emailTemplates } from "../src/shared/lib/email/templates.ts";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
@@ -45,17 +46,11 @@ await login(admin, "admin@demo.com", "demo1234", nextIp());
 
 console.log("Contraseñas fuera del registro de emails");
 const ownerPassword = "ClaveSecreta-2026";
-const base = { category: "beauty", timezone: "America/Guayaquil", phone: "", email: "", address: "", plan: "free" };
-let r = await admin("POST", "/admin/businesses", {
-  ...base,
-  plan: "pro",
-  name: "Salón Seguro",
-  slug: "salon-seguro",
-  ownerFirstName: "Sara",
-  ownerLastName: "Segura",
-  ownerEmail: "sara@example.com",
-  ownerPassword,
-});
+let r = await createBusinessWithOwner(
+  admin,
+  { plan: "pro", name: "Salón Seguro", slug: "salon-seguro" },
+  { firstName: "Sara", lastName: "Segura", email: "sara@example.com", password: ownerPassword },
+);
 ok(r.status === 200, "crear negocio", r.body);
 const businessId = r.body.business.id;
 const emails = (await admin("GET", "/admin/emails")).body;
@@ -125,16 +120,12 @@ console.log("Cuenta existente reutilizada para un negocio");
 const pedro = agent();
 r = await login(pedro, "pedro@demo.com", "demo1234", nextIp());
 ok(r.status === 200, "pedro inicia sesión");
-r = await admin("POST", "/admin/businesses", {
-  ...base,
-  name: "Taller Pedro",
-  slug: "taller-pedro",
-  ownerFirstName: "Pedro",
-  ownerLastName: "Sánchez",
-  ownerEmail: "pedro@demo.com",
-  ownerPassword: "PedroNueva-2026",
-});
-ok(r.status === 200 && r.body.existingAccount, "negocio para la cuenta existente", r.body);
+r = await createBusinessWithOwner(
+  admin,
+  { name: "Taller Pedro", slug: "taller-pedro" },
+  { firstName: "Pedro", lastName: "Sánchez", email: "pedro@demo.com", password: "PedroNueva-2026" },
+);
+ok(r.status === 200 && r.body.owner.email === "pedro@demo.com", "negocio para la cuenta existente", r.body);
 ok((await pedro("GET", "/auth/session")).body === null, "se cierran las sesiones abiertas de esa cuenta");
 
 console.log("Bloqueo por intentos fallidos (compartido entre servidores: se cuenta en la base)");

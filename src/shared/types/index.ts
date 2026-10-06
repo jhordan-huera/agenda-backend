@@ -118,7 +118,8 @@ export type BusinessStatus = "active" | "suspended";
 
 export interface Business {
   id: string;
-  ownerId: string;
+  /** null: el super admin lo creó y aún no le agregó propietario. */
+  ownerId: string | null;
   status: BusinessStatus;
   name: string;
   /** Identificador público usado en /book/[username]. Único globalmente. */

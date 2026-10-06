@@ -28,18 +28,19 @@ export async function uniqueSlug(db: Db, base: string): Promise<string> {
 
 /**
  * Alta completa de un negocio (dentro de la transacción de quien llama): negocio,
- * membresía owner, profesional, suscripción, horario semanal y primer servicio.
- * La usan el onboarding (el propio dueño) y el panel del super admin.
+ * membresía owner, profesional, suscripción, horario semanal y servicios.
+ * La usan el onboarding (el propio dueño) y el panel del super admin, que lo crea sin
+ * propietario (owner null): la agenda lleva entonces el nombre del negocio.
  */
 export async function insertBusiness(
   db: Db,
   params: {
-    owner: User;
+    owner: User | null;
     profile: OnboardingInput;
     slug: string;
     plan: PlanId;
     schedules: ScheduleDayInput[];
-    firstService: ServiceInput;
+    services: ServiceInput[];
   },
 ): Promise<Business> {
   const { owner, profile } = params;
@@ -52,15 +53,15 @@ export async function insertBusiness(
      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
      returning ${businessColumns()}`,
     [
-      owner.id,
+      owner?.id ?? null,
       profile.name,
       params.slug,
       profile.description,
       profile.category,
       profile.timezone,
       DEFAULT_CURRENCY,
-      profile.phone || owner.phone,
-      profile.email || owner.email,
+      profile.phone || owner?.phone || "",
+      profile.email || owner?.email || "",
       profile.address,
       DEFAULT_BOOKING_SETTINGS,
       DEFAULT_NOTIFICATION_SETTINGS,
@@ -69,15 +70,17 @@ export async function insertBusiness(
     ],
   ))!;
 
-  await db.query("insert into business_users (business_id, user_id, role, clinical_access) values ($1, $2, 'owner', true)", [
-    business.id,
-    owner.id,
-  ]);
+  if (owner) {
+    await db.query("insert into business_users (business_id, user_id, role, clinical_access) values ($1, $2, 'owner', true)", [
+      business.id,
+      owner.id,
+    ]);
+  }
   // La agenda del dueño. Sin email de avisos: las reservas ya le llegan al email del negocio.
   const professional = (await one<{ id: string }>(
     db,
     "insert into professionals (business_id, user_id, display_name, avatar_url) values ($1, $2, $3, $4) returning id",
-    [business.id, owner.id, getFullName(owner), owner.avatarUrl],
+    [business.id, owner?.id ?? null, owner ? getFullName(owner) : profile.name, owner?.avatarUrl ?? null],
   ))!;
   await db.query(
     "insert into subscriptions (business_id, plan, status, current_period_end) values ($1, $2, 'active', $3)",
@@ -89,23 +92,24 @@ export async function insertBusiness(
       [business.id, professional.id, day.dayOfWeek, day.isActive, JSON.stringify(day.intervals)],
     );
   }
-  const service = params.firstService;
-  await db.query(
-    `insert into services
-       (business_id, name, description, duration_minutes, price, show_price, modes, home_visit_fee, is_active)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-    [
-      business.id,
-      service.name,
-      service.description,
-      service.durationMinutes,
-      service.price,
-      // Precio 0 en el alta: aún sin precio (no "Gratis"), hasta que el negocio lo elija.
-      service.showPrice && service.price > 0,
-      service.modes,
-      service.homeVisitFee,
-      service.isActive,
-    ],
-  );
+  for (const service of params.services) {
+    await db.query(
+      `insert into services
+         (business_id, name, description, duration_minutes, price, show_price, modes, home_visit_fee, is_active)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        business.id,
+        service.name,
+        service.description,
+        service.durationMinutes,
+        service.price,
+        // Precio 0 en el alta: aún sin precio (no "Gratis"), hasta que el negocio lo elija.
+        service.showPrice && service.price > 0,
+        service.modes,
+        service.homeVisitFee,
+        service.isActive,
+      ],
+    );
+  }
   return business;
 }

@@ -2,26 +2,51 @@
 import { z } from "zod";
 import { businessCategorySchema, slugSchema } from "./business.ts";
 import { emailField, moneyField, optionalEmailField, optionalText, passwordField, phoneField, requiredText } from "./fields.ts";
+import { weeklyScheduleSchema } from "./schedule.ts";
 import { teamInviteSchema } from "./team.ts";
 
 export const planIdSchema = z.enum(["free", "pro", "business"], { error: "Selecciona un plan" });
 export const businessStatusSchema = z.enum(["active", "suspended"]);
 
-/** Alta de un negocio por el super admin: datos del negocio, propietario y plan. */
+/** Servicio con el que empieza un negocio que crea el super admin (precio 0: no se muestra). */
+export const initialServiceSchema = z.object({
+  name: requiredText("El nombre del servicio"),
+  durationMinutes: z.coerce
+    .number<string | number>("Ingresa la duración")
+    .int("Usa minutos enteros")
+    .min(5, "Mínimo 5 minutos")
+    .max(480, "Máximo 8 horas"),
+  price: moneyField,
+});
+
+/**
+ * Alta de un negocio por el super admin: datos, servicios, horario y plan. Sin propietario: su
+ * cuenta se agrega después (businessOwnerSchema).
+ */
 export const adminBusinessSchema = z.object({
   name: requiredText("El nombre del negocio"),
   category: businessCategorySchema,
   slug: slugSchema,
+  description: optionalText(400),
   timezone: z.string().min(1, "Selecciona una zona horaria"),
   phone: phoneField,
   email: optionalEmailField,
   address: optionalText(200),
   plan: planIdSchema,
-  ownerFirstName: requiredText("El nombre"),
-  ownerLastName: requiredText("El apellido"),
-  ownerEmail: emailField,
-  /** La pone el super admin y se envía al propietario por email (también si ya tenía cuenta). */
-  ownerPassword: passwordField,
+  services: z.array(initialServiceSchema).min(1, "Agrega al menos un servicio").max(20, "Máximo 20 servicios"),
+  schedules: weeklyScheduleSchema
+    .max(7)
+    .refine((days) => new Set(days.map((day) => day.dayOfWeek)).size === days.length, "Hay días repetidos en el horario")
+    .refine((days) => days.some((day) => day.isActive), "Activa al menos un día de atención"),
+});
+
+/** Propietario de un negocio que aún no lo tiene, con la contraseña que elige el super admin. */
+export const businessOwnerSchema = z.object({
+  firstName: requiredText("El nombre"),
+  lastName: requiredText("El apellido"),
+  email: emailField,
+  /** Se le envía por email (también si ya tenía una cuenta sin negocio). */
+  password: passwordField,
 });
 
 /** Categoría de negocio (panel del super admin). */
@@ -66,6 +91,8 @@ export const platformSettingsSchema = z.object({
 });
 
 export type AdminBusinessInput = z.infer<typeof adminBusinessSchema>;
+export type InitialServiceInput = z.infer<typeof initialServiceSchema>;
+export type BusinessOwnerInput = z.infer<typeof businessOwnerSchema>;
 export type PlatformSettingsInput = z.infer<typeof platformSettingsSchema>;
 export type UserPasswordInput = z.infer<typeof userPasswordSchema>;
 export type PlanRejectionInput = z.infer<typeof planRejectionSchema>;

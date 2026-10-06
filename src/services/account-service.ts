@@ -178,7 +178,7 @@ export const businessService = {
         slug: await uniqueSlug(db, data.name),
         plan: "free",
         schedules,
-        firstService,
+        services: [firstService],
       });
       const actor = { userId: owner.id, name: getFullName(owner) };
       await logAudit(db, {

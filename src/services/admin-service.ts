@@ -10,7 +10,6 @@ import {
 import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
-import { DEFAULT_WEEKLY_SCHEDULE } from "../shared/lib/constants/business.ts";
 import { PLANS, getEffectiveLimits, getPlan } from "../shared/lib/constants/plans.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
 import { formatSupportContact, getFullName, plural } from "../shared/lib/format.ts";
@@ -20,6 +19,7 @@ import {
   adminBusinessSchema,
   adminMemberSchema,
   businessDeletionSchema,
+  businessOwnerSchema,
   businessStatusSchema,
   isSameBusinessName,
   planIdSchema,
@@ -54,7 +54,6 @@ import { ADMIN_AUDIT_QUERY, parseAuditFilters, queryAuditLogs } from "./activity
 import { findTeamMember, listTeamMembers } from "./account-service.ts";
 import { logAudit } from "./audit.ts";
 import { insertBusiness, isSlugTaken } from "./business-factory.ts";
-import { requireAssignableCategory } from "./category-service.ts";
 import { authorizeSuperAdmin, parseInput, requireUser, type RequestContext } from "./context.ts";
 import { fileStorage } from "./file-storage.ts";
 import { appOrigin, PASSWORD_MASK, queueEmail } from "./notifications.ts";
@@ -263,8 +262,8 @@ export const adminService = {
   },
 
   /**
-   * Crea el negocio y su propietario (cuenta nueva, o una existente sin negocio) con la
-   * contraseña que elige el super admin; se le envía por email junto con su página de reservas.
+   * Crea el negocio con sus datos, servicios, horario y plan, todavía sin propietario: su cuenta se
+   * agrega después (assignBusinessOwner). Su página de reservas funciona desde el primer día.
    */
   async createBusiness(ctx: RequestContext, input: unknown) {
     const actor = authorizeSuperAdmin(ctx);
@@ -273,9 +272,58 @@ export const adminService = {
       if (await isSlugTaken(db, data.slug)) {
         throw new AppError("conflict", "Ese enlace de reservas ya está en uso. Prueba con otro.");
       }
-      const existing = await one<User>(db, `select ${userColumns()} from users where email = $1 for update`, [
-        data.ownerEmail,
-      ]);
+      const business = await insertBusiness(db, {
+        owner: null,
+        profile: {
+          name: data.name,
+          category: data.category,
+          timezone: data.timezone,
+          phone: data.phone,
+          email: data.email,
+          address: data.address,
+          description: data.description,
+        },
+        slug: data.slug,
+        plan: data.plan,
+        schedules: data.schedules,
+        services: data.services.map((service) => ({
+          ...service,
+          description: "",
+          showPrice: true,
+          modes: ["business"],
+          homeVisitFee: 0,
+          clinicalTemplateId: null,
+          isActive: true,
+        })),
+      });
+      await logAudit(db, {
+        businessId: business.id,
+        actor,
+        action: "platform.business_created",
+        entityType: "business",
+        entityId: business.id,
+        summary: `Creó el negocio ${business.name} con el plan ${getPlan(data.plan).name} y ${plural(
+          data.services.length,
+          "servicio",
+          "servicios",
+        )}`,
+      });
+      return { business };
+    });
+  },
+
+  /**
+   * Propietario de un negocio creado sin él: cuenta nueva (o una existente sin negocio) con la
+   * contraseña que elige el super admin; se le envía por email junto con su página de reservas.
+   * Si el negocio tiene una sola agenda sin usuario (la del alta), pasa a ser la suya.
+   */
+  async assignBusinessOwner(ctx: RequestContext, businessId: string, input: unknown): Promise<TeamMember> {
+    const actor = authorizeSuperAdmin(ctx);
+    const data = parseInput(businessOwnerSchema, input);
+    return transaction(async (db) => {
+      const business = await findBusiness(db, businessId, true);
+      if (business.ownerId) throw new AppError("conflict", "Este negocio ya tiene propietario.");
+      const existing = await one<User>(db, `select ${userColumns()} from users where email = $1 for update`, [data.email]);
       if (existing?.platformRole) throw new AppError("conflict", "Ese email pertenece a una cuenta de super admin.");
       if (existing && (await one(db, "select 1 from business_users where user_id = $1", [existing.id]))) {
         throw new AppError("conflict", "Ese email ya pertenece a otro negocio. Usa otro email para el propietario.");
@@ -286,56 +334,46 @@ export const adminService = {
           "La cuenta con ese email está desactivada. Reactívala en Usuarios antes de asignarle un negocio.",
         );
       }
+      await assertUserLimit(db, businessId);
       if (existing) {
         // También a una cuenta existente se le pone la contraseña elegida (el super admin la conoce)
         // y se cierran sus sesiones abiertas, como al cambiarla desde Usuarios.
-        await db.query("update users set password_hash = $2 where id = $1", [
-          existing.id,
-          await hashPassword(data.ownerPassword),
-        ]);
+        await db.query("update users set password_hash = $2 where id = $1", [existing.id, await hashPassword(data.password)]);
         await db.query("delete from sessions where user_id = $1", [existing.id]);
       }
-      const owner =
-        existing ??
-        (await createUserAccount(db, {
-          firstName: data.ownerFirstName,
-          lastName: data.ownerLastName,
-          email: data.ownerEmail,
-          password: data.ownerPassword,
-        }));
+      const owner = existing ?? (await createUserAccount(db, data));
 
-      // Horario y primer servicio sugeridos: el negocio puede recibir reservas desde el primer día.
-      const { suggestedService: suggestion } = await requireAssignableCategory(db, data.category);
-      const business = await insertBusiness(db, {
-        owner,
-        profile: {
-          name: data.name,
-          category: data.category,
-          timezone: data.timezone,
-          phone: data.phone,
-          email: data.email,
-          address: data.address,
-          description: "",
-        },
-        slug: data.slug,
-        plan: data.plan,
-        schedules: structuredClone(DEFAULT_WEEKLY_SCHEDULE),
-        firstService: {
-          ...suggestion,
-          description: "",
-          showPrice: true,
-          modes: ["business"],
-          homeVisitFee: 0,
-          clinicalTemplateId: null,
-          isActive: true,
-        },
-      });
+      await db.query("insert into business_users (business_id, user_id, role, clinical_access) values ($1, $2, 'owner', true)", [
+        businessId,
+        owner.id,
+      ]);
+      // Sin email del negocio, los avisos de reservas le llegan al propietario.
+      await db.query("update businesses set owner_id = $2, email = case when email = '' then $3 else email end where id = $1", [
+        businessId,
+        owner.id,
+        owner.email,
+      ]);
+      const agendas = await many<{ id: string; userId: string | null }>(
+        db,
+        `select id, user_id as "userId" from professionals where business_id = $1`,
+        [businessId],
+      );
+      if (agendas.length === 1 && !agendas[0].userId) {
+        await db.query(
+          `update professionals
+              set user_id = $2,
+                  display_name = case when display_name = $3 then $4 else display_name end,
+                  avatar_url = coalesce(avatar_url, $5)
+            where id = $1`,
+          [agendas[0].id, owner.id, business.name, getFullName(owner), owner.avatarUrl],
+        );
+      }
 
       await queueEmail(db, {
-        businessId: business.id,
+        businessId,
         type: "business_created",
         to: owner.email,
-        secret: data.ownerPassword,
+        secret: data.password,
         ...emailTemplates.businessCreated({
           firstName: owner.firstName,
           businessName: business.name,
@@ -346,14 +384,14 @@ export const adminService = {
         }),
       });
       await logAudit(db, {
-        businessId: business.id,
+        businessId,
         actor,
-        action: "platform.business_created",
-        entityType: "business",
-        entityId: business.id,
-        summary: `Creó el negocio ${business.name} para ${getFullName(owner)} con el plan ${getPlan(data.plan).name}`,
+        action: "platform.owner_assigned",
+        entityType: "team",
+        entityId: owner.id,
+        summary: `Agregó a ${getFullName(owner)} como propietario${existing ? " (cuenta que ya existía)" : ""}`,
       });
-      return { business, ownerEmail: owner.email, existingAccount: Boolean(existing) };
+      return (await findTeamMember(db, businessId, owner.id))!;
     });
   },
 

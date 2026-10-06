@@ -139,7 +139,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 
 ## Contraseñas, modo soporte e historia clínica
 
-- **Las contraseñas las pone el super admin**: al crear un negocio (propietario), al agregar un
+- **Las contraseñas las pone el super admin**: al agregar el propietario de un negocio, al agregar un
   miembro a un equipo y al cambiársela a un usuario. Se envían por email. Los usuarios no pueden
   cambiarla ni hay recuperación por enlace ("¿Olvidaste tu contraseña?" indica el email de soporte).
   Sólo el super admin cambia la suya. Quien se registra por `/register` elige la suya; se puede
@@ -165,6 +165,11 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   exacto (sin punto, a la dirección escrita). Latitud y longitud van juntas o ninguna.
 - **Fechas de la historia clínica**: la del consentimiento informado (casilla "firmó") y la de cada
   evolución las pone la API con el día actual; triggers de PostgreSQL impiden cambiarlas después.
+- **Negocio sin propietario** (migración 024, `businesses.owner_id` admite null): `POST
+  /admin/businesses` crea el negocio con descripción, servicios (`services`: nombre, minutos y
+  precio; precio 0 = oculto) y horario (`schedules`), sin cuenta; `POST /admin/businesses/:id/owner`
+  agrega después al propietario (cuenta nueva o existente sin negocio; email `business_created`
+  con su acceso; si hay una sola agenda sin usuario, se le vincula y toma su nombre).
 - **Modalidades y precio "Gratis"** (migración 023): `services.modes` (`business`, `home`, `virtual`;
   al menos una) reemplaza a `location` (la API aún acepta `location` de un panel anterior).
   `appointments.is_virtual` (no puede ser a la vez a domicilio) y `professionals.meeting_url` (sala

@@ -1,4 +1,6 @@
 // Categorías de negocio en la base de datos.
+import { businessInput, createBusinessWithOwner } from "./helpers/business.mjs";
+
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
 const ok = (cond, label, extra) => {
@@ -71,13 +73,14 @@ r = await admin("DELETE", "/admin/categories/veterinaria");
 ok(r.status === 204, "se elimina cuando nadie la usa", r.body);
 
 console.log("Altas de negocio");
-const base = { timezone: "America/Guayaquil", phone: "", email: "", address: "", plan: "free", ownerFirstName: "Ana", ownerLastName: "Bravo", ownerPassword: "AnaClave2026" };
-r = await admin("POST", "/admin/businesses", { ...base, name: "Peludos", slug: "peludos", category: "peluqueria_canina", ownerEmail: "peludos@example.com" });
+const peludosOwner = { firstName: "Ana", lastName: "Bravo", email: "peludos@example.com", password: "AnaClave2026" };
+const vetService = [{ name: "Consulta veterinaria", durationMinutes: 30, price: 20 }];
+r = await createBusinessWithOwner(admin, { name: "Peludos", slug: "peludos", category: "peluqueria_canina", services: vetService }, peludosOwner);
 ok(r.status === 200 && r.body.business.category === "peluqueria_canina" && r.body.business.clinicalRecordsEnabled === true, "alta con una categoría nueva (de salud)", r.body);
 const { a: peludos, session: ps } = await login("peludos@example.com", "AnaClave2026");
 r = await peludos("GET", `/businesses/${ps.businessId}/services`);
-ok(r.body?.[0]?.name === "Consulta veterinaria" && r.body[0].durationMinutes === 30, "primer servicio sugerido por la categoría", r.body);
-r = await admin("POST", "/admin/businesses", { ...base, name: "Mal", slug: "mal", category: "nope", ownerEmail: "mal@example.com" });
+ok(r.body?.[0]?.name === "Consulta veterinaria" && r.body[0].durationMinutes === 30, "con el servicio elegido en el alta", r.body);
+r = await admin("POST", "/admin/businesses", businessInput({ name: "Mal", slug: "mal", category: "nope" }));
 ok(r.status === 400, "alta con categoría inexistente → 400", r.body);
 const newUser = agent();
 await newUser("POST", "/auth/register", { firstName: "Luz", lastName: "Nueva", email: "luz@example.com", password: "LuzClave2026", confirmPassword: "LuzClave2026" });

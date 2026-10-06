@@ -1,5 +1,6 @@
 // Contraseñas gestionadas por el super admin.
 import pg from "pg";
+import { businessInput, createBusinessWithOwner } from "./helpers/business.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
@@ -42,20 +43,21 @@ await login(admin, "admin@demo.com", "demo1234");
 r = await admin("POST", "/auth/change-password", { currentPassword: "demo1234", newPassword: "AdminClave1", confirmPassword: "AdminClave1" });
 ok(r.status === 204, "el super admin sí cambia su propia contraseña", r.body);
 
-const base = { category: "beauty", timezone: "America/Guayaquil", phone: "", email: "", address: "", plan: "free" };
-r = await admin("POST", "/admin/businesses", { ...base, name: "Sin clave", slug: "sin-clave", ownerFirstName: "Ana", ownerLastName: "Bravo", ownerEmail: "sinclave@example.com" });
-ok(r.status === 400 && /contraseña/i.test(r.body.error.message), "crear negocio sin contraseña → 400", r.body);
-r = await admin("POST", "/admin/businesses", { ...base, name: "Corta", slug: "corta", ownerFirstName: "Ana", ownerLastName: "Bravo", ownerEmail: "corta@example.com", ownerPassword: "123" });
+r = await admin("POST", "/admin/businesses", businessInput({ name: "Sin clave", slug: "sin-clave" }));
+const sinClave = `/admin/businesses/${r.body.business?.id}/owner`;
+r = await admin("POST", sinClave, { firstName: "Ana", lastName: "Bravo", email: "sinclave@example.com" });
+ok(r.status === 400 && /contraseña/i.test(r.body.error.message), "propietario sin contraseña → 400", r.body);
+r = await admin("POST", sinClave, { firstName: "Ana", lastName: "Bravo", email: "corta@example.com", password: "123" });
 ok(r.status === 400 && /8 caracteres/.test(r.body.error.message), "contraseña corta → 400", r.body);
-r = await admin("POST", "/admin/businesses", { ...base, name: "Salón Nuevo", slug: "salon-nuevo", ownerFirstName: "Rosa", ownerLastName: "Nueva", ownerEmail: "rosa@example.com", ownerPassword: "RosaClave2026" });
-ok(r.status === 200 && r.body.existingAccount === false && !("temporaryPassword" in r.body), "crear negocio con la contraseña elegida", r.body);
+r = await createBusinessWithOwner(admin, { name: "Salón Nuevo", slug: "salon-nuevo" }, { firstName: "Rosa", lastName: "Nueva", email: "rosa@example.com", password: "RosaClave2026" });
+ok(r.status === 200 && r.body.owner.email === "rosa@example.com" && !("temporaryPassword" in r.body.owner), "crear negocio y su propietario con la contraseña elegida", r.body);
 const newBusinessId = r.body.business?.id;
 const rosa = agent();
 r = await login(rosa, "rosa@example.com", "RosaClave2026");
 ok(r.status === 200 && r.body.businessId === newBusinessId, "el propietario entra con la contraseña elegida", r.body);
 
-r = await admin("POST", "/admin/businesses", { ...base, name: "Pedro Taller", slug: "pedro-taller", ownerFirstName: "Pedro", ownerLastName: "Sánchez", ownerEmail: "pedro@demo.com", ownerPassword: "PedroClave2026" });
-ok(r.status === 200 && r.body.existingAccount === true, "negocio para una cuenta existente sin negocio", r.body);
+r = await createBusinessWithOwner(admin, { name: "Pedro Taller", slug: "pedro-taller" }, { firstName: "Pedro", lastName: "Sánchez", email: "pedro@demo.com", password: "PedroClave2026" });
+ok(r.status === 200 && r.body.owner.email === "pedro@demo.com", "negocio para una cuenta existente sin negocio", r.body);
 r = await login(agent(), "pedro@demo.com", "PedroClave2026");
 ok(r.status === 200 && r.body.role === "owner", "la cuenta existente entra con la nueva contraseña", r.body);
 r = await login(agent(), "pedro@demo.com", "demo1234");
