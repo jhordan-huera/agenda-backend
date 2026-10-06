@@ -1,5 +1,5 @@
 /**
- * Copia de seguridad diaria de la base de datos (la ejecuta .github/workflows/backup.yml). El plan
+ * Copia de seguridad semanal de la base de datos (la ejecuta .github/workflows/backup.yml). El plan
  * gratis de Supabase no hace copias: si se pierde la base, ésta es la única forma de recuperarla.
  *
  * 1. pg_dump del esquema public (todas las tablas de la aplicación, con su estructura y datos).
@@ -189,7 +189,7 @@ async function sendByEmail(file: Buffer, fileName: string, summary: string[]): P
       to: recipient,
       subject: `Copia de seguridad de Agenda360 · ${today()}`,
       text: [
-        "Adjunta va la copia de seguridad diaria de la base de datos de Agenda360, cifrada.",
+        "Adjunta va la copia de seguridad semanal de la base de datos de Agenda360, cifrada.",
         "",
         ...summary,
         "",

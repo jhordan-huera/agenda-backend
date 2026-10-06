@@ -230,7 +230,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 - **Contenido de los emails**: el cron borra el texto y el HTML de los emails con más de 90 días
   (`EMAIL_CONTENT_DAYS`) y deja el registro (a quién, tipo, asunto, fecha y estado).
 - **Conexiones**: en Vercel, 3 por instancia por defecto (`DATABASE_POOL_MAX`); en local, 10.
-- **Aviso de espacio**: la copia de seguridad diaria informa el tamaño de la base y avisa por ntfy
+- **Aviso de espacio**: la copia de seguridad semanal informa el tamaño de la base y avisa por ntfy
   (prioridad alta) si pasa de 350 MB (`DATABASE_WARN_MB`) de los 500 MB del plan gratis de Supabase.
 - El hash de referencia del login es fijo: no se calcula bcrypt en cada arranque del servidor.
 
@@ -296,8 +296,11 @@ marca como enviados o, tras 5 intentos, fallidos (con el motivo en `last_error`)
 
 ## Copias de seguridad
 
-El plan gratis de Supabase no hace copias. `.github/workflows/backup.yml` ejecuta cada día (03:17 en
-Ecuador) `scripts/backup.ts`:
+El plan gratis de Supabase no hace copias. `.github/workflows/backup.yml` ejecuta cada viernes
+`scripts/backup.ts`. La lanza cron-job.org a las 03:00 de Ecuador (`POST /repos/<dueño>/agenda-backend/actions/workflows/backup.yml/dispatches`
+con `{"ref":"main"}` y el mismo token que el cron); el horario propio de GitHub (03:17) queda de
+respaldo y no repite la copia si ya hay una correcta de las últimas 20 horas. Una copia en cualquier
+momento: **Actions → Copia de seguridad → Run workflow**.
 
 1. `pg_dump` del esquema `public` (estructura y datos de todas las tablas) por el pooler de
    Supabase en modo sesión (puerto 5432; pg_dump no funciona en el 6543).
@@ -306,7 +309,7 @@ Ecuador) `scripts/backup.ts`:
 3. La comprime y la **cifra** (AES-256-GCM, clave derivada de `BACKUP_PASSPHRASE` con scrypt):
    sin la clave nadie puede abrirla, tampoco Google.
 4. La envía como adjunto a `BACKUP_EMAIL` por Gmail y avisa por ntfy (sin sonido si salió bien,
-   urgente si falló). Opcional: `BACKUP_HEALTHCHECK_URL` (healthchecks.io avisa si un día no llega).
+   urgente si falló). Opcional: `BACKUP_HEALTHCHECK_URL` (healthchecks.io avisa si una semana no llega; periodo 7 días).
 
 No incluye los archivos de la historia clínica (Supabase Storage), sólo la base de datos. Si la
 copia cifrada se acerca a 10 MB, el aviso recomienda pasar a otro almacenamiento (Gmail admite

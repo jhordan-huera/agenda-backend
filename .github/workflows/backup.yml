@@ -1,13 +1,15 @@
 name: Copia de seguridad
 
-# Copia diaria de la base de datos (el plan gratis de Supabase no hace copias). scripts/backup.ts
+# Copia semanal (los viernes) de la base de datos (el plan gratis de Supabase no hace copias). scripts/backup.ts
 # hace el volcado, lo restaura en una base de prueba (el servicio postgres de abajo) para comprobar
 # que está completo, lo cifra con BACKUP_PASSPHRASE y lo envía por Gmail a BACKUP_EMAIL. Avisa por
 # ntfy y da señal de vida a healthchecks.io. El registro (público) sólo muestra tamaños.
 on:
+  # La lanza cron-job.org los viernes a las 03:00 de Ecuador por la API de GitHub (el programador de
+  # GitHub se salta ejecuciones). Este horario es el respaldo: viernes 08:17 UTC = 03:17 en Ecuador;
+  # si cron-job.org ya hizo la copia, no se repite (job "comprobar").
   schedule:
-    # 08:17 UTC = 03:17 en Ecuador, cuando casi nadie usa la aplicación.
-    - cron: "17 8 * * *"
+    - cron: "17 8 * * 5"
   # "Run workflow" en la pestaña Actions: una copia en cualquier momento.
   workflow_dispatch:
 
@@ -20,7 +22,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # En la ejecución programada: ¿ya hay una copia correcta de las últimas 20 horas?
+  comprobar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: read
+    outputs:
+      hacer: ${{ steps.reciente.outputs.hacer }}
+    steps:
+      - id: reciente
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENTO: ${{ github.event_name }}
+        run: |
+          if [ "$EVENTO" != "schedule" ]; then echo "hacer=si" >> "$GITHUB_OUTPUT"; exit 0; fi
+          desde=$(date -u -d '20 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          hechas=$(gh run list -R "$GITHUB_REPOSITORY" --workflow backup.yml --status success --created ">=$desde" --json databaseId --jq length)
+          echo "Copias correctas en las últimas 20 horas: $hechas"
+          if [ "$hechas" -gt 0 ]; then echo "hacer=no" >> "$GITHUB_OUTPUT"; else echo "hacer=si" >> "$GITHUB_OUTPUT"; fi
+
   copia:
+    needs: comprobar
+    if: needs.comprobar.outputs.hacer == 'si'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
@@ -82,7 +106,7 @@ jobs:
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: node scripts/backup.ts
 
-      # Señal de vida (opcional): healthchecks.io avisa si un día no llega la copia.
+      # Señal de vida (opcional): healthchecks.io avisa si una semana no llega la copia.
       - name: Avisar a healthchecks.io
         if: always()
         env:
