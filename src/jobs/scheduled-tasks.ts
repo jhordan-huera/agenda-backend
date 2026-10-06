@@ -35,6 +35,8 @@ export interface ScheduledTasksReport {
   security: LoginAlert[];
   /** Registros de auditoría borrados por antigüedad (purge_audit_logs). */
   auditPurged: number;
+  /** Emails con más de EMAIL_CONTENT_DAYS días a los que se les borró el contenido. */
+  emailContentPurged: number;
   durationMs: number;
 }
 
@@ -98,6 +100,24 @@ async function findLoginAttacks(since: string | null): Promise<LoginAlert[]> {
 /** Hasta 30 lotes de 10 emails por ejecución; lo que quede sale en la siguiente. */
 const MAX_EMAIL_BATCHES = 30;
 
+/** Días que se guarda el contenido de cada email (para revisarlo en Actividad → Emails). */
+export const EMAIL_CONTENT_DAYS = 90;
+
+/**
+ * El contenido de un email (texto y HTML, unos 6 KB) es lo que más ocupa en la base. Pasados
+ * EMAIL_CONTENT_DAYS días se borra y queda sólo el registro: a quién, qué tipo, el asunto, cuándo
+ * y si se envió. Los que siguen en cola no se tocan.
+ */
+async function purgeOldEmailContent(): Promise<number> {
+  const result = await pool.query(
+    `update notifications set body = '', html = null
+      where status <> 'queued' and created_at < now() - make_interval(days => $1)
+        and (body <> '' or html is not null)`,
+    [EMAIL_CONTENT_DAYS],
+  );
+  return result.rowCount ?? 0;
+}
+
 /**
  * Tareas periódicas: recordatorios, reintentos de la cola de emails y limpieza. En producción
  * las ejecuta el cron de GitHub (scripts/cron.ts) directamente contra la base y Gmail, sin
@@ -112,6 +132,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   await deleteStalePendingAttachments();
   const security = await findLoginAttacks(previous?.ranAt ?? null);
   const purged = await one<{ deleted: number }>(pool, "select purge_audit_logs() as deleted");
+  const emailContentPurged = await purgeOldEmailContent();
   // Corte en "ahora": lo enviado hasta aquí cuenta en esta ejecución y no en la siguiente.
   const totals = await one<{ at: string; pending: number; sent: number }>(
     pool,
@@ -148,6 +169,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     pending: totals?.pending ?? 0,
     security,
     auditPurged: purged?.deleted ?? 0,
+    emailContentPurged,
     durationMs: Date.now() - started,
   };
   await pool.query("insert into cron_runs (ran_at, report) values (coalesce($1::timestamptz, now()), $2)", [

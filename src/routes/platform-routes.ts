@@ -25,7 +25,14 @@ publicRoutes.get(
 );
 publicRoutes.get(
   "/businesses/:slug",
-  handle((req) => publicBookingService.getProfile(req.params.slug)),
+  handle(async (req, res) => {
+    const profile = await publicBookingService.getProfile(req.params.slug);
+    // La CDN de Vercel la guarda 30 s (y la sirve vieja hasta 60 s más mientras la renueva): si un
+    // enlace se hace viral, la mayoría de visitas no llegan a la base. La reserva vuelve a
+    // comprobar la hora al confirmarla, así que nunca se reserva una hora ocupada.
+    if (profile) res.set("Cache-Control", "public, max-age=0, s-maxage=30, stale-while-revalidate=60");
+    return profile;
+  }),
 );
 const lookupLimit = limitRequests({
   windowMinutes: 15,

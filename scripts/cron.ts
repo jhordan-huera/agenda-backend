@@ -188,7 +188,8 @@ async function main(): Promise<void> {
     console.info(
       `Recordatorios: ${report.reminders} · enviados desde la anterior: ${report.sentSinceLastRun} · ` +
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +
-        `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ${report.durationMs} ms`,
+        `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ` +
+        `emails sin contenido (más de 90 días): ${report.emailContentPurged} · ${report.durationMs} ms`,
     );
     const notices = [buildNotice(report, { gmailConfigured: Boolean(config.gmail) }), buildSecurityNotice(report)].filter(
       (notice) => notice !== null,

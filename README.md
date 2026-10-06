@@ -175,6 +175,21 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   nutrición, fisioterapia, fonoaudiología, medicina estética); se recomiendan según la categoría del
   negocio. `db:seed -- --reset` las conserva.
 
+## Rendimiento y crecimiento
+
+- **El panel no descarga el historial**: cada pantalla pide sólo su rango de citas (`from`/`to`);
+  `GET /businesses/:id/appointments/:id` trae una cita suelta y `GET /businesses/:id/clients/activity`
+  calcula en la base el resumen de cada cliente (totales, primera visita, última y próxima cita).
+- **Página de reservas en la CDN**: `GET /public/businesses/:slug` responde con
+  `Cache-Control: public, s-maxage=30, stale-while-revalidate=60`; Vercel la sirve sin llegar a la
+  API en los picos de visitas. La reserva vuelve a comprobar la hora al confirmarla.
+- **Contenido de los emails**: el cron borra el texto y el HTML de los emails con más de 90 días
+  (`EMAIL_CONTENT_DAYS`) y deja el registro (a quién, tipo, asunto, fecha y estado).
+- **Conexiones**: en Vercel, 3 por instancia por defecto (`DATABASE_POOL_MAX`); en local, 10.
+- **Aviso de espacio**: la copia de seguridad diaria informa el tamaño de la base y avisa por ntfy
+  (prioridad alta) si pasa de 350 MB (`DATABASE_WARN_MB`) de los 500 MB del plan gratis de Supabase.
+- El hash de referencia del login es fijo: no se calcula bcrypt en cada arranque del servidor.
+
 ## Seguridad
 
 - **Sesión:** cookie `httpOnly` con un token aleatorio; en la base sólo se guarda su hash (tabla

@@ -21,7 +21,9 @@ const envSchema = z.object({
     .string()
     .default("loopback")
     .transform((value) => (/^\d+$/.test(value) ? Number(value) : value)),
-  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(10),
+  // En Vercel cada instancia abre su propio grupo de conexiones: con 3 por instancia no se agotan
+  // las del pooler de Supabase en un pico de tráfico. En local, 10.
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(process.env.VERCEL ? 3 : 10),
   REMINDER_JOB_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(5),
   // Secreto compartido con el proxy del frontend en Vercel, que reenvía la IP real del visitante.
   PROXY_SECRET: z.string().trim().min(24, "PROXY_SECRET debe tener al menos 24 caracteres").optional(),

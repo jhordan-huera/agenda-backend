@@ -210,6 +210,26 @@ async function sendByEmail(file: Buffer, fileName: string, summary: string[]): P
   return recipient;
 }
 
+/** Base de 500 MB del plan gratis de Supabase: se avisa con margen antes de llenarla. */
+const DATABASE_LIMIT_MB = 500;
+const DATABASE_WARN_MB = Number(env("DATABASE_WARN_MB") ?? 350);
+
+/** Tamaño de la base en bytes (null si no se pudo leer: no impide la copia). */
+async function databaseSize(databaseUrl: string): Promise<number | null> {
+  // Supabase exige SSL (con su propia CA); la base local de las pruebas, no.
+  const ssl = env("DATABASE_SSL") === "false" ? undefined : { rejectUnauthorized: false };
+  const client = new pg.Client({ connectionString: databaseUrl, ssl });
+  try {
+    await client.connect();
+    const result = await client.query<{ bytes: string }>("select pg_database_size(current_database()) as bytes");
+    return Number(result.rows[0]?.bytes ?? 0);
+  } catch {
+    return null;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
 async function main(): Promise<void> {
   const outIndex = process.argv.indexOf("--out");
   const outDir = outIndex === -1 ? null : process.argv[outIndex + 1];
@@ -235,10 +255,16 @@ async function main(): Promise<void> {
   if (decryptBackup(file, passphrase) !== sql) throw new BackupError("La copia cifrada no coincide con el volcado.");
   const fileName = `agenda360-${today()}.sql.gz.enc`;
 
+  const sizeBytes = await databaseSize(databaseUrl);
+  const sizeMb = sizeBytes === null ? null : sizeBytes / 1024 / 1024;
+  const databaseFull = sizeMb !== null && sizeMb >= DATABASE_WARN_MB;
   const key = (table: string) => counts.get(`public.${table}`) ?? 0;
   const summary = [
     `Tablas: ${counts.size} · filas: ${totalRows} (negocios ${key("businesses")}, clientes ${key("clients")}, citas ${key("appointments")}, evoluciones clínicas ${key("clinical_notes")}).`,
     `Tamaño: ${formatSize(file.length)} cifrada.`,
+    sizeMb === null
+      ? "No se pudo leer el tamaño de la base."
+      : `Base de datos: ${Math.round(sizeMb)} MB de ${DATABASE_LIMIT_MB} MB del plan gratis de Supabase.`,
     check === null
       ? "Sin comprobación de restauración (falta RESTORE_CHECK_URL)."
       : check.problems.length === 0
@@ -271,8 +297,17 @@ async function main(): Promise<void> {
   }
   await notify({
     title: "Agenda360: copia de seguridad hecha",
-    message: [...summary, `Destino: ${outDir ? "archivo local" : destination}.`, ...(file.length > WARN_EMAIL_BYTES ? ["", `La copia se acerca al límite de adjuntos de Gmail (${formatSize(MAX_EMAIL_BYTES)}): conviene pasar a otro almacenamiento.`] : [])].join("\n"),
-    priority: file.length > WARN_EMAIL_BYTES ? 4 : 2,
+    message: [
+      ...summary,
+      `Destino: ${outDir ? "archivo local" : destination}.`,
+      ...(file.length > WARN_EMAIL_BYTES
+        ? ["", `La copia se acerca al límite de adjuntos de Gmail (${formatSize(MAX_EMAIL_BYTES)}): conviene pasar a otro almacenamiento.`]
+        : []),
+      ...(databaseFull
+        ? ["", `La base pasa de ${DATABASE_WARN_MB} MB: conviene revisar qué ocupa espacio o pasar a un plan de pago de Supabase antes de llegar a ${DATABASE_LIMIT_MB} MB.`]
+        : []),
+    ].join("\n"),
+    priority: file.length > WARN_EMAIL_BYTES || databaseFull ? 4 : 2,
     tags: ["floppy_disk"],
   });
 }

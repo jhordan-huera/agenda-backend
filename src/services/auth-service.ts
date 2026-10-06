@@ -46,8 +46,12 @@ const SESSION_HOURS = 24;
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
-/** Hash de referencia para que un email inexistente tarde lo mismo que una contraseña incorrecta. */
-const DUMMY_PASSWORD_HASH = await hashPassword(randomBytes(16).toString("hex"));
+/**
+ * Hash de referencia para que un email inexistente tarde lo mismo que una contraseña incorrecta.
+ * Fijo (de una contraseña aleatoria que nadie conoce, con el mismo coste que las reales): así no
+ * se gasta CPU en calcularlo cada vez que arranca el servidor.
+ */
+const DUMMY_PASSWORD_HASH = "$2b$10$xLkJUyZsnCD8ukHE6RxWguQec45gX8EGopr0e0EODO/I9dNPtdc1a";
 
 const withoutSecrets = ({
   passwordHash: _password,

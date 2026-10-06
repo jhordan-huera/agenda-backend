@@ -1,4 +1,4 @@
-import type { Request, RequestHandler } from "express";
+import type { Request, RequestHandler, Response } from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import { clientIp } from "./client-ip.ts";
 
@@ -7,10 +7,12 @@ import { clientIp } from "./client-ip.ts";
  * (`null` incluido) o con 204 si no devuelve nada. Express 5 pasa los errores
  * de las funciones async al manejador de errores.
  */
-export function handle(work: (req: Request<Record<string, string>>) => Promise<unknown>): RequestHandler {
+export function handle(
+  work: (req: Request<Record<string, string>>, res: Response) => Promise<unknown>,
+): RequestHandler {
   return async (req, res) => {
     // Las rutas sólo usan parámetros simples (:id), que Express entrega como string.
-    const result = await work(req as Request<Record<string, string>>);
+    const result = await work(req as Request<Record<string, string>>, res);
     if (result === undefined) res.status(204).end();
     else res.json(result);
   };

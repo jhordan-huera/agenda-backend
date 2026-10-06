@@ -167,6 +167,27 @@ export interface BrandColors {
   highlight: string;
 }
 
+/**
+ * Resumen de las citas de un cliente: lo calcula la API (en la base de datos) para que el panel no
+ * descargue el historial completo de citas del negocio.
+ */
+export interface ClientActivity {
+  clientId: string;
+  /** Citas no canceladas. */
+  totalAppointments: number;
+  completed: number;
+  cancelled: number;
+  noShow: number;
+  /** Suma de las citas completadas. */
+  totalSpent: number;
+  /** Fecha de su primera cita no cancelada (null si no tiene ninguna). */
+  firstVisit: ISODate | null;
+  /** Última cita ya pasada (no cancelada). */
+  lastAppointment: Appointment | null;
+  /** Próxima cita activa. */
+  nextAppointment: Appointment | null;
+}
+
 /** Persona que atiende citas dentro de un negocio. Por ahora hay uno por negocio (el dueño). */
 export interface Professional {
   id: string;

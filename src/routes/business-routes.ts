@@ -103,6 +103,10 @@ businessRoutes.get(
   "/:businessId/clients",
   handle((req) => clientService.list(req.ctx, req.params.businessId)),
 );
+businessRoutes.get(
+  "/:businessId/clients/activity",
+  handle((req) => clientService.activity(req.ctx, req.params.businessId)),
+);
 businessRoutes.post(
   "/:businessId/clients",
   handle((req) => clientService.create(req.ctx, req.params.businessId, req.body)),
@@ -206,6 +210,10 @@ businessRoutes.get(
 businessRoutes.post(
   "/:businessId/appointments",
   handle((req) => appointmentService.create(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.get(
+  "/:businessId/appointments/:appointmentId",
+  handle((req) => appointmentService.getById(req.ctx, req.params.businessId, req.params.appointmentId)),
 );
 businessRoutes.put(
   "/:businessId/appointments/:appointmentId",

@@ -8,10 +8,11 @@ import {
 } from "../db/columns.ts";
 import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
+import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { BLOCKING_STATUSES } from "../shared/lib/constants/appointment-status.ts";
 import { formatNumericDate, formatTimeRange } from "../shared/lib/format.ts";
 import { documentIdError } from "../shared/lib/identity.ts";
-import { addMinutesToTime } from "../shared/lib/time.ts";
+import { addMinutesToTime, getZonedNow, minutesToTime } from "../shared/lib/time.ts";
 import { appointmentSchema, appointmentStatusSchema, whatsAppNoticeSchema } from "../shared/lib/validations/appointment.ts";
 import { clientSchema } from "../shared/lib/validations/client.ts";
 import { dateField } from "../shared/lib/validations/fields.ts";
@@ -22,6 +23,7 @@ import type {
   AppointmentStatus,
   BlockedTime,
   Client,
+  ClientActivity,
   HomeVisitAddress,
   ISODate,
   Professional,
@@ -75,6 +77,54 @@ export const clientService = {
     await authorize(pool, ctx, businessId);
     const clients = await many<Client>(pool, `select ${clientColumns()} from clients where business_id = $1`, [businessId]);
     return clients.sort(byName);
+  },
+
+  /**
+   * Resumen de las citas de cada cliente (totales, primera visita, última y próxima cita),
+   * calculado en la base: la lista de clientes y los reportes no descargan todo el historial.
+   */
+  async activity(ctx: RequestContext, businessId: string): Promise<ClientActivity[]> {
+    await authorize(pool, ctx, businessId);
+    const business = await one<{ timezone: string }>(pool, "select timezone from businesses where id = $1", [businessId]);
+    const now = getZonedNow(business?.timezone ?? DEFAULT_TIMEZONE);
+    const nowTime = minutesToTime(now.minutes);
+    const past = "(a.date < $2::date or (a.date = $2::date and a.start_time <= $3::time))";
+    const rows = await many<Omit<ClientActivity, "lastAppointment" | "nextAppointment">>(
+      pool,
+      `select client_id as "clientId",
+              count(*) filter (where status <> 'cancelled')::int as "totalAppointments",
+              count(*) filter (where status = 'completed')::int as completed,
+              count(*) filter (where status = 'cancelled')::int as cancelled,
+              count(*) filter (where status = 'no_show')::int as "noShow",
+              coalesce(sum(price) filter (where status = 'completed'), 0) as "totalSpent",
+              to_char(min(date) filter (where status <> 'cancelled'), 'YYYY-MM-DD') as "firstVisit"
+         from appointments where business_id = $1
+        group by client_id`,
+      [businessId],
+    );
+    const last = await many<Appointment>(
+      pool,
+      `select distinct on (a.client_id) ${appointmentColumns("a")}
+         from appointments a
+        where a.business_id = $1 and a.status <> 'cancelled' and ${past}
+        order by a.client_id, a.date desc, a.start_time desc`,
+      [businessId, now.date, nowTime],
+    );
+    const next = await many<Appointment>(
+      pool,
+      `select distinct on (a.client_id) ${appointmentColumns("a")}
+         from appointments a
+        where a.business_id = $1 and a.status in ('pending', 'confirmed', 'completed') and not ${past}
+        order by a.client_id, a.date, a.start_time`,
+      [businessId, now.date, nowTime],
+    );
+    const lastByClient = new Map(last.map((appointment) => [appointment.clientId, appointment]));
+    const nextByClient = new Map(next.map((appointment) => [appointment.clientId, appointment]));
+    return rows.map((row) => ({
+      ...row,
+      lastAppointment: lastByClient.get(row.clientId) ?? null,
+      nextAppointment: nextByClient.get(row.clientId) ?? null,
+    }));
   },
 
   async getById(ctx: RequestContext, businessId: string, clientId: string): Promise<Client | null> {
@@ -432,6 +482,16 @@ export const appointmentService = {
         order by date, start_time`,
       [businessId, from, to, filters.clientId ?? null],
     );
+  },
+
+  /** Una cita (el detalle se abre sin descargar la agenda entera). */
+  async getById(ctx: RequestContext, businessId: string, appointmentId: string): Promise<Appointment | null> {
+    await authorize(pool, ctx, businessId);
+    if (!isUuid(appointmentId)) return null;
+    return one<Appointment>(pool, `select ${appointmentColumns()} from appointments where id = $1 and business_id = $2`, [
+      appointmentId,
+      businessId,
+    ]);
   },
 
   /** Falla con `conflict` si se solapa con otra cita activa y con `plan_limit` si se superó el plan. */
