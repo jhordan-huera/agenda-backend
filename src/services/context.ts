@@ -20,6 +20,8 @@ export interface AuditActor {
 
 export interface Actor extends AuditActor {
   role: BusinessRole;
+  /** Super admin en modo soporte: sus cambios se registran, sus consultas no. */
+  support?: true;
 }
 
 /** Usuario de la sesión. Las cuentas desactivadas no pasan. */
@@ -33,7 +35,7 @@ export function requireUser(ctx: RequestContext): User {
  * (aislamiento multi-tenant), que el negocio no esté suspendido y, opcionalmente, un
  * permiso del rol. El super admin ("Gestionar negocio" en el panel /admin) actúa en
  * cualquier negocio, aunque esté suspendido, con los permisos del propietario y queda
- * identificado en la auditoría. Con `lock` bloquea la fila del negocio hasta el fin de la transacción:
+ * identificado en la auditoría (sólo lo que crea o cambia, no lo que consulta). Con `lock` bloquea la fila del negocio hasta el fin de la transacción:
  * así dos escrituras simultáneas del mismo negocio (p. ej. dos reservas a la misma hora,
  * o el último cupo del plan) se ejecutan una detrás de otra.
  */
@@ -50,7 +52,7 @@ export async function authorize(
       ? await one(db, `select 1 from businesses where id = $1 ${options.lock ? "for no key update" : ""}`, [businessId])
       : null;
     if (!business) throw new AppError("not_found", "Negocio no encontrado.");
-    return { userId: user.id, name: `${getFullName(user)} (Super admin)`, role: "owner" };
+    return { userId: user.id, name: `${getFullName(user)} (Super admin)`, role: "owner", support: true };
   }
   const membership = isUuid(businessId)
     ? await one<{ role: BusinessRole; status: BusinessStatus }>(

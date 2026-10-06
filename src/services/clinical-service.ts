@@ -145,19 +145,22 @@ export const clinicalService = {
     });
   },
 
-  /** Antecedentes y evoluciones del paciente. Registra el acceso en la auditoría. */
+  /** Antecedentes y evoluciones del paciente. Registra el acceso en la auditoría (salvo en modo soporte). */
   async get(ctx: RequestContext, businessId: string, clientId: string): Promise<ClinicalRecord> {
     return transaction(async (db) => {
       const actor = await authorizeClinical(db, ctx, businessId);
       const client = await findPatient(db, businessId, clientId);
-      const loggedRecently = await one(
-        db,
-        `select 1 from audit_logs
-          where business_id = $1 and action = 'clinical_record.viewed' and entity_id = $2 and actor_id = $3
-            and created_at > now() - make_interval(mins => $4)
-          limit 1`,
-        [businessId, clientId, actor.userId, VIEW_LOG_INTERVAL_MINUTES],
-      );
+      // El super admin en modo soporte no deja rastro de lo que sólo consulta.
+      const loggedRecently =
+        actor.support ||
+        (await one(
+          db,
+          `select 1 from audit_logs
+            where business_id = $1 and action = 'clinical_record.viewed' and entity_id = $2 and actor_id = $3
+              and created_at > now() - make_interval(mins => $4)
+            limit 1`,
+          [businessId, clientId, actor.userId, VIEW_LOG_INTERVAL_MINUTES],
+        ));
       if (!loggedRecently) {
         await logAudit(db, {
           businessId,

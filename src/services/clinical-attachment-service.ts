@@ -109,15 +109,17 @@ export const clinicalAttachmentService = {
       const attachment = await findAttachment(db, businessId, attachmentId);
       if (attachment.status !== "ready") throw new AppError("not_found", "Archivo no encontrado.");
       const url = await storage.createDownloadUrl(attachment.storagePath, attachment.fileName);
-      // Datos de salud: también queda quién abre cada archivo.
-      await logAudit(db, {
-        businessId,
-        actor,
-        action: "clinical_record.attachment_opened",
-        entityType: "clinical_record",
-        entityId: attachment.clientId,
-        summary: `Abrió el archivo «${attachment.fileName}» de la historia clínica de ${attachment.clientName}`,
-      });
+      // Datos de salud: también queda quién abre cada archivo (salvo el super admin en modo soporte).
+      if (!actor.support) {
+        await logAudit(db, {
+          businessId,
+          actor,
+          action: "clinical_record.attachment_opened",
+          entityType: "clinical_record",
+          entityId: attachment.clientId,
+          summary: `Abrió el archivo «${attachment.fileName}» de la historia clínica de ${attachment.clientName}`,
+        });
+      }
       return { url };
     });
   },

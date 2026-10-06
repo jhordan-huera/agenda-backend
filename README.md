@@ -163,11 +163,12 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 - **Fechas de la historia clínica**: la del consentimiento informado (casilla "firmó") y la de cada
   evolución las pone la API con el día actual; triggers de PostgreSQL impiden cambiarlas después.
 - **Modo soporte**: el super admin opera en cualquier negocio (también suspendido) con permisos de
-  propietario desde "Gestionar negocio"; todo queda en la auditoría como "Nombre (Super admin)".
+  propietario desde "Gestionar negocio"; lo que crea o cambia queda en la auditoría como
+  "Nombre (Super admin)", lo que sólo consulta no.
 - **Historia clínica** (datos de salud, para uso del profesional): el propietario, los miembros que
-  él autoriza y el super admin en modo soporte (queda en la auditoría). Las evoluciones no se editan ni se
-  borran (se añaden aclaraciones), cada consulta queda en la auditoría y un paciente con historia
-  no se puede eliminar.
+  él autoriza y el super admin en modo soporte. Las evoluciones no se editan ni se borran (se añaden
+  aclaraciones), cada consulta de las personas del negocio queda en la auditoría y un paciente con
+  historia no se puede eliminar.
 - **Formatos propios, por servicio y archivos** (migración 010): en los planes Pro y Business el
   propietario crea y edita sus formatos (`/clinical-templates`, cada cambio es una versión nueva; un
   campo existente no cambia de tipo) o duplica uno de la plataforma. Cada servicio puede tener su
