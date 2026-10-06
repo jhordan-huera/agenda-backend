@@ -12,31 +12,14 @@
  */
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { findPostgresBin } from "./postgres-bin.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const filters = process.argv.slice(2);
-
-/** Carpeta con initdb/pg_ctl/psql: PG_BIN, pg_config o las rutas habituales. */
-function findPostgresBin(): string | null {
-  const candidates = [
-    process.env.PG_BIN,
-    (() => {
-      try {
-        return execFileSync("pg_config", ["--bindir"], { encoding: "utf8" }).trim();
-      } catch {
-        return undefined;
-      }
-    })(),
-    "/opt/homebrew/opt/postgresql@16/bin",
-    "/usr/local/opt/postgresql@16/bin",
-    "/usr/lib/postgresql/16/bin",
-  ];
-  return candidates.find((dir) => dir && existsSync(join(dir, "initdb"))) ?? null;
-}
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {

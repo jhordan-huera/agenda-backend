@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "node --watch --env-file-if-exists=.env src/server.ts",
+    "dev:local": "node scripts/dev-local.ts",
     "start": "node --env-file-if-exists=.env src/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.ts",

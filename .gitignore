@@ -9,3 +9,4 @@ node_modules
 !.vscode/extensions.json
 .vercel
 storage
+.local-db

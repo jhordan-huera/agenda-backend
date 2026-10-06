@@ -6,6 +6,37 @@ API REST de Agenda360: agenda y reservas online multi-negocio. La usa el fronten
 **Stack:** Node.js 22.18+ (ejecuta TypeScript directamente, sin compilar) · Express 5 · PostgreSQL 16 ·
 Zod · bcrypt · Nodemailer (Gmail OAuth2).
 
+## Desarrollo en local (sin tocar producción)
+
+```bash
+npm run dev:local              # API + base de datos PostgreSQL en este equipo, con los datos demo
+npm run dev:local -- --reset   # borra los datos locales y vuelve a cargar la demo
+```
+
+Crea la base en `.local-db/` la primera vez (necesita `brew install postgresql@16`), la conserva entre
+arranques y la detiene al salir (Ctrl+C). Aplica las migraciones nuevas en cada arranque: es el sitio
+para probar una migración antes de aplicarla en Supabase. No lee `.env`, así que no toca Supabase,
+no envía emails (quedan en cola, se ven en el historial de emails del panel) ni pide CAPTCHA.
+Después arranca el frontend (`npm run dev` en agenda-front) y entra con `jhordan@demo.com` o
+`admin@demo.com` (contraseña `demo1234`).
+
+`npm run dev`, en cambio, usa el `DATABASE_URL` de `.env`: la base **real**.
+
+### Ramas: `dev` para trabajar, `main` para publicar
+
+Vercel sólo publica `main` (`git.deploymentEnabled` en `vercel.json`, igual en agenda-front): los
+push a `dev` o a cualquier otra rama no crean despliegues ni gastan CPU de Vercel.
+
+```bash
+git switch dev                 # trabajar y hacer commits aquí (git push guarda la rama en GitHub)
+# …cuando todo esté probado con dev:local:
+npm run db:migrate             # si hay migraciones nuevas: en Supabase, ANTES de publicar
+git switch main && git merge dev && git push   # publica en Vercel
+git switch dev && git merge main               # seguir trabajando en dev
+```
+
+Publica primero la API y después agenda-front si el cambio toca a los dos.
+
 ## Puesta en marcha
 
 1. **Instala las dependencias**
@@ -51,6 +82,7 @@ Zod · bcrypt · Nodemailer (Gmail OAuth2).
 | Script | Qué hace |
 | --- | --- |
 | `npm run dev` / `npm start` | API con recarga automática / en producción |
+| `npm run dev:local` | API con una base de datos local y los datos demo (ver "Desarrollo en local") |
 | `npm run typecheck` | Comprobación de tipos |
 | `npm test` | Pruebas de integración contra un PostgreSQL desechable (ver "Pruebas") |
 | `npm run db:migrate` | Aplica las migraciones pendientes de `db/migrations` |
@@ -73,7 +105,7 @@ src/
   jobs/             Tareas periódicas (recordatorios, cola de emails, limpieza)
   shared/           Copia del código de agenda-front: tipos, validaciones Zod, disponibilidad,
                     plantillas de email, planes y permisos
-scripts/            cron.ts (cliente del cron de GitHub + ntfy), test.ts (npm test), sync-shared.ts
+scripts/            cron.ts (cliente del cron de GitHub + ntfy), test.ts (npm test), dev-local.ts, sync-shared.ts
 tests/              Pruebas de integración (*.test.mjs / *.test.ts)
 .github/workflows/  cron.yml: tareas periódicas cada 10 min en producción
 ```
