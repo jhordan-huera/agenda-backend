@@ -11,6 +11,7 @@ export type Permission =
   | "clients.manage"
   | "clients.delete"
   | "services.manage"
+  | "professionals.manage"
   | "schedule.manage"
   | "reports.view"
   | "business.manage"
@@ -23,6 +24,7 @@ const ALL_PERMISSIONS: Permission[] = [
   "clients.manage",
   "clients.delete",
   "services.manage",
+  "professionals.manage",
   "schedule.manage",
   "reports.view",
   "business.manage",
@@ -38,11 +40,14 @@ const ROLE_PERMISSIONS: Record<BusinessRole, ReadonlySet<Permission>> = {
     "clients.manage",
     "clients.delete",
     "services.manage",
+    "professionals.manage",
     "schedule.manage",
     "reports.view",
     "audit.view",
   ]),
   staff: new Set(["appointments.manage", "clients.manage"]),
+  // Sólo sobre su propia agenda: la API filtra citas, pacientes, horario y reportes (ver agenda-scope).
+  professional: new Set(["appointments.manage", "clients.manage", "schedule.manage", "reports.view"]),
 };
 
 export function hasPermission(role: BusinessRole | null | undefined, permission: Permission): boolean {
@@ -52,14 +57,19 @@ export function hasPermission(role: BusinessRole | null | undefined, permission:
 export const ROLE_LABELS: Record<BusinessRole, string> = {
   owner: "Propietario",
   admin: "Administrador",
-  staff: "Staff",
+  staff: "Recepción",
+  professional: "Profesional",
 };
 
 export const ROLE_DESCRIPTIONS: Record<BusinessRole, string> = {
-  owner: "Administra todo: equipo, configuración y suscripción.",
-  admin: "Gestiona clientes, citas, servicios y horarios, y ve reportes.",
-  staff: "Ve la agenda, crea citas y gestiona clientes.",
+  owner: "Administra todo: equipo, profesionales, configuración y actividad.",
+  admin: "Gestiona citas, pacientes, servicios, profesionales y horarios, y ve reportes.",
+  staff: "Maneja la agenda de todos los profesionales: crea citas, marca llegadas y gestiona pacientes.",
+  professional: "Atiende su propia agenda: ve sus citas, sus pacientes, su horario y sus reportes.",
 };
 
 /** Roles que se pueden asignar al invitar (el propietario es único). */
-export const ASSIGNABLE_ROLES: BusinessRole[] = ["admin", "staff"];
+export const ASSIGNABLE_ROLES: BusinessRole[] = ["admin", "staff", "professional"];
+
+/** Quien sólo ve su propia agenda (la API lo aplica en cada consulta). */
+export const isAgendaScoped = (role: BusinessRole | null | undefined): boolean => role === "professional";

@@ -251,7 +251,7 @@ export const emailTemplates = {
       greeting: `Hola ${firstName}:`,
       blocks: [
         { kind: "text", text: `Aprobamos tu solicitud: ${businessName} ya tiene el plan ${planName}.` },
-        { kind: "button", label: "Ver mi suscripción", url: settingsUrl },
+        { kind: "button", label: "Abrir mi panel", url: settingsUrl },
       ],
     }),
 
@@ -263,7 +263,7 @@ export const emailTemplates = {
       greeting: `Hola ${firstName}:`,
       blocks: [
         { kind: "text", text: `El equipo de ${APP_NAME} cambió el plan de ${businessName} a ${planName}.` },
-        { kind: "button", label: "Ver mi suscripción", url: settingsUrl },
+        { kind: "button", label: "Abrir mi panel", url: settingsUrl },
       ],
     }),
 
@@ -311,6 +311,62 @@ export const emailTemplates = {
         { kind: "text", text: "Entra a tu agenda para confirmarla." },
       ],
     }),
+
+  /** Al profesional: una cita nueva en su agenda (reservada online, agendada o pasada a él por otra persona). */
+  professionalNewAppointment: (
+    data: AppointmentEmailData & { origin: "booking_page" | "dashboard"; agendaUrl: string },
+  ): EmailContent =>
+    platformEmail({
+      subject: `Nueva cita: ${data.clientName} · ${capitalize(formatLongDate(data.date))} ${data.startTime}`,
+      preheader: `${data.clientName} · ${data.serviceName}.`,
+      title: "Tienes una nueva cita",
+      greeting: `Hola ${data.professionalName}:`,
+      blocks: [
+        {
+          kind: "text",
+          text:
+            data.origin === "booking_page"
+              ? `${data.clientName} reservó una cita contigo desde la página de ${data.businessName}.`
+              : `En ${data.businessName} agendaron una cita en tu agenda.`,
+        },
+        // El profesional siempre ve el precio real, aunque no se muestre a los clientes.
+        appointmentDetails({ ...data, showPrice: true }, "La cita"),
+        { kind: "button", label: "Ver mi agenda", url: data.agendaUrl },
+      ],
+    }),
+
+  /** Al profesional, cada mañana: sus citas del día. */
+  professionalDailyAgenda: (data: {
+    professionalName: string;
+    businessName: string;
+    date: ISODate;
+    appointments: { time: string; clientName: string; serviceName: string; homeVisit: HomeVisitAddress | null }[];
+    agendaUrl: string;
+  }): EmailContent => {
+    const count = data.appointments.length;
+    return platformEmail({
+      subject: `Tu agenda de hoy: ${count === 1 ? "1 cita" : `${count} citas`} · ${data.businessName}`,
+      preheader: count ? `La primera, a las ${data.appointments[0].time.slice(0, 5)}.` : "Hoy no tienes citas.",
+      title: "Tu agenda de hoy",
+      greeting: `Hola ${data.professionalName}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: `${capitalize(formatLongDate(data.date))} en ${data.businessName}: tienes ${count === 1 ? "una cita" : `${count} citas`}.`,
+        },
+        {
+          kind: "details",
+          rows: data.appointments.map((appointment) => ({
+            label: appointment.time,
+            value: [appointment.clientName, appointment.serviceName, appointment.homeVisit ? "a domicilio" : ""]
+              .filter(Boolean)
+              .join(" · "),
+          })),
+        },
+        { kind: "button", label: "Abrir mi agenda", url: data.agendaUrl },
+      ],
+    });
+  },
 
   appointmentConfirmed: (data: AppointmentEmailData): EmailContent =>
     clientEmail(data, {

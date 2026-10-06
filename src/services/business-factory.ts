@@ -73,18 +73,20 @@ export async function insertBusiness(
     business.id,
     owner.id,
   ]);
-  await db.query(
-    "insert into professionals (business_id, user_id, display_name, avatar_url) values ($1, $2, $3, $4)",
+  // La agenda del dueño. Sin email de avisos: las reservas ya le llegan al email del negocio.
+  const professional = (await one<{ id: string }>(
+    db,
+    "insert into professionals (business_id, user_id, display_name, avatar_url) values ($1, $2, $3, $4) returning id",
     [business.id, owner.id, getFullName(owner), owner.avatarUrl],
-  );
+  ))!;
   await db.query(
     "insert into subscriptions (business_id, plan, status, current_period_end) values ($1, $2, 'active', $3)",
     [business.id, params.plan, periodEndFor(params.plan)],
   );
   for (const day of params.schedules) {
     await db.query(
-      "insert into schedules (business_id, day_of_week, is_active, intervals) values ($1, $2, $3, $4)",
-      [business.id, day.dayOfWeek, day.isActive, JSON.stringify(day.intervals)],
+      "insert into schedules (business_id, professional_id, day_of_week, is_active, intervals) values ($1, $2, $3, $4, $5)",
+      [business.id, professional.id, day.dayOfWeek, day.isActive, JSON.stringify(day.intervals)],
     );
   }
   const service = params.firstService;

@@ -2,7 +2,6 @@ import { z } from "zod";
 import {
   businessColumns,
   planRequestColumns,
-  professionalColumns,
   subscriptionColumns,
   teamMemberColumns,
   userColumns,
@@ -20,6 +19,7 @@ import {
   businessProfileSchema,
   notificationSettingsSchema,
   onboardingSchema,
+  professionalScopeSchema,
   profileSchema,
 } from "../shared/lib/validations/business.ts";
 import { weeklyScheduleSchema } from "../shared/lib/validations/schedule.ts";
@@ -27,6 +27,7 @@ import { serviceSchema } from "../shared/lib/validations/service.ts";
 import { teamRoleSchema } from "../shared/lib/validations/team.ts";
 import type {
   Business,
+  BusinessRole,
   PlanChangeRequest,
   PlanId,
   PlanUsage,
@@ -42,8 +43,9 @@ import { requireAssignableCategory } from "./category-service.ts";
 import { authorize, parseInput, requireUser, type RequestContext } from "./context.ts";
 import { countUsers, getPlanUsage } from "./plan-limits.ts";
 import { appOrigin, queueEmail } from "./notifications.ts";
+import { listProfessionals } from "./professional-service.ts";
 
-const ROLE_ORDER = { owner: 0, admin: 1, staff: 2 };
+const ROLE_ORDER: Record<BusinessRole, number> = { owner: 0, admin: 1, professional: 2, staff: 3 };
 
 export const byRoleThenName = (a: TeamMember, b: TeamMember) =>
   ROLE_ORDER[a.role] - ROLE_ORDER[b.role] || a.firstName.localeCompare(b.firstName, "es");
@@ -200,16 +202,15 @@ export const businessService = {
   },
 
   async update(ctx: RequestContext, businessId: string, input: unknown): Promise<Business> {
-    const { bookingSettings, notificationSettings, clinicalRecordsEnabled, brandColors, ...profile } = (input ?? {}) as Record<
-      string,
-      unknown
-    >;
+    const { bookingSettings, notificationSettings, clinicalRecordsEnabled, brandColors, professionalScope, ...profile } = (input ??
+      {}) as Record<string, unknown>;
     const profileData = Object.keys(profile).length ? parseInput(businessProfileSchema.partial(), profile) : {};
     const booking = bookingSettings ? parseInput(bookingSettingsSchema, bookingSettings) : null;
     const notifications = notificationSettings ? parseInput(notificationSettingsSchema, notificationSettings) : null;
     const clinical = clinicalRecordsEnabled === undefined ? null : parseInput(z.boolean(), clinicalRecordsEnabled);
     // undefined: no se tocan; null: vuelven los colores de Agenda360.
     const brand = brandColors === undefined ? undefined : parseInput(brandColorsSchema, brandColors);
+    const scope = professionalScope === undefined ? null : parseInput(professionalScopeSchema, professionalScope);
 
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "business.manage", { lock: true });
@@ -255,6 +256,10 @@ export const businessService = {
         values.push(brand === null ? null : JSON.stringify(brand));
         assignments.push(`brand_colors = $${values.length}::jsonb`);
       }
+      if (scope !== null) {
+        values.push(scope);
+        assignments.push(`professional_scope = $${values.length}`);
+      }
       const business = assignments.length
         ? await one<Business>(
             db,
@@ -272,7 +277,9 @@ export const businessService = {
             ? `la historia clínica (${clinical ? "activada" : "desactivada"})`
             : brand !== undefined
               ? "los colores de la marca"
-              : "los datos del negocio";
+              : scope !== null
+                ? "qué pacientes ve cada profesional"
+                : "los datos del negocio";
       await logAudit(db, {
         businessId,
         actor,
@@ -291,13 +298,11 @@ export const businessService = {
     return !(await isSlugTaken(pool, slug.trim().toLowerCase(), isUuid(excludeBusinessId) ? excludeBusinessId : undefined));
   },
 
+  /** La primera agenda activa (versiones anteriores del panel; las nuevas usan /professionals). */
   async getProfessional(ctx: RequestContext, businessId: string): Promise<Professional | null> {
     await authorize(pool, ctx, businessId);
-    return one<Professional>(
-      pool,
-      `select ${professionalColumns()} from professionals where business_id = $1 order by display_name limit 1`,
-      [businessId],
-    );
+    const [first] = await listProfessionals(pool, businessId, { activeOnly: true });
+    return first ?? null;
   },
 };
 
@@ -368,6 +373,8 @@ export const teamService = {
       if (!member) throw new AppError("not_found", "Miembro no encontrado.");
       if (member.role === "owner") throw new AppError("forbidden", "No se puede eliminar al propietario.");
       await db.query("delete from business_users where business_id = $1 and user_id = $2", [businessId, userId]);
+      // Su agenda sigue (con su historial), ya sin usuario: el propietario decide si la desactiva.
+      await db.query("update professionals set user_id = null where business_id = $1 and user_id = $2", [businessId, userId]);
       // Sin negocio, la cuenta queda desactivada (el super admin puede reactivarla) y se cierran sus sesiones.
       await db.query("update users set is_active = false where id = $1", [userId]);
       await db.query("delete from sessions where user_id = $1", [userId]);

@@ -116,6 +116,33 @@ export function scheduleChanges(before: Schedule[], after: Schedule[]): AuditCha
   });
 }
 
+/** Un profesional con los nombres que se muestran (los resuelve quien llama). */
+export interface ProfessionalForAudit {
+  displayName: string;
+  title: string;
+  avatarUrl: string | null;
+  color: string;
+  email: string;
+  memberName: string | null;
+  servicesLabel: string;
+  notifyNewAppointments: boolean;
+  dailyAgenda: boolean;
+  isActive: boolean;
+}
+
+export const PROFESSIONAL_FIELDS: ChangeField<ProfessionalForAudit>[] = [
+  { key: "displayName", label: "Nombre" },
+  { key: "title", label: "Especialidad" },
+  { key: "avatarUrl", label: "Foto", hideValues: true },
+  { key: "color", label: "Color", format: (value: string) => value.toUpperCase() },
+  { key: "email", label: "Email de avisos" },
+  { key: "memberName", label: "Usuario del equipo", format: (value: string | null) => value ?? "Sin usuario" },
+  { key: "servicesLabel", label: "Servicios que atiende" },
+  { key: "notifyNewAppointments", label: "Aviso de cada cita nueva", format: yesNo },
+  { key: "dailyAgenda", label: "Agenda del día por email", format: yesNo },
+  { key: "isActive", label: "Activo", format: yesNo },
+];
+
 /** El negocio con el nombre de su categoría y la ubicación en una sola clave. */
 export type BusinessForAudit = Business & { categoryName: string; location: string | null };
 
@@ -132,6 +159,7 @@ const BOOKING_FIELDS: ChangeField<BookingSettings>[] = [
     label: "Citas por día por cliente desde la página",
     format: (value: number) => (value === 0 ? "Sin límite" : String(value)),
   },
+  { key: "chooseProfessional", label: "El paciente elige con quién atenderse", format: yesNo },
 ];
 
 const NOTIFICATION_FIELDS: ChangeField<NotificationSettings>[] = [
@@ -155,6 +183,11 @@ const BUSINESS_FIELDS: ChangeField<BusinessForAudit>[] = [
   { key: "location", label: "Ubicación en el mapa", hideValues: true },
   { key: "logoUrl", label: "Logo", hideValues: true },
   { key: "clinicalRecordsEnabled", label: "Historia clínica", format: (value: boolean) => (value ? "Activada" : "Desactivada") },
+  {
+    key: "professionalScope",
+    label: "Pacientes que ve cada profesional",
+    format: (value: string) => (value === "own" ? "Sólo los suyos" : "Todos"),
+  },
   {
     key: "brandColors",
     label: "Colores de la marca",

@@ -26,6 +26,7 @@ const TABLES = [
   "services",
   "clients",
   "subscriptions",
+  "professional_services",
   "professionals",
   "business_users",
   "businesses",
@@ -156,14 +157,20 @@ async function seed() {
     await insertRows(
       db,
       "professionals",
-      ["id", "business_id", "user_id", "display_name", "title", "avatar_url"],
-      data.professionals.map((p) => [p.id, p.businessId, p.userId, p.displayName, p.title, p.avatarUrl]),
+      [
+        "id", "business_id", "user_id", "display_name", "title", "avatar_url", "color", "email", "all_services",
+        "notify_new_appointments", "daily_agenda", "is_active", "sort_order", "created_at",
+      ],
+      data.professionals.map((p) => [
+        p.id, p.businessId, p.userId, p.displayName, p.title, p.avatarUrl, p.color, p.email, p.allServices,
+        p.notifyNewAppointments, p.dailyAgenda, p.isActive, p.sortOrder, p.createdAt,
+      ]),
     );
     await insertRows(
       db,
       "subscriptions",
-      ["id", "business_id", "plan", "status", "current_period_end"],
-      data.subscriptions.map((s) => [s.id, s.businessId, s.plan, s.status, s.currentPeriodEnd]),
+      ["id", "business_id", "plan", "status", "current_period_end", "max_professionals"],
+      data.subscriptions.map((s) => [s.id, s.businessId, s.plan, s.status, s.currentPeriodEnd, s.maxProfessionals]),
     );
     await insertRows(
       db,
@@ -179,6 +186,12 @@ async function seed() {
     );
     await insertRows(
       db,
+      "professional_services",
+      ["professional_id", "service_id"],
+      data.professionals.flatMap((p) => p.serviceIds.map((serviceId) => [p.id, serviceId])),
+    );
+    await insertRows(
+      db,
       "clients",
       ["id", "business_id", "name", "document_id", "email", "phone", "address", "notes", "is_active", "created_at"],
       data.clients.map((c, index) => [
@@ -188,15 +201,15 @@ async function seed() {
     await insertRows(
       db,
       "schedules",
-      ["id", "business_id", "day_of_week", "is_active", "intervals"],
-      data.schedules.map((s) => [s.id, s.businessId, s.dayOfWeek, s.isActive, JSON.stringify(s.intervals)]),
+      ["id", "business_id", "professional_id", "day_of_week", "is_active", "intervals"],
+      data.schedules.map((s) => [s.id, s.businessId, s.professionalId, s.dayOfWeek, s.isActive, JSON.stringify(s.intervals)]),
     );
     await insertRows(
       db,
       "blocked_times",
-      ["id", "business_id", "reason", "start_date", "end_date", "all_day", "start_time", "end_time", "created_at"],
+      ["id", "business_id", "professional_id", "reason", "start_date", "end_date", "all_day", "start_time", "end_time", "created_at"],
       data.blockedTimes.map((t) => [
-        t.id, t.businessId, t.reason, t.startDate, t.endDate, t.allDay, t.startTime, t.endTime, t.createdAt,
+        t.id, t.businessId, t.professionalId, t.reason, t.startDate, t.endDate, t.allDay, t.startTime, t.endTime, t.createdAt,
       ]),
     );
     await insertRows(

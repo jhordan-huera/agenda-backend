@@ -25,6 +25,8 @@ export const appointmentSchema = z
     notes: optionalText(1000),
     /** null = en el local. */
     homeVisit: homeVisitSchema.nullable().default(null),
+    /** Agenda de la cita. Vacío: la de quien la crea o, si el negocio tiene una sola, esa. */
+    professionalId: z.string().default(""),
   })
   .refine(
     (data) => {

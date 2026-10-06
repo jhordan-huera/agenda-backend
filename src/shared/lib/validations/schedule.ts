@@ -33,6 +33,8 @@ export const weeklyScheduleSchema = z.array(scheduleDaySchema);
 
 export const blockedTimeSchema = z
   .object({
+    /** null: todo el negocio; si no, sólo la agenda de ese profesional. */
+    professionalId: z.string().nullable().default(null),
     reason: requiredText("El motivo"),
     allDay: z.boolean(),
     startDate: dateField,

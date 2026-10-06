@@ -87,6 +87,11 @@ export interface BookingSettings {
    * pública; 0 = sin límite. Desde el panel, el profesional agenda las que quiera.
    */
   maxClientBookingsPerDay: number;
+  /**
+   * Con varias agendas: el paciente elige con quién atenderse (o "el primero disponible"). false: no
+   * se le pregunta y la cita va al primer profesional libre.
+   */
+  chooseProfessional: boolean;
 }
 
 /** Qué emails automáticos se envían a los clientes. */
@@ -140,11 +145,19 @@ export interface Business {
   clinicalDefaultTemplateId: string | null;
   /** Colores del panel y de la página de reservas; null: los de Agenda360. */
   brandColors: BrandColors | null;
+  /** Qué pacientes ve quien tiene el rol Profesional: todos los del negocio o sólo los suyos. */
+  professionalScope: ProfessionalScope;
   createdAt: ISODateTime;
 }
 
-/** Roles dentro de un negocio (tabla business_users). */
-export type BusinessRole = "owner" | "admin" | "staff";
+/** "own": sólo los pacientes con citas en su agenda o que registró él. */
+export type ProfessionalScope = "all" | "own";
+
+/**
+ * Roles dentro de un negocio (tabla business_users). "staff" es Recepción (todas las agendas);
+ * "professional", quien sólo atiende su propia agenda.
+ */
+export type BusinessRole = "owner" | "admin" | "staff" | "professional";
 
 /** Pertenencia de un usuario a un negocio: base del multi-tenant y de los permisos. */
 export interface BusinessUser {
@@ -193,14 +206,34 @@ export interface ClientActivity {
   nextAppointment: Appointment | null;
 }
 
-/** Persona que atiende citas dentro de un negocio. Por ahora hay uno por negocio (el dueño). */
+/**
+ * Persona que atiende citas: cada una tiene su agenda (horario, bloqueos y servicios). Los planes
+ * Free y Pro tienen una; Business, las que se contraten.
+ */
 export interface Professional {
   id: string;
   businessId: string;
-  userId: string;
+  /** Miembro del equipo que usa esta agenda; null: profesional sin cuenta en el sistema. */
+  userId: string | null;
   displayName: string;
+  /** Especialidad que ven los pacientes: "Odontóloga", "Psicólogo clínico". */
   title: string;
   avatarUrl: string | null;
+  /** Color de sus citas en el calendario ("#rrggbb"). */
+  color: string;
+  /** A dónde se le avisa de sus citas ("" = sin avisos). */
+  email: string;
+  /** true: atiende todos los servicios; false: sólo los de `serviceIds`. */
+  allServices: boolean;
+  serviceIds: string[];
+  /** Email por cada cita nueva en su agenda que no creó él. */
+  notifyNewAppointments: boolean;
+  /** Email cada mañana con sus citas del día. */
+  dailyAgenda: boolean;
+  /** Inactivo: no recibe citas nuevas ni aparece en la página de reservas; su historial se conserva. */
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: ISODateTime;
 }
 
 export type PlanId = "free" | "pro" | "business";
@@ -212,6 +245,8 @@ export interface Subscription {
   plan: PlanId;
   status: SubscriptionStatus;
   currentPeriodEnd: ISODateTime | null;
+  /** Agendas contratadas (plan Business): las fija el super admin. null: las del plan. */
+  maxProfessionals: number | null;
 }
 
 /** Límites de un plan; `null` = ilimitado. */
@@ -219,15 +254,20 @@ export interface PlanLimits {
   appointmentsPerMonth: number | null;
   clients: number | null;
   users: number | null;
+  /** Agendas (profesionales activos). */
+  professionals: number | null;
 }
 
 export interface PlanUsage {
   plan: PlanId;
+  /** Los del plan, con las agendas contratadas del negocio si el super admin las fijó. */
   limits: PlanLimits;
   /** Citas no canceladas del mes en curso. */
   appointmentsThisMonth: number;
   clients: number;
   users: number;
+  /** Profesionales activos. */
+  professionals: number;
 }
 
 export interface Client {
@@ -305,6 +345,8 @@ export interface Appointment {
   /** null = en el local del negocio. */
   homeVisit: HomeVisitAddress | null;
   source: AppointmentSource;
+  /** Cuándo llegó el paciente (recepción lo marca); null: aún no llegó o no se registró. */
+  arrivedAt: ISODateTime | null;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
 }
@@ -321,6 +363,8 @@ export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 export interface Schedule {
   id: string;
   businessId: string;
+  /** Cada profesional tiene su horario. */
+  professionalId: string;
   dayOfWeek: DayOfWeek;
   isActive: boolean;
   intervals: TimeRange[];
@@ -333,6 +377,8 @@ export interface Schedule {
 export interface BlockedTime {
   id: string;
   businessId: string;
+  /** null: bloquea a todo el negocio (feriado, cierre); si no, sólo la agenda de ese profesional. */
+  professionalId: string | null;
   reason: string;
   startDate: ISODate;
   endDate: ISODate;
@@ -359,7 +405,9 @@ export type EmailType =
   | "plan_change_approved"
   | "plan_changed"
   | "plan_change_rejected"
-  | "platform_admin_added";
+  | "platform_admin_added"
+  | "professional_new_appointment"
+  | "professional_daily_agenda";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -384,6 +432,7 @@ export type AuditEntityType =
   | "service"
   | "schedule"
   | "blocked_time"
+  | "professional"
   | "business"
   | "team"
   | "subscription"
@@ -685,8 +734,6 @@ export interface PlatformSettings {
 export interface PlatformStats {
   businesses: { total: number; active: number; suspended: number; newThisMonth: number };
   businessesByPlan: Record<PlanId, number>;
-  /** Ingresos recurrentes mensuales: suma del precio de las suscripciones de pago activas. */
-  monthlyRecurringRevenue: number;
   users: number;
   appointmentsThisMonth: number;
   onlineBookingsThisMonth: number;
@@ -754,11 +801,15 @@ export interface RecoveryCodes {
 }
 
 /** Franja ocupada expuesta a la página pública: sin datos personales del cliente. */
-export type BusySlot = Pick<Appointment, "date" | "startTime" | "endTime">;
+export type BusySlot = Pick<Appointment, "date" | "startTime" | "endTime" | "professionalId">;
 
 /** El negocio en la página pública: sin datos internos (propietario, estado, avisos…). */
-export type PublicBusiness = Omit<Business, "ownerId" | "status" | "notificationSettings" | "clinicalRecordsEnabled" | "clinicalDefaultTemplateId" | "createdAt">;
-export type PublicProfessional = Omit<Professional, "userId">;
+export type PublicBusiness = Omit<
+  Business,
+  "ownerId" | "status" | "notificationSettings" | "clinicalRecordsEnabled" | "clinicalDefaultTemplateId" | "professionalScope" | "createdAt"
+>;
+/** Sin su cuenta, su email ni sus avisos. */
+export type PublicProfessional = Pick<Professional, "id" | "displayName" | "title" | "avatarUrl" | "allServices" | "serviceIds">;
 /** Con el precio oculto (`showPrice` false), `price` y `homeVisitFee` llegan a 0. */
 export type PublicService = Omit<Service, "clinicalTemplateId" | "isActive" | "createdAt">;
 /** Sin el motivo: el cliente sólo necesita saber que esas horas no están disponibles. */
@@ -767,6 +818,9 @@ export type PublicBlockedTime = Omit<BlockedTime, "reason" | "createdAt">;
 /** Información pública de un negocio para la página de reservas. */
 export interface PublicBusinessProfile {
   business: PublicBusiness;
+  /** Profesionales activos, en el orden del negocio. */
+  professionals: PublicProfessional[];
+  /** El primero de `professionals` (compatibilidad con páginas abiertas antes de las varias agendas). */
   professional: PublicProfessional;
   services: PublicService[];
   schedules: Schedule[];

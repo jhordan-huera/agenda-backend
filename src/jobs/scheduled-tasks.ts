@@ -2,10 +2,13 @@ import { many, one, pool, transaction } from "../db/pool.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
 import { deleteStalePendingAttachments } from "../services/clinical-attachment-service.ts";
 import { processEmailQueue, type EmailQueueReport } from "../services/mailer.ts";
-import { runReminderJob } from "../services/notifications.ts";
+import { runDailyAgendaJob, runReminderJob } from "../services/notifications.ts";
 import type { EmailType } from "../shared/types/index.ts";
 
-/** Pone en cola los recordatorios de citas de todos los negocios activos. Devuelve cuántos. */
+/**
+ * Pone en cola los recordatorios de citas de todos los negocios activos y, por la mañana, la agenda
+ * del día de los profesionales que la piden. Devuelve cuántos emails.
+ */
 export async function queueAllReminders(): Promise<number> {
   const businesses = await many<{ id: string }>(
     pool,
@@ -14,6 +17,13 @@ export async function queueAllReminders(): Promise<number> {
   );
   let queued = 0;
   for (const { id } of businesses) queued += await transaction((db) => runReminderJob(db, id));
+  const withDailyAgenda = await many<{ id: string }>(
+    pool,
+    `select distinct p.business_id as id
+       from professionals p join businesses b on b.id = p.business_id
+      where b.status = 'active' and p.is_active and p.daily_agenda and p.email <> ''`,
+  );
+  for (const { id } of withDailyAgenda) queued += await transaction((db) => runDailyAgendaJob(db, id));
   return queued;
 }
 

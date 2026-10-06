@@ -31,6 +31,8 @@ export interface Session {
   platformOwner: boolean;
   /** Puede ver historias clínicas: propietario o miembro autorizado (el super admin, en modo soporte). */
   clinicalAccess: boolean;
+  /** Su agenda activa en el negocio, si atiende citas. */
+  professionalId: string | null;
 }
 
 /** Token de sesión recién emitido: la ruta lo guarda en una cookie httpOnly. */
@@ -97,9 +99,17 @@ export async function findSessionByToken(token: string): Promise<RequestContext 
 
 async function resolveSession(db: Db, user: User): Promise<Session | null> {
   if (!user.isActive) return null;
-  const membership = await one<{ businessId: string; role: BusinessRole; status: BusinessStatus; clinicalAccess: boolean }>(
+  const membership = await one<{
+    businessId: string;
+    role: BusinessRole;
+    status: BusinessStatus;
+    clinicalAccess: boolean;
+    professionalId: string | null;
+  }>(
     db,
-    `select bu.business_id as "businessId", bu.role, b.status, bu.clinical_access as "clinicalAccess"
+    `select bu.business_id as "businessId", bu.role, b.status, bu.clinical_access as "clinicalAccess",
+            (select p.id from professionals p where p.business_id = bu.business_id and p.user_id = bu.user_id and p.is_active)
+              as "professionalId"
        from business_users bu
        join businesses b on b.id = bu.business_id
       where bu.user_id = $1
@@ -115,6 +125,7 @@ async function resolveSession(db: Db, user: User): Promise<Session | null> {
     platformRole: user.platformRole,
     platformOwner: user.platformOwner,
     clinicalAccess: membership ? membership.role === "owner" || membership.clinicalAccess : false,
+    professionalId: membership?.professionalId ?? null,
   };
 }
 

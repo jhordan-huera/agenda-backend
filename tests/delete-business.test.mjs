@@ -101,13 +101,13 @@ const leftovers = Object.fromEntries(
 ok(left("businesses", "id") === 0 && Object.values(leftovers).every((n) => n === 0), "no queda nada del negocio", leftovers);
 ok(count("select count(*) from clinical_template_versions v where not exists (select 1 from clinical_templates t where t.id = v.template_id)") === 0, "ni versiones de sus formatos");
 ok(!existsSync(file), "su archivo se borró del almacenamiento");
-ok(count("select count(*) from users where email in ('ricardo@demo.com', 'elena@demo.com')") === 0, "las cuentas de su equipo se eliminan");
+ok(count("select count(*) from users where email in ('ricardo@demo.com', 'elena@demo.com', 'valeria@demo.com')") === 0, "las cuentas de su equipo se eliminan");
 ok((await ricardo("GET", "/auth/session")).body === null && (await elena("GET", "/auth/session")).body === null, "y sus sesiones se cierran");
 ok((await login("ricardo@demo.com")).session?.error?.code !== undefined, "ya no pueden iniciar sesión");
 ok((await admin("GET", `/admin/businesses/${id}`)).body === null, "la ficha ya no existe");
 ok((await agent()("GET", `/public/businesses/${slug}`)).body === null, "su página de reservas tampoco");
 const logs = (await admin("GET", "/admin/audit-logs?scope=admin")).body.entries;
-ok(logs.some((l) => l.action === "platform.business_deleted" && l.summary.includes(name) && /2 cuentas/.test(l.summary)), "queda en la actividad de la plataforma", logs.slice(0, 2));
+ok(logs.some((l) => l.action === "platform.business_deleted" && l.summary.includes(name) && /3 cuentas/.test(l.summary)), "queda en la actividad de la plataforma", logs.slice(0, 2));
 r = await admin("DELETE", `/admin/businesses/${id}`, { confirmName: name });
 ok(r.status === 404, "eliminarlo otra vez → 404", r.body);
 

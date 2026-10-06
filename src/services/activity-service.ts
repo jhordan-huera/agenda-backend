@@ -10,6 +10,7 @@ const AUDIT_ENTITY_TYPES = [
   "service",
   "schedule",
   "blocked_time",
+  "professional",
   "business",
   "team",
   "subscription",

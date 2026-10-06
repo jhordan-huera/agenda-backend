@@ -1,15 +1,8 @@
-import {
-  appointmentColumns,
-  blockedTimeColumns,
-  businessColumns,
-  clientColumns,
-  professionalColumns,
-  serviceColumns,
-} from "../db/columns.ts";
+import { appointmentColumns, blockedTimeColumns, businessColumns, clientColumns, serviceColumns } from "../db/columns.ts";
 import { config } from "../config.ts";
 import { many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
-import { isSlotAvailable } from "../shared/lib/availability.ts";
+import { isSlotAvailable, offersService, scopeToProfessional } from "../shared/lib/availability.ts";
 import { DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY } from "../shared/lib/constants/business.ts";
 import { isPriceVisible } from "../shared/lib/format.ts";
 import { addMinutesToTime, getZonedNow } from "../shared/lib/time.ts";
@@ -37,34 +30,52 @@ import { lockBusiness, parseInput } from "./context.ts";
 import { listSchedules } from "./business-data-service.ts";
 import { notifyAppointmentChange } from "./notifications.ts";
 import { assertAppointmentLimit, assertClientLimit } from "./plan-limits.ts";
+import { listProfessionals } from "./professional-service.ts";
 
 /**
  * Página pública de reservas (/book/:slug), sin sesión. Sólo expone lo necesario:
  * las citas ocupadas se devuelven como franjas horarias, sin datos de otros clientes.
  */
 
-/** Un negocio suspendido no se distingue de uno inexistente (no se expone su estado). */
-async function findActiveBusiness(db: Db, slug: string) {
+/**
+ * Un negocio suspendido no se distingue de uno inexistente (no se expone su estado). Sólo cuentan
+ * los profesionales activos: los inactivos no reciben reservas.
+ */
+async function findActiveBusiness(db: Db, slug: string): Promise<{ business: Business; professionals: Professional[] } | null> {
   const business = await one<Business>(
     db,
     `select ${businessColumns()} from businesses where slug = $1 and status = 'active'`,
     [slug.trim().toLowerCase()],
   );
-  const professional =
-    business &&
-    (await one<Professional>(
-      db,
-      `select ${professionalColumns()} from professionals where business_id = $1 order by display_name limit 1`,
-      [business.id],
-    ));
-  return business && professional ? { business, professional } : null;
+  if (!business) return null;
+  const professionals = await listProfessionals(db, business.id, { activeOnly: true });
+  return professionals.length ? { business, professionals } : null;
 }
 
-/** Franjas ocupadas por citas activas desde `from` (y hasta `to`, si se indica). */
+/**
+ * "El primero disponible": los que tienen menos citas ese día van primero (así el trabajo se reparte);
+ * a igualdad, el orden del negocio.
+ */
+async function byLoadOnDate(db: Db, businessId: string, professionals: Professional[], date: ISODate) {
+  const rows = await many<{ id: string; count: number }>(
+    db,
+    `select professional_id as id, count(*)::int as count from appointments
+      where business_id = $1 and date = $2 and status in ('pending', 'confirmed', 'completed')
+      group by professional_id`,
+    [businessId, date],
+  );
+  const load = new Map(rows.map((row) => [row.id, row.count]));
+  return professionals
+    .map((professional, index) => ({ professional, index, count: load.get(professional.id) ?? 0 }))
+    .sort((a, b) => a.count - b.count || a.index - b.index)
+    .map((entry) => entry.professional);
+}
+
+/** Franjas ocupadas por citas activas desde `from` (y hasta `to`, si se indica), con su agenda. */
 async function busySlots(db: Db, businessId: string, from: ISODate, to?: ISODate): Promise<BusySlot[]> {
   return many<BusySlot>(
     db,
-    `select date, start_time as "startTime", end_time as "endTime" from appointments
+    `select date, start_time as "startTime", end_time as "endTime", professional_id as "professionalId" from appointments
       where business_id = $1 and date >= $2 and ($3::date is null or date <= $3::date)
         and status in ('pending', 'confirmed', 'completed')
       order by date, start_time`,
@@ -126,8 +137,10 @@ function toPublicBusiness({
   return business;
 }
 
-function toPublicProfessional({ userId: _user, ...professional }: Professional): PublicProfessional {
-  return professional;
+/** Sin su cuenta, su email ni sus avisos. */
+function toPublicProfessional(professional: Professional): PublicProfessional {
+  const { id, displayName, title, avatarUrl, allServices, serviceIds } = professional;
+  return { id, displayName, title, avatarUrl, allServices, serviceIds };
 }
 
 /** Con el precio oculto, ni el precio ni el recargo a domicilio salen del servidor. */
@@ -181,23 +194,31 @@ export const publicBookingService = {
     return { found: Boolean(client), greetingName: client ? greetingName(client.name) : null };
   },
 
+  /** Sólo los profesionales activos y los servicios que alguno de ellos atiende. */
   async getProfile(slug: string): Promise<PublicBusinessProfile | null> {
     const found = await findActiveBusiness(pool, slug);
     if (!found) return null;
-    const { business, professional } = found;
+    const { business, professionals } = found;
+    const active = new Set(professionals.map((professional) => professional.id));
     const today = getZonedNow(business.timezone).date;
     const services = await many<Service>(
       pool,
       `select ${serviceColumns()} from services where business_id = $1 and is_active order by created_at, name`,
       [business.id],
     );
+    const publicProfessionals = professionals.map(toPublicProfessional);
     return {
       business: toPublicBusiness(business),
-      professional: toPublicProfessional(professional),
-      services: services.map(toPublicService),
-      schedules: await listSchedules(pool, business.id),
-      blockedTimes: (await blockedTimesFrom(pool, business.id, today)).map(toPublicBlockedTime),
-      busySlots: await busySlots(pool, business.id, today),
+      professionals: publicProfessionals,
+      professional: publicProfessionals[0],
+      services: services
+        .filter((service) => professionals.some((professional) => offersService(professional, service.id)))
+        .map(toPublicService),
+      schedules: (await listSchedules(pool, business.id)).filter((schedule) => active.has(schedule.professionalId)),
+      blockedTimes: (await blockedTimesFrom(pool, business.id, today))
+        .filter((block) => block.professionalId === null || active.has(block.professionalId))
+        .map(toPublicBlockedTime),
+      busySlots: (await busySlots(pool, business.id, today)).filter((slot) => active.has(slot.professionalId)),
       captchaSiteKey: config.turnstile?.siteKey ?? null,
     };
   },
@@ -208,7 +229,7 @@ export const publicBookingService = {
     return transaction(async (db) => {
       const found = await findActiveBusiness(db, slug);
       if (!found) throw new AppError("not_found", "Esta página de reservas no está disponible.");
-      const { business, professional } = found;
+      const { business, professionals } = found;
       // Dos clientes que reservan la misma hora a la vez: el segundo espera y ve la hora ocupada.
       await lockBusiness(db, business.id);
 
@@ -226,14 +247,28 @@ export const publicBookingService = {
         throw new AppError("validation", "Marca en el mapa dónde será la visita a domicilio.");
       }
 
-      const available = isSlotAvailable(data.date, data.startTime, service.durationMinutes, {
+      // Con quién: el que eligió el paciente (si el negocio lo permite) o el primero libre a esa hora.
+      const candidates = professionals.filter((professional) => offersService(professional, service.id));
+      if (candidates.length === 0) throw new AppError("not_found", "El servicio ya no está disponible.");
+      let options = candidates;
+      if (data.professionalId && business.bookingSettings.chooseProfessional !== false) {
+        const chosen = candidates.find((professional) => professional.id === data.professionalId);
+        if (!chosen) throw new AppError("not_found", "Ese profesional ya no atiende este servicio. Por favor elige otro.");
+        options = [chosen];
+      } else {
+        options = await byLoadOnDate(db, business.id, candidates, data.date);
+      }
+      const availability = {
         schedules: await listSchedules(db, business.id),
         busySlots: await busySlots(db, business.id, data.date, data.date),
         blockedTimes: await blockedTimesFrom(db, business.id, data.date, data.date),
         settings: business.bookingSettings,
         now: getZonedNow(business.timezone),
-      });
-      if (!available) throw new AppError("conflict", "Esa hora acaba de ocuparse. Por favor elige otra.");
+      };
+      const professional = options.find((option) =>
+        isSlotAvailable(data.date, data.startTime, service.durationMinutes, scopeToProfessional(availability, option.id)),
+      );
+      if (!professional) throw new AppError("conflict", "Esa hora acaba de ocuparse. Por favor elige otra.");
       await withPublicLimitMessage(() => assertAppointmentLimit(db, business.id, data.date));
 
       // El cliente se identifica con su cédula: si ya existe en el negocio se reutiliza (sin tocar
