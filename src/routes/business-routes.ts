@@ -11,7 +11,9 @@ import {
   clientService,
   scheduleService,
   serviceService,
+  setAppointmentArrival,
 } from "../services/business-data-service.ts";
+import { professionalService } from "../services/professional-service.ts";
 
 /* ------------------------------------------------------------ /api/users ---- */
 
@@ -56,6 +58,28 @@ businessRoutes.patch(
 businessRoutes.get(
   "/:businessId/professional",
   handle((req) => businessService.getProfessional(req.ctx, req.params.businessId)),
+);
+
+// Profesionales (agendas): los ve todo el equipo; los gestionan el propietario y los administradores.
+businessRoutes.get(
+  "/:businessId/professionals",
+  handle((req) => professionalService.list(req.ctx, req.params.businessId)),
+);
+businessRoutes.post(
+  "/:businessId/professionals",
+  handle((req) => professionalService.create(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.put(
+  "/:businessId/professionals/:professionalId",
+  handle((req) => professionalService.update(req.ctx, req.params.businessId, req.params.professionalId, req.body)),
+);
+businessRoutes.delete(
+  "/:businessId/professionals/:professionalId",
+  handle((req) => professionalService.remove(req.ctx, req.params.businessId, req.params.professionalId)),
+);
+businessRoutes.put(
+  "/:businessId/professionals/:professionalId/schedule",
+  handle((req) => scheduleService.saveWeek(req.ctx, req.params.businessId, req.body, req.params.professionalId)),
 );
 
 // Equipo
@@ -224,6 +248,10 @@ businessRoutes.patch(
   handle((req) =>
     appointmentService.updateStatus(req.ctx, req.params.businessId, req.params.appointmentId, req.body?.status),
   ),
+);
+businessRoutes.patch(
+  "/:businessId/appointments/:appointmentId/arrival",
+  handle((req) => setAppointmentArrival(req.ctx, req.params.businessId, req.params.appointmentId, req.body?.arrived)),
 );
 businessRoutes.post(
   "/:businessId/appointments/:appointmentId/whatsapp-notice",

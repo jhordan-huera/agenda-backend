@@ -1,11 +1,4 @@
-import {
-  appointmentColumns,
-  blockedTimeColumns,
-  clientColumns,
-  professionalColumns,
-  scheduleColumns,
-  serviceColumns,
-} from "../db/columns.ts";
+import { appointmentColumns, blockedTimeColumns, clientColumns, scheduleColumns, serviceColumns } from "../db/columns.ts";
 import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
@@ -18,6 +11,7 @@ import { clientSchema } from "../shared/lib/validations/client.ts";
 import { dateField } from "../shared/lib/validations/fields.ts";
 import { blockedTimeSchema, weeklyScheduleSchema } from "../shared/lib/validations/schedule.ts";
 import { serviceSchema } from "../shared/lib/validations/service.ts";
+import { z } from "zod";
 import type {
   Appointment,
   AppointmentStatus,
@@ -26,7 +20,6 @@ import type {
   ClientActivity,
   HomeVisitAddress,
   ISODate,
-  Professional,
   Schedule,
   Service,
   WhatsAppNoticeKind,
@@ -41,9 +34,17 @@ import {
   type AppointmentForAudit,
   type ServiceForAudit,
 } from "./audit-changes.ts";
-import { authorize, parseInput, type RequestContext } from "./context.ts";
+import {
+  agendaScope,
+  assertAppointmentInScope,
+  assertClientInScope,
+  ownClientCondition,
+  type AgendaScope,
+} from "./agenda-scope.ts";
+import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
 import { notifyAppointmentChange } from "./notifications.ts";
 import { assertAppointmentLimit, assertClientLimit } from "./plan-limits.ts";
+import { findProfessional, listProfessionals } from "./professional-service.ts";
 
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, "es");
 
@@ -73,9 +74,16 @@ async function assertValidClientDocument(db: Db, businessId: string, documentId:
 }
 
 export const clientService = {
+  /** Con el rol Profesional y "sólo sus pacientes", únicamente los suyos. */
   async list(ctx: RequestContext, businessId: string): Promise<Client[]> {
-    await authorize(pool, ctx, businessId);
-    const clients = await many<Client>(pool, `select ${clientColumns()} from clients where business_id = $1`, [businessId]);
+    const actor = await authorize(pool, ctx, businessId);
+    const own = (await agendaScope(pool, actor, businessId)).ownClients;
+    const clients = await many<Client>(
+      pool,
+      `select ${clientColumns("c")} from clients c
+        where c.business_id = $1 ${own ? `and ${ownClientCondition("c", 2, 3)}` : ""}`,
+      own ? [businessId, own.professionalId, own.userId] : [businessId],
+    );
     return clients.sort(byName);
   },
 
@@ -84,7 +92,9 @@ export const clientService = {
    * calculado en la base: la lista de clientes y los reportes no descargan todo el historial.
    */
   async activity(ctx: RequestContext, businessId: string): Promise<ClientActivity[]> {
-    await authorize(pool, ctx, businessId);
+    const actor = await authorize(pool, ctx, businessId);
+    // El rol Profesional ve el resumen de las citas de su agenda.
+    const { professionalId } = await agendaScope(pool, actor, businessId);
     const business = await one<{ timezone: string }>(pool, "select timezone from businesses where id = $1", [businessId]);
     const now = getZonedNow(business?.timezone ?? DEFAULT_TIMEZONE);
     const nowTime = minutesToTime(now.minutes);
@@ -98,25 +108,27 @@ export const clientService = {
               count(*) filter (where status = 'no_show')::int as "noShow",
               coalesce(sum(price) filter (where status = 'completed'), 0) as "totalSpent",
               to_char(min(date) filter (where status <> 'cancelled'), 'YYYY-MM-DD') as "firstVisit"
-         from appointments where business_id = $1
+         from appointments where business_id = $1 and ($2::uuid is null or professional_id = $2::uuid)
         group by client_id`,
-      [businessId],
+      [businessId, professionalId],
     );
     const last = await many<Appointment>(
       pool,
       `select distinct on (a.client_id) ${appointmentColumns("a")}
          from appointments a
         where a.business_id = $1 and a.status <> 'cancelled' and ${past}
+          and ($4::uuid is null or a.professional_id = $4::uuid)
         order by a.client_id, a.date desc, a.start_time desc`,
-      [businessId, now.date, nowTime],
+      [businessId, now.date, nowTime, professionalId],
     );
     const next = await many<Appointment>(
       pool,
       `select distinct on (a.client_id) ${appointmentColumns("a")}
          from appointments a
         where a.business_id = $1 and a.status in ('pending', 'confirmed', 'completed') and not ${past}
+          and ($4::uuid is null or a.professional_id = $4::uuid)
         order by a.client_id, a.date, a.start_time`,
-      [businessId, now.date, nowTime],
+      [businessId, now.date, nowTime, professionalId],
     );
     const lastByClient = new Map(last.map((appointment) => [appointment.clientId, appointment]));
     const nextByClient = new Map(next.map((appointment) => [appointment.clientId, appointment]));
@@ -128,12 +140,15 @@ export const clientService = {
   },
 
   async getById(ctx: RequestContext, businessId: string, clientId: string): Promise<Client | null> {
-    await authorize(pool, ctx, businessId);
+    const actor = await authorize(pool, ctx, businessId);
     if (!isUuid(clientId)) return null;
-    return one<Client>(pool, `select ${clientColumns()} from clients where id = $1 and business_id = $2`, [
-      clientId,
-      businessId,
-    ]);
+    const own = (await agendaScope(pool, actor, businessId)).ownClients;
+    return one<Client>(
+      pool,
+      `select ${clientColumns("c")} from clients c
+        where c.id = $1 and c.business_id = $2 ${own ? `and ${ownClientCondition("c", 3, 4)}` : ""}`,
+      own ? [clientId, businessId, own.professionalId, own.userId] : [clientId, businessId],
+    );
   },
 
   async create(ctx: RequestContext, businessId: string, input: unknown): Promise<Client> {
@@ -146,10 +161,10 @@ export const clientService = {
       await assertClientLimit(db, businessId);
       const client = (await one<Client>(
         db,
-        `insert into clients (business_id, name, document_id, email, phone, address, notes, is_active)
-         values ($1, $2, $3, $4, $5, $6, $7, $8)
+        `insert into clients (business_id, name, document_id, email, phone, address, notes, is_active, created_by)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          returning ${clientColumns()}`,
-        [businessId, data.name, data.documentId, data.email, data.phone, data.address, data.notes, data.isActive],
+        [businessId, data.name, data.documentId, data.email, data.phone, data.address, data.notes, data.isActive, actor.userId],
       ))!;
       await logAudit(db, {
         businessId,
@@ -168,6 +183,7 @@ export const clientService = {
       const actor = await authorize(db, ctx, businessId, "clients.manage", { lock: true });
       const data = parseInput(clientSchema, input);
       const current = await findOwned<Client>(db, "clients", clientColumns(), businessId, clientId, "Cliente no encontrado.");
+      await assertClientInScope(db, await agendaScope(db, actor, businessId), clientId);
       // Clientes antiguos sin cédula o sin email pueden seguir así hasta que se completen; una vez
       // puestos, no se quitan (el formulario del panel ya los exige al editar).
       if (!data.documentId && current.documentId) {
@@ -358,22 +374,67 @@ export interface AppointmentFilters {
   clientId?: string;
 }
 
-/** Otra cita activa que se solapa con esta (intervalos semiabiertos: 09:00–10:00 y 10:00–11:00 no chocan). */
+/**
+ * Otra cita activa del mismo profesional que se solapa con esta (intervalos semiabiertos: 09:00–10:00 y
+ * 10:00–11:00 no chocan). Dos profesionales sí pueden atender a la misma hora.
+ */
 async function assertNoConflict(db: Db, appointment: Appointment) {
   if (!BLOCKING_STATUSES.has(appointment.status)) return;
   const conflict = await one<Pick<Appointment, "startTime" | "endTime">>(
     db,
     `select start_time as "startTime", end_time as "endTime" from appointments
-      where business_id = $1 and date = $2 and id <> $3
+      where business_id = $1 and professional_id = $6 and date = $2 and id <> $3
         and status in ('pending', 'confirmed', 'completed')
         and start_time < $5::time and $4::time < end_time
       order by start_time
       limit 1`,
-    [appointment.businessId, appointment.date, appointment.id, appointment.startTime, appointment.endTime],
+    [
+      appointment.businessId,
+      appointment.date,
+      appointment.id,
+      appointment.startTime,
+      appointment.endTime,
+      appointment.professionalId,
+    ],
   );
   if (conflict) {
-    throw new AppError("conflict", `Ya existe una cita de ${formatTimeRange(conflict.startTime, conflict.endTime)} ese día.`);
+    throw new AppError(
+      "conflict",
+      `Ya existe una cita de ${formatTimeRange(conflict.startTime, conflict.endTime)} ese día en esa agenda.`,
+    );
   }
+}
+
+/**
+ * Agenda de una cita creada desde el panel. El rol Profesional sólo agenda en la suya. Si no se eligió:
+ * la de quien la crea o, si el negocio tiene una sola activa, esa.
+ */
+async function resolveAppointmentProfessional(
+  db: Db,
+  businessId: string,
+  actor: Actor,
+  scope: AgendaScope,
+  requested: string,
+): Promise<string> {
+  if (scope.professionalId) {
+    if (requested && requested !== scope.professionalId) {
+      throw new AppError("forbidden", "Sólo puedes agendar citas en tu propia agenda.");
+    }
+    return scope.professionalId;
+  }
+  if (requested) {
+    const professional = await findProfessional(db, businessId, requested);
+    if (!professional.isActive) {
+      throw new AppError("validation", `${professional.displayName} está inactivo: elige otro profesional.`);
+    }
+    return professional.id;
+  }
+  const active = await listProfessionals(db, businessId, { activeOnly: true });
+  const own = active.find((professional) => professional.userId === actor.userId);
+  if (own) return own.id;
+  if (active.length === 1) return active[0].id;
+  if (active.length === 0) throw new AppError("not_found", "El negocio no tiene profesionales activos.");
+  throw new AppError("validation", "Elige el profesional de la cita.");
 }
 
 /** Una cita pasa a ocupar cupo del plan si se reactiva o se mueve a otro mes. */
@@ -398,6 +459,8 @@ async function buildAppointmentFields(db: Db, businessId: string, input: unknown
     notes: data.notes,
     price: data.price,
     homeVisit: data.homeVisit,
+    /** Vacío: sin elegir (ver resolveAppointmentProfessional). */
+    requestedProfessionalId: data.professionalId,
   };
 }
 
@@ -410,7 +473,7 @@ async function saveAppointment(db: Db, appointment: Appointment): Promise<Appoin
     db,
     `update appointments
         set client_id = $2, service_id = $3, date = $4, start_time = $5, end_time = $6,
-            status = $7, notes = $8, price = $9, home_visit = $10, updated_at = now()
+            status = $7, notes = $8, price = $9, home_visit = $10, professional_id = $11, updated_at = now()
       where id = $1
       returning ${appointmentColumns()}`,
     [
@@ -424,6 +487,7 @@ async function saveAppointment(db: Db, appointment: Appointment): Promise<Appoin
       appointment.notes,
       appointment.price,
       homeVisitJson(appointment.homeVisit),
+      appointment.professionalId,
     ],
   ))!;
 }
@@ -467,8 +531,10 @@ const STATUS_VERBS: Record<AppointmentStatus, string> = {
 };
 
 export const appointmentService = {
+  /** El rol Profesional sólo recibe las citas de su agenda (y así también sus reportes). */
   async list(ctx: RequestContext, businessId: string, filters: AppointmentFilters = {}): Promise<Appointment[]> {
-    await authorize(pool, ctx, businessId);
+    const actor = await authorize(pool, ctx, businessId);
+    const { professionalId } = await agendaScope(pool, actor, businessId);
     const from = filters.from ? parseInput(dateField, filters.from) : null;
     const to = filters.to ? parseInput(dateField, filters.to) : null;
     if (filters.clientId && !isUuid(filters.clientId)) return [];
@@ -479,39 +545,41 @@ export const appointmentService = {
           and ($2::date is null or date >= $2::date)
           and ($3::date is null or date <= $3::date)
           and ($4::uuid is null or client_id = $4::uuid)
+          and ($5::uuid is null or professional_id = $5::uuid)
         order by date, start_time`,
-      [businessId, from, to, filters.clientId ?? null],
+      [businessId, from, to, filters.clientId ?? null, professionalId],
     );
   },
 
   /** Una cita (el detalle se abre sin descargar la agenda entera). */
   async getById(ctx: RequestContext, businessId: string, appointmentId: string): Promise<Appointment | null> {
-    await authorize(pool, ctx, businessId);
+    const actor = await authorize(pool, ctx, businessId);
     if (!isUuid(appointmentId)) return null;
-    return one<Appointment>(pool, `select ${appointmentColumns()} from appointments where id = $1 and business_id = $2`, [
-      appointmentId,
-      businessId,
-    ]);
+    const { professionalId } = await agendaScope(pool, actor, businessId);
+    return one<Appointment>(
+      pool,
+      `select ${appointmentColumns()} from appointments
+        where id = $1 and business_id = $2 and ($3::uuid is null or professional_id = $3::uuid)`,
+      [appointmentId, businessId, professionalId],
+    );
   },
 
   /** Falla con `conflict` si se solapa con otra cita activa y con `plan_limit` si se superó el plan. */
   async create(ctx: RequestContext, businessId: string, input: unknown): Promise<Appointment> {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "appointments.manage", { lock: true });
-      const fields = await buildAppointmentFields(db, businessId, input);
-      const professional = await one<Professional>(
-        db,
-        `select ${professionalColumns()} from professionals where business_id = $1 order by display_name limit 1`,
-        [businessId],
-      );
-      if (!professional) throw new AppError("not_found", "El negocio no tiene profesionales.");
+      const scope = await agendaScope(db, actor, businessId);
+      const { requestedProfessionalId, ...fields } = await buildAppointmentFields(db, businessId, input);
+      await assertClientInScope(db, scope, fields.clientId);
+      const professionalId = await resolveAppointmentProfessional(db, businessId, actor, scope, requestedProfessionalId);
 
       const draft: Appointment = {
         id: "00000000-0000-0000-0000-000000000000",
         businessId,
-        professionalId: professional.id,
+        professionalId,
         ...fields,
         source: "dashboard",
+        arrivedAt: null,
         createdAt: "",
         updatedAt: "",
       };
@@ -529,7 +597,7 @@ export const appointmentService = {
           businessId,
           fields.clientId,
           fields.serviceId,
-          professional.id,
+          professionalId,
           fields.date,
           fields.startTime,
           fields.endTime,
@@ -539,7 +607,7 @@ export const appointmentService = {
           homeVisitJson(fields.homeVisit),
         ],
       ))!;
-      await notifyAppointmentChange(db, null, appointment, "dashboard");
+      await notifyAppointmentChange(db, null, appointment, "dashboard", actor.userId);
       await logAudit(db, {
         businessId,
         actor,
@@ -563,11 +631,20 @@ export const appointmentService = {
         appointmentId,
         "Cita no encontrada.",
       );
-      const updated: Appointment = { ...before, ...(await buildAppointmentFields(db, businessId, input)) };
+      const scope = await agendaScope(db, actor, businessId);
+      assertAppointmentInScope(scope, before);
+      const { requestedProfessionalId, ...fields } = await buildAppointmentFields(db, businessId, input);
+      if (fields.clientId !== before.clientId) await assertClientInScope(db, scope, fields.clientId);
+      // Cambiar de agenda (reasignar a otro profesional): sólo a una activa y no para el rol Profesional.
+      const professionalId =
+        requestedProfessionalId && requestedProfessionalId !== before.professionalId
+          ? await resolveAppointmentProfessional(db, businessId, actor, scope, requestedProfessionalId)
+          : before.professionalId;
+      const updated: Appointment = { ...before, ...fields, professionalId };
       await assertNoConflict(db, updated);
       await assertLimitOnChange(db, before, updated);
       const appointment = await saveAppointment(db, updated);
-      await notifyAppointmentChange(db, before, appointment, "dashboard");
+      await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
 
       const rescheduled = before.date !== appointment.date || before.startTime !== appointment.startTime;
       await logAudit(db, {
@@ -597,11 +674,12 @@ export const appointmentService = {
         appointmentId,
         "Cita no encontrada.",
       );
+      assertAppointmentInScope(await agendaScope(db, actor, businessId), before);
       const updated: Appointment = { ...before, status: nextStatus };
       await assertNoConflict(db, updated);
       await assertLimitOnChange(db, before, updated);
       const appointment = await saveAppointment(db, updated);
-      await notifyAppointmentChange(db, before, appointment, "dashboard");
+      await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
       await logAudit(db, {
         businessId,
         actor,
@@ -631,6 +709,7 @@ export const appointmentService = {
         appointmentId,
         "Cita no encontrada.",
       );
+      assertAppointmentInScope(await agendaScope(db, actor, businessId), appointment);
       await logAudit(db, {
         businessId,
         actor,
@@ -643,6 +722,42 @@ export const appointmentService = {
   },
 };
 
+/**
+ * Llegada del paciente (control de asistencia): recepción la marca al verlo en la sala de espera y
+ * puede quitarla si se equivocó. Sólo en citas pendientes o confirmadas.
+ */
+export async function setAppointmentArrival(
+  ctx: RequestContext,
+  businessId: string,
+  appointmentId: string,
+  arrived: unknown,
+): Promise<Appointment> {
+  const value = parseInput(z.boolean({ error: "Indica si el paciente llegó" }), arrived);
+  return transaction(async (db) => {
+    const actor = await authorize(db, ctx, businessId, "appointments.manage", { lock: true });
+    const before = await findOwned<Appointment>(db, "appointments", appointmentColumns(), businessId, appointmentId, "Cita no encontrada.");
+    assertAppointmentInScope(await agendaScope(db, actor, businessId), before);
+    if (value && !["pending", "confirmed"].includes(before.status)) {
+      throw new AppError("conflict", "Sólo se marca la llegada en citas pendientes o confirmadas.");
+    }
+    const appointment = (await one<Appointment>(
+      db,
+      `update appointments set arrived_at = ${value ? "now()" : "null"}, updated_at = now()
+        where id = $1 returning ${appointmentColumns()}`,
+      [appointmentId],
+    ))!;
+    await logAudit(db, {
+      businessId,
+      actor,
+      action: value ? "appointment.arrived" : "appointment.arrival_cleared",
+      entityType: "appointment",
+      entityId: appointmentId,
+      summary: `${value ? "Marcó la llegada de" : "Quitó la llegada de"} ${await describeAppointment(db, appointment)}`,
+    });
+    return appointment;
+  });
+}
+
 /** "Abrió WhatsApp para avisar que la cita está confirmada a María (06/10/2026 10:00)". */
 const WHATSAPP_NOTICE_LABELS: Record<WhatsAppNoticeKind, string> = {
   confirmed: "que la cita está confirmada",
@@ -654,44 +769,67 @@ const WHATSAPP_NOTICE_LABELS: Record<WhatsAppNoticeKind, string> = {
 
 /* --------------------------------- Horarios ---------------------------------- */
 
-export async function listSchedules(db: Db, businessId: string): Promise<Schedule[]> {
-  return many<Schedule>(db, `select ${scheduleColumns()} from schedules where business_id = $1 order by day_of_week`, [
-    businessId,
-  ]);
+/** Horarios de todas las agendas del negocio (o de una). */
+export async function listSchedules(db: Db, businessId: string, professionalId?: string | null): Promise<Schedule[]> {
+  return many<Schedule>(
+    db,
+    `select ${scheduleColumns()} from schedules
+      where business_id = $1 and ($2::uuid is null or professional_id = $2::uuid)
+      order by professional_id, day_of_week`,
+    [businessId, professionalId ?? null],
+  );
 }
 
 export const scheduleService = {
+  /** El rol Profesional sólo ve el suyo. */
   async list(ctx: RequestContext, businessId: string): Promise<Schedule[]> {
-    await authorize(pool, ctx, businessId);
-    return listSchedules(pool, businessId);
+    const actor = await authorize(pool, ctx, businessId);
+    return listSchedules(pool, businessId, (await agendaScope(pool, actor, businessId)).professionalId);
   },
 
-  async saveWeek(ctx: RequestContext, businessId: string, days: unknown): Promise<Schedule[]> {
+  /**
+   * Horario semanal de un profesional. Sin `professionalId` (versiones anteriores del panel): el de quien
+   * guarda o, si no atiende, el primer profesional activo.
+   */
+  async saveWeek(ctx: RequestContext, businessId: string, days: unknown, requestedProfessionalId?: string): Promise<Schedule[]> {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "schedule.manage", { lock: true });
+      const scope = await agendaScope(db, actor, businessId);
       const week = parseInput(weeklyScheduleSchema, days);
       if (new Set(week.map((day) => day.dayOfWeek)).size !== week.length) {
         throw new AppError("validation", "Cada día de la semana sólo puede aparecer una vez.");
       }
-      const previousWeek = await listSchedules(db, businessId);
-      await db.query("delete from schedules where business_id = $1", [businessId]);
+      const professionalId = requestedProfessionalId
+        ? (await findProfessional(db, businessId, requestedProfessionalId)).id
+        : await resolveAppointmentProfessional(db, businessId, actor, scope, "").catch(async () => {
+            const [first] = await listProfessionals(db, businessId, { activeOnly: true });
+            if (!first) throw new AppError("not_found", "El negocio no tiene profesionales activos.");
+            return first.id;
+          });
+      if (scope.professionalId && professionalId !== scope.professionalId) {
+        throw new AppError("forbidden", "Sólo puedes cambiar tu propio horario.");
+      }
+      const professional = await findProfessional(db, businessId, professionalId);
+      const previousWeek = await listSchedules(db, businessId, professionalId);
+      await db.query("delete from schedules where professional_id = $1", [professionalId]);
       for (const day of week) {
         const intervals = [...day.intervals].sort((a, b) => a.start.localeCompare(b.start));
         await db.query(
-          "insert into schedules (business_id, day_of_week, is_active, intervals) values ($1, $2, $3, $4)",
-          [businessId, day.dayOfWeek, day.isActive, JSON.stringify(intervals)],
+          "insert into schedules (business_id, professional_id, day_of_week, is_active, intervals) values ($1, $2, $3, $4, $5)",
+          [businessId, professionalId, day.dayOfWeek, day.isActive, JSON.stringify(intervals)],
         );
       }
+      const savedWeek = await listSchedules(db, businessId, professionalId);
       await logAudit(db, {
         businessId,
         actor,
         action: "schedule.updated",
         entityType: "schedule",
-        entityId: null,
-        summary: "Actualizó el horario semanal",
-        changes: scheduleChanges(previousWeek, await listSchedules(db, businessId)),
+        entityId: professionalId,
+        summary: `Actualizó el horario semanal de ${professional.displayName}`,
+        changes: scheduleChanges(previousWeek, savedWeek),
       });
-      return listSchedules(db, businessId);
+      return savedWeek;
     });
   },
 };
@@ -699,23 +837,34 @@ export const scheduleService = {
 /* --------------------------------- Bloqueos ---------------------------------- */
 
 export const blockedTimeService = {
+  /** Los de todo el negocio y los de cada agenda (el rol Profesional: los generales y los suyos). */
   async list(ctx: RequestContext, businessId: string): Promise<BlockedTime[]> {
-    await authorize(pool, ctx, businessId);
+    const actor = await authorize(pool, ctx, businessId);
+    const { professionalId } = await agendaScope(pool, actor, businessId);
     return many<BlockedTime>(
       pool,
-      `select ${blockedTimeColumns()} from blocked_times where business_id = $1 order by start_date, start_time nulls first`,
-      [businessId],
+      `select ${blockedTimeColumns()} from blocked_times
+        where business_id = $1 and ($2::uuid is null or professional_id is null or professional_id = $2::uuid)
+        order by start_date, start_time nulls first`,
+      [businessId, professionalId],
     );
   },
 
+  /** El rol Profesional sólo bloquea su agenda; los bloqueos de todo el negocio son de los administradores. */
   async create(ctx: RequestContext, businessId: string, input: unknown): Promise<BlockedTime> {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "schedule.manage", { lock: true });
+      const scope = await agendaScope(db, actor, businessId);
       const data = parseInput(blockedTimeSchema, input);
+      if (scope.professionalId && data.professionalId !== scope.professionalId) {
+        if (data.professionalId) throw new AppError("forbidden", "Sólo puedes bloquear tu propia agenda.");
+        data.professionalId = scope.professionalId;
+      }
+      const professional = data.professionalId ? await findProfessional(db, businessId, data.professionalId) : null;
       const blockedTime = (await one<BlockedTime>(
         db,
-        `insert into blocked_times (business_id, reason, start_date, end_date, all_day, start_time, end_time)
-         values ($1, $2, $3, $4, $5, $6, $7)
+        `insert into blocked_times (business_id, reason, start_date, end_date, all_day, start_time, end_time, professional_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8)
          returning ${blockedTimeColumns()}`,
         [
           businessId,
@@ -725,6 +874,7 @@ export const blockedTimeService = {
           data.allDay,
           data.allDay ? null : data.startTime,
           data.allDay ? null : data.endTime,
+          professional?.id ?? null,
         ],
       ))!;
       const range =
@@ -737,7 +887,7 @@ export const blockedTimeService = {
         action: "blocked_time.created",
         entityType: "blocked_time",
         entityId: blockedTime.id,
-        summary: `Bloqueó la agenda: ${data.reason} (${range}${data.allDay ? "" : `, ${data.startTime}–${data.endTime}`})`,
+        summary: `Bloqueó ${professional ? `la agenda de ${professional.displayName}` : "la agenda de todo el negocio"}: ${data.reason} (${range}${data.allDay ? "" : `, ${data.startTime}–${data.endTime}`})`,
       });
       return blockedTime;
     });
@@ -749,11 +899,15 @@ export const blockedTimeService = {
       const block = await findOwned<BlockedTime>(
         db,
         "blocked_times",
-        "reason",
+        blockedTimeColumns(),
         businessId,
         blockedTimeId,
         "Bloqueo no encontrado.",
       );
+      const { professionalId } = await agendaScope(db, actor, businessId);
+      if (professionalId && block.professionalId !== professionalId) {
+        throw new AppError("forbidden", "Sólo puedes quitar los bloqueos de tu propia agenda.");
+      }
       await db.query("delete from blocked_times where id = $1", [blockedTimeId]);
       await logAudit(db, {
         businessId,

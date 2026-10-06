@@ -81,6 +81,7 @@ export const DEFAULT_BOOKING_SETTINGS: BookingSettings = {
   cancellationNoticeHours: 24,
   cancellationPolicy: "Puedes cancelar o reprogramar tu cita sin costo hasta 24 horas antes.",
   maxClientBookingsPerDay: DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY,
+  chooseProfessional: true,
 };
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {

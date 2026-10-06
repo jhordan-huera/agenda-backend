@@ -95,6 +95,17 @@ type ServiceSeed = [
 /** Emails de clientes con el dominio reservado example.com: el servidor nunca les envía nada. */
 type ClientSeed = [name: string, email: string, phone: string, notes?: string, isActive?: boolean, address?: string];
 type MemberSeed = { firstName: string; lastName: string; email: string; role: Exclude<BusinessRole, "owner"> };
+/** Otra agenda del negocio (plan Business). Con `member`, el profesional entra al sistema con el rol Profesional. */
+interface ExtraProfessionalSeed {
+  displayName: string;
+  title: string;
+  color: string;
+  member?: { firstName: string; lastName: string; email: string };
+  /** Nombres de los servicios que atiende (sin la lista: todos). */
+  services?: string[];
+  weeklyHours: Partial<Record<DayOfWeek, TimeRange[]>>;
+  load: number;
+}
 type FixedAppointment = [time: string, clientName: string, serviceName: string, status: AppointmentStatus];
 
 interface TenantSeed {
@@ -111,12 +122,16 @@ interface TenantSeed {
   status?: BusinessStatus;
   members: MemberSeed[];
   professionalTitle: string;
+  /** Agendas además de la del dueño, y cuántas contrató el negocio (Business). */
+  extraProfessionals?: ExtraProfessionalSeed[];
+  maxProfessionals?: number;
   services: ServiceSeed[];
   clients: ClientSeed[];
   weeklyHours: Partial<Record<DayOfWeek, TimeRange[]>>;
   /** Probabilidad de ocupar cada hueco del horario (0–1). */
   load: number;
-  blockedTimes: (today: ISODate) => Omit<BlockedTime, "id" | "businessId" | "createdAt">[];
+  /** Bloqueos de todo el negocio. */
+  blockedTimes: (today: ISODate) => Omit<BlockedTime, "id" | "businessId" | "createdAt" | "professionalId">[];
   todayAppointments?: FixedAppointment[];
 }
 
@@ -234,10 +249,35 @@ const TENANTS: TenantSeed[] = [
     createdByAdmin: true,
     members: [{ firstName: "Elena", lastName: "Suárez", email: "elena@demo.com", role: "staff" }],
     professionalTitle: "Odontólogo",
+    maxProfessionals: 3,
+    extraProfessionals: [
+      {
+        displayName: "Dra. Valeria Cruz",
+        title: "Ortodoncista",
+        color: "#b0478f",
+        member: { firstName: "Valeria", lastName: "Cruz", email: "valeria@demo.com" },
+        services: ["Consulta odontológica", "Control de ortodoncia"],
+        weeklyHours: {
+          1: [{ start: "09:00", end: "13:00" }],
+          3: [{ start: "09:00", end: "13:00" }, { start: "14:00", end: "18:00" }],
+          5: [{ start: "14:00", end: "18:00" }],
+        },
+        load: 0.3,
+      },
+      {
+        displayName: "Dr. Andrés Vega",
+        title: "Odontopediatra",
+        color: "#2f8f6b",
+        services: ["Limpieza dental", "Consulta odontológica"],
+        weeklyHours: { 2: [{ start: "14:00", end: "18:00" }], 4: [{ start: "14:00", end: "18:00" }], 6: [{ start: "09:00", end: "13:00" }] },
+        load: 0.25,
+      },
+    ],
     services: [
       ["Limpieza dental", "Profilaxis y pulido.", 45, 35],
       ["Consulta odontológica", "Revisión y diagnóstico.", 30, 20],
       ["Blanqueamiento", "Blanqueamiento en consultorio.", 90, 120],
+      ["Control de ortodoncia", "Ajuste de brackets y seguimiento.", 30, 40],
     ],
     clients: [
       ["Marco Jiménez", "marco.jimenez@example.com", "+593 99 501 0001"],
@@ -457,15 +497,18 @@ function seedTenant(
     clinicalRecordsEnabled: isHealthCategory(tenant.business.category),
     clinicalDefaultTemplateId: null,
     brandColors: null,
+    professionalScope: "all",
     createdAt,
   });
+  const professionalBase = { businessId, avatarUrl: null, email: "", allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, isActive: true, createdAt };
   db.professionals.push({
+    ...professionalBase,
     id: professionalId,
-    businessId,
     userId,
     displayName: `${tenant.user.firstName} ${tenant.user.lastName}`,
     title: tenant.professionalTitle,
-    avatarUrl: null,
+    color: "#4a6cb0",
+    sortOrder: 0,
   });
   db.subscriptions.push({
     id: crypto.randomUUID(),
@@ -473,6 +516,7 @@ function seedTenant(
     plan: tenant.plan,
     status: "active",
     currentPeriodEnd: tenant.plan === "free" ? null : new Date(Date.now() + 20 * 86_400_000).toISOString(),
+    maxProfessionals: tenant.maxProfessionals ?? null,
   });
   if (tenant.plan !== "free" && !tenant.createdByAdmin) {
     db.auditLogs.push({
@@ -519,21 +563,54 @@ function seedTenant(
   }));
   db.clients.push(...clients);
 
-  for (let dayOfWeek = 0 as DayOfWeek; dayOfWeek <= 6; dayOfWeek = (dayOfWeek + 1) as DayOfWeek) {
-    const intervals = tenant.weeklyHours[dayOfWeek] ?? [];
-    db.schedules.push({
-      id: crypto.randomUUID(),
-      businessId,
-      dayOfWeek,
-      isActive: intervals.length > 0,
-      intervals: intervals.length > 0 ? intervals : [{ start: "09:00", end: "17:00" }],
-    });
+  // Agendas: la del dueño (todos los servicios) y las demás del negocio, cada una con su horario.
+  const agendas = [
+    { professionalId, weeklyHours: tenant.weeklyHours, services, load: tenant.load },
+    ...(tenant.extraProfessionals ?? []).map((extra, index) => {
+      const id = crypto.randomUUID();
+      let memberId: string | null = null;
+      if (extra.member) {
+        memberId = crypto.randomUUID();
+        const joinedAt = daysAgoISO(Math.min(40, age - 1));
+        db.users.push({ id: memberId, ...extra.member, phone: "", avatarUrl: null, platformRole: null, platformOwner: false, isActive: true, createdAt: joinedAt });
+        db.credentials.push({ userId: memberId, email: extra.member.email, password: tenant.password });
+        db.businessUsers.push({ businessId, userId: memberId, role: "professional", clinicalAccess: true, createdAt: joinedAt });
+      }
+      const offered = extra.services ? services.filter((service) => extra.services!.includes(service.name)) : services;
+      db.professionals.push({
+        ...professionalBase,
+        id,
+        userId: memberId,
+        displayName: extra.displayName,
+        title: extra.title,
+        color: extra.color,
+        allServices: !extra.services,
+        serviceIds: extra.services ? offered.map((service) => service.id) : [],
+        sortOrder: index + 1,
+      });
+      return { professionalId: id, weeklyHours: extra.weeklyHours, services: offered, load: extra.load };
+    }),
+  ];
+
+  for (const agenda of agendas) {
+    for (let dayOfWeek = 0 as DayOfWeek; dayOfWeek <= 6; dayOfWeek = (dayOfWeek + 1) as DayOfWeek) {
+      const intervals = agenda.weeklyHours[dayOfWeek] ?? [];
+      db.schedules.push({
+        id: crypto.randomUUID(),
+        businessId,
+        professionalId: agenda.professionalId,
+        dayOfWeek,
+        isActive: intervals.length > 0,
+        intervals: intervals.length > 0 ? intervals : [{ start: "09:00", end: "17:00" }],
+      });
+    }
   }
 
   const blockedTimes = tenant.blockedTimes(now.date).map((block) => ({
     ...block,
     id: crypto.randomUUID(),
     businessId,
+    professionalId: null,
     createdAt: daysAgoISO(3),
   }));
   db.blockedTimes.push(...blockedTimes);
@@ -567,6 +644,7 @@ function seedTenant(
     clientId: string,
     service: (typeof services)[number],
     status: AppointmentStatus,
+    agendaId = professionalId,
   ) => {
     const month = date.slice(0, 7);
     if (status !== "cancelled") {
@@ -582,7 +660,7 @@ function seedTenant(
       businessId,
       clientId,
       serviceId: service.id,
-      professionalId,
+      professionalId: agendaId,
       date,
       startTime,
       endTime,
@@ -591,6 +669,7 @@ function seedTenant(
       price: service.price + (isHome ? service.homeVisitFee : 0),
       homeVisit: isHome ? homeVisitFor(clientId) : null,
       source: random.next() < 0.25 ? "booking_page" : "dashboard",
+      arrivedAt: null,
       createdAt,
       updatedAt: createdAt,
     };
@@ -653,6 +732,31 @@ function seedTenant(
           cursor = end + random.pick([0, 0, 15, 30]);
         } else {
           cursor += 30;
+        }
+      }
+    }
+  }
+
+  // Las otras agendas, con un generador aparte: así no cambian las citas de los demás negocios.
+  const agendaRandom = createRandom(age * 104_729);
+  for (const agenda of agendas.slice(1)) {
+    const offered = agenda.services.filter((service) => service.isActive);
+    for (let offset = -Math.min(35, age); offset <= 21; offset++) {
+      const date = addDaysISO(now.date, offset);
+      for (const range of agenda.weeklyHours[getDayOfWeek(date)] ?? []) {
+        let cursor = timeToMinutes(range.start);
+        const rangeEnd = timeToMinutes(range.end);
+        while (cursor < rangeEnd) {
+          const service = agendaRandom.pick(offered);
+          const end = cursor + service.durationMinutes;
+          if (end > rangeEnd) break;
+          if (agendaRandom.next() < agenda.load && !isBlocked(date, cursor, end)) {
+            const status = randomStatus(isPast(date, minutesToTime(cursor), now), agendaRandom.next());
+            addAppointment(date, cursor, agendaRandom.pick(weightedClients).id, service, status, agenda.professionalId);
+            cursor = end + agendaRandom.pick([0, 15, 30]);
+          } else {
+            cursor += 30;
+          }
         }
       }
     }

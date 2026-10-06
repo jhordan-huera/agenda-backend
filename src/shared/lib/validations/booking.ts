@@ -30,6 +30,8 @@ export const publicBookingSchema = z
     notes: optionalText(500),
     /** null = cita en el local. A domicilio, la ubicación exacta marcada en el mapa es obligatoria. */
     homeVisit: homeVisitSchema.nullable().default(null),
+    /** Con quién se atiende; null: el primer profesional libre a esa hora. */
+    professionalId: z.string().nullable().default(null),
   })
   .refine((data) => !data.homeVisit || (data.homeVisit.lat !== null && data.homeVisit.lng !== null), {
     path: ["homeVisit", "lat"],

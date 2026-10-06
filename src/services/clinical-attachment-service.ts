@@ -53,7 +53,7 @@ export const clinicalAttachmentService = {
     const storage = requireStorage();
     return transaction(async (db) => {
       const actor = await authorizeClinical(db, ctx, businessId, true);
-      await findPatient(db, businessId, clientId);
+      await findPatient(db, businessId, clientId, actor);
       if (!(await planOf(db, businessId)).clinicalAttachments) {
         throw new AppError("plan_limit", "Los archivos en la historia clínica están en los planes Pro y Business.");
       }
@@ -79,6 +79,7 @@ export const clinicalAttachmentService = {
     return transaction(async (db) => {
       const actor = await authorizeClinical(db, ctx, businessId, true);
       const attachment = await findAttachment(db, businessId, attachmentId);
+      await findPatient(db, businessId, attachment.clientId, actor);
       if (attachment.status === "pending") {
         const size = await storage.sizeOf(attachment.storagePath);
         if (size === null) throw new AppError("conflict", "El archivo no terminó de subirse. Vuelve a intentarlo.");
@@ -107,6 +108,7 @@ export const clinicalAttachmentService = {
     return transaction(async (db) => {
       const actor = await authorizeClinical(db, ctx, businessId);
       const attachment = await findAttachment(db, businessId, attachmentId);
+      await findPatient(db, businessId, attachment.clientId, actor);
       if (attachment.status !== "ready") throw new AppError("not_found", "Archivo no encontrado.");
       const url = await storage.createDownloadUrl(attachment.storagePath, attachment.fileName);
       // Datos de salud: también queda quién abre cada archivo (salvo el super admin en modo soporte).

@@ -1,15 +1,15 @@
 import { subscriptionColumns } from "../db/columns.ts";
 import { one, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
-import { getPlan } from "../shared/lib/constants/plans.ts";
+import { getEffectiveLimits, getPlan } from "../shared/lib/constants/plans.ts";
 import type { PlanId, Subscription } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
 import type { AuditActor } from "./context.ts";
-import { countUsers } from "./plan-limits.ts";
+import { countActiveProfessionals, countUsers } from "./plan-limits.ts";
 
 /** Los planes de pago renuevan cada 30 días; Free no tiene renovación. */
 export function periodEndFor(planId: PlanId): string | null {
-  return getPlan(planId).price > 0 ? new Date(Date.now() + 30 * 86_400_000).toISOString() : null;
+  return planId === "free" ? null : new Date(Date.now() + 30 * 86_400_000).toISOString();
 }
 
 /**
@@ -36,6 +36,14 @@ export async function applyPlanChange(
     throw new AppError(
       "conflict",
       `El plan ${plan.name} permite ${plan.limits.users} usuario(s) y el negocio tiene ${users}. Quita miembros del equipo antes de cambiar.`,
+    );
+  }
+  const agendas = getEffectiveLimits(plan, subscription.maxProfessionals).professionals;
+  const activeProfessionals = await countActiveProfessionals(db, businessId);
+  if (agendas !== null && activeProfessionals > agendas) {
+    throw new AppError(
+      "conflict",
+      `El plan ${plan.name} permite ${agendas === 1 ? "una agenda" : `${agendas} agendas`} y el negocio tiene ${activeProfessionals} profesionales activos. Desactiva los que sobran antes de cambiar.`,
     );
   }
   const previous = getPlan(subscription.plan);

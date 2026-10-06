@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { emailField, requiredText } from "./fields.ts";
 
-export const teamRoleSchema = z.enum(["admin", "staff"], { error: "Selecciona un rol" });
+export const teamRoleSchema = z.enum(["admin", "staff", "professional"], { error: "Selecciona un rol" });
 
 export const teamInviteSchema = z.object({
   firstName: requiredText("El nombre"),

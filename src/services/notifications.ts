@@ -2,7 +2,7 @@ import { config } from "../config.ts";
 import { appointmentColumns, businessColumns } from "../db/columns.ts";
 import { many, one, type Db } from "../db/pool.ts";
 import { emailTemplates, type AppointmentEmailData, type EmailContent } from "../shared/lib/email/templates.ts";
-import { addDaysISO, daysBetween, getZonedNow, timeToMinutes } from "../shared/lib/time.ts";
+import { addDaysISO, daysBetween, getZonedNow, timeToMinutes, type ZonedNow } from "../shared/lib/time.ts";
 import type { Appointment, Business, EmailType } from "../shared/types/index.ts";
 import { PASSWORD_MASK, scheduleEmailDelivery } from "./mailer.ts";
 
@@ -25,11 +25,19 @@ export function appOrigin(): string {
  */
 export async function queueEmail(
   db: Db,
-  message: { businessId: string | null; type: EmailType; to: string; appointmentId?: string | null; secret?: string } & EmailContent,
+  message: {
+    businessId: string | null;
+    type: EmailType;
+    to: string;
+    appointmentId?: string | null;
+    secret?: string;
+    /** Emails que se envían una sola vez (p. ej. la agenda del día de un profesional). */
+    dedupeKey?: string;
+  } & EmailContent,
 ): Promise<boolean> {
   const result = await db.query(
-    `insert into notifications (business_id, type, to_email, subject, body, html, appointment_id, status, secret)
-     values ($1, $2, $3, $4, $5, $6, $7, 'queued', $8)
+    `insert into notifications (business_id, type, to_email, subject, body, html, appointment_id, status, secret, dedupe_key)
+     values ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9)
      on conflict do nothing`,
     [
       message.businessId,
@@ -40,6 +48,7 @@ export async function queueEmail(
       message.html,
       message.appointmentId ?? null,
       message.secret ?? null,
+      message.dedupeKey ?? null,
     ],
   );
   const inserted = (result.rowCount ?? 0) > 0;
@@ -55,6 +64,10 @@ interface AppointmentContext {
   /** Los clientes ven el precio de este servicio (ver isPriceVisible). */
   showPrice: boolean;
   professionalName: string | null;
+  /** A dónde se le avisa al profesional ("" = sin avisos) y si quiere el aviso de citas nuevas. */
+  professionalEmail: string;
+  professionalNotify: boolean;
+  professionalUserId: string | null;
 }
 
 async function loadAppointmentContext(db: Db, appointment: Appointment): Promise<AppointmentContext | null> {
@@ -65,8 +78,11 @@ async function loadAppointmentContext(db: Db, appointment: Appointment): Promise
     db,
     `select c.name as "clientName", c.email as "clientEmail", s.name as "serviceName",
             s.show_price and s.price > 0 as "showPrice",
-            (select display_name from professionals where id = $3) as "professionalName"
-       from clients c, services s
+            p.display_name as "professionalName",
+            coalesce(p.email, '') as "professionalEmail",
+            coalesce(p.notify_new_appointments, false) as "professionalNotify",
+            p.user_id as "professionalUserId"
+       from clients c cross join services s left join professionals p on p.id = $3
       where c.id = $1 and s.id = $2`,
     [appointment.clientId, appointment.serviceId, appointment.professionalId],
   );
@@ -97,7 +113,38 @@ function buildEmailData(context: AppointmentContext, appointment: Appointment): 
 }
 
 /**
+ * Aviso al profesional de una cita nueva en su agenda (o que le pasaron de otra), salvo que la haya
+ * agendado él mismo o que ya le llegue como aviso del negocio (mismo email que el negocio).
+ */
+async function notifyProfessional(
+  db: Db,
+  context: AppointmentContext,
+  before: Appointment | null,
+  after: Appointment,
+  origin: "dashboard" | "booking_page",
+  actorUserId: string | null,
+) {
+  const isNewForProfessional = !before || before.professionalId !== after.professionalId;
+  if (!isNewForProfessional || !["pending", "confirmed"].includes(after.status)) return;
+  if (!context.professionalEmail || !context.professionalNotify) return;
+  if (actorUserId && actorUserId === context.professionalUserId) return;
+  if (origin === "booking_page" && context.professionalEmail === context.business.email) return;
+  await queueEmail(db, {
+    businessId: context.business.id,
+    type: "professional_new_appointment",
+    to: context.professionalEmail,
+    appointmentId: after.id,
+    ...emailTemplates.professionalNewAppointment({
+      ...buildEmailData(context, after),
+      origin,
+      agendaUrl: `${appOrigin()}/dashboard/calendar?date=${after.date}`,
+    }),
+  });
+}
+
+/**
  * Emails automáticos al crear o cambiar una cita, según la configuración de notificaciones.
+ * `actorUserId`: quién hizo el cambio desde el panel (al profesional no se le avisa de lo que hizo él).
  * Devuelve true si se envió un email al cliente.
  */
 export async function notifyAppointmentChange(
@@ -105,12 +152,14 @@ export async function notifyAppointmentChange(
   before: Appointment | null,
   after: Appointment,
   origin: "dashboard" | "booking_page",
+  actorUserId: string | null = null,
 ): Promise<boolean> {
   const context = await loadAppointmentContext(db, after);
   if (!context) return false;
   const { business } = context;
   const data = buildEmailData(context, after);
   const settings = business.notificationSettings;
+  await notifyProfessional(db, context, before, after, origin, actorUserId);
 
   const toClient = async (type: EmailType, content: EmailContent) => {
     if (!context.clientEmail) return false;
@@ -190,6 +239,56 @@ export async function runReminderJob(db: Db, businessId: string): Promise<number
       to: context.clientEmail,
       appointmentId: appointment.id,
       ...emailTemplates.appointmentReminder(buildEmailData(context, appointment), when),
+    });
+    if (inserted) sent++;
+  }
+  return sent;
+}
+
+/** La agenda del día sale entre las 6:00 y las 11:00 (hora del negocio); más tarde ya no sirve. */
+const DAILY_AGENDA_FROM_MINUTES = 6 * 60;
+const DAILY_AGENDA_UNTIL_MINUTES = 11 * 60;
+
+/**
+ * Agenda del día de cada profesional (con email y el aviso activado) que tenga citas hoy. Una sola vez
+ * por profesional y día (clave única en notifications). La ejecuta el cron cada 10 minutos.
+ */
+export async function runDailyAgendaJob(db: Db, businessId: string, at?: ZonedNow): Promise<number> {
+  const business = await one<Business>(db, `select ${businessColumns()} from businesses where id = $1`, [businessId]);
+  if (!business || business.status !== "active") return 0;
+  const now = at ?? getZonedNow(business.timezone);
+  if (now.minutes < DAILY_AGENDA_FROM_MINUTES || now.minutes >= DAILY_AGENDA_UNTIL_MINUTES) return 0;
+
+  const professionals = await many<{ id: string; displayName: string; email: string }>(
+    db,
+    `select id, display_name as "displayName", email from professionals
+      where business_id = $1 and is_active and daily_agenda and email <> ''`,
+    [businessId],
+  );
+  let sent = 0;
+  for (const professional of professionals) {
+    const appointments = await many<{ time: string; clientName: string; serviceName: string; homeVisit: Appointment["homeVisit"] }>(
+      db,
+      `select to_char(a.start_time, 'HH24:MI') || '–' || to_char(a.end_time, 'HH24:MI') as time,
+              c.name as "clientName", s.name as "serviceName", a.home_visit as "homeVisit"
+         from appointments a join clients c on c.id = a.client_id join services s on s.id = a.service_id
+        where a.professional_id = $1 and a.date = $2 and a.status in ('pending', 'confirmed')
+        order by a.start_time`,
+      [professional.id, now.date],
+    );
+    if (appointments.length === 0) continue;
+    const inserted = await queueEmail(db, {
+      businessId,
+      type: "professional_daily_agenda",
+      to: professional.email,
+      dedupeKey: `daily_agenda:${professional.id}:${now.date}`,
+      ...emailTemplates.professionalDailyAgenda({
+        professionalName: professional.displayName,
+        businessName: business.name,
+        date: now.date,
+        appointments,
+        agendaUrl: `${appOrigin()}/dashboard/calendar?date=${now.date}`,
+      }),
     });
     if (inserted) sent++;
   }

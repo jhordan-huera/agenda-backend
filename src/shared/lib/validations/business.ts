@@ -68,7 +68,11 @@ export const bookingSettingsSchema = z.object({
     .min(0, "No puede ser negativo")
     .max(10, "Máximo 10 citas por día")
     .default(DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY),
+  chooseProfessional: z.boolean().default(true),
 });
+
+/** Qué pacientes ve quien tiene el rol Profesional. */
+export const professionalScopeSchema = z.enum(["all", "own"], { error: "Elige qué pacientes ve cada profesional" });
 
 const hexColorField = z
   .string()

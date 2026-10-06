@@ -19,6 +19,7 @@ import type {
   ClinicalTemplate,
   ClinicalTemplateVersion,
 } from "../shared/types/index.ts";
+import { agendaScope, assertClientInScope } from "./agenda-scope.ts";
 import { logAudit } from "./audit.ts";
 import { fileStorage } from "./file-storage.ts";
 import { planOf } from "./plan-limits.ts";
@@ -58,11 +59,21 @@ async function businessToday(db: Db, businessId: string): Promise<string> {
   return getZonedNow(business?.timezone ?? DEFAULT_TIMEZONE).date;
 }
 
-export async function findPatient(db: Db, businessId: string, clientId: string): Promise<{ name: string }> {
+/**
+ * El paciente es del negocio y, para el rol Profesional con "sólo sus pacientes", de los suyos (con
+ * citas en su agenda o registrado por él): la historia de los demás no existe para él.
+ */
+export async function findPatient(db: Db, businessId: string, clientId: string, actor: Actor): Promise<{ name: string }> {
   const client = isUuid(clientId)
     ? await one<{ name: string }>(db, "select name from clients where id = $1 and business_id = $2", [clientId, businessId])
     : null;
   if (!client) throw new AppError("not_found", "Paciente no encontrado.");
+  try {
+    await assertClientInScope(db, await agendaScope(db, actor, businessId), clientId);
+  } catch (error) {
+    if (error instanceof AppError && error.code === "not_found") throw new AppError("not_found", "Paciente no encontrado.");
+    throw error;
+  }
   return client;
 }
 
@@ -149,7 +160,7 @@ export const clinicalService = {
   async get(ctx: RequestContext, businessId: string, clientId: string): Promise<ClinicalRecord> {
     return transaction(async (db) => {
       const actor = await authorizeClinical(db, ctx, businessId);
-      const client = await findPatient(db, businessId, clientId);
+      const client = await findPatient(db, businessId, clientId, actor);
       // El super admin en modo soporte no deja rastro de lo que sólo consulta.
       const loggedRecently =
         actor.support ||
@@ -199,7 +210,7 @@ export const clinicalService = {
     const data = parseInput(clinicalProfileSchema, input);
     return transaction(async (db) => {
       const actor = await authorizeClinical(db, ctx, businessId, true);
-      const client = await findPatient(db, businessId, clientId);
+      const client = await findPatient(db, businessId, clientId, actor);
       const previous = await one<{ consentDate: string | null }>(
         db,
         'select consent_date as "consentDate" from clinical_profiles where client_id = $1',
@@ -258,7 +269,7 @@ export const clinicalService = {
     const data = parseInput(clinicalNoteSchema, input);
     return transaction(async (db) => {
       const actor = await authorizeClinical(db, ctx, businessId, true);
-      const client = await findPatient(db, businessId, clientId);
+      const client = await findPatient(db, businessId, clientId, actor);
       // Sólo la versión vigente de una plantilla disponible para el negocio.
       const template = isUuid(data.templateVersionId)
         ? await one<{ name: string; fields: ClinicalField[]; current: boolean }>(
@@ -331,6 +342,7 @@ export const clinicalService = {
           )
         : null;
       if (!note) throw new AppError("not_found", "Evolución no encontrada.");
+      await findPatient(db, businessId, note.clientId, actor);
       await db.query(
         "insert into clinical_note_addenda (note_id, business_id, text, author_id, author_name) values ($1, $2, $3, $4, $5)",
         [noteId, businessId, text, actor.userId, actor.name],

@@ -43,17 +43,34 @@ export const businessColumns = columns({
   clinicalRecordsEnabled: "clinical_records_enabled",
   clinicalDefaultTemplateId: "clinical_default_template_id",
   brandColors: "brand_colors",
+  professionalScope: "professional_scope",
   createdAt: "created_at",
 });
 
-export const professionalColumns = columns({
+const professionalOwnColumns = columns({
   id: "id",
   businessId: "business_id",
   userId: "user_id",
   displayName: "display_name",
   title: "title",
   avatarUrl: "avatar_url",
+  color: "color",
+  email: "email",
+  allServices: "all_services",
+  notifyNewAppointments: "notify_new_appointments",
+  dailyAgenda: "daily_agenda",
+  isActive: "is_active",
+  sortOrder: "sort_order",
+  createdAt: "created_at",
 });
+
+/** Con los servicios que atiende (`serviceIds`, de professional_services). */
+export const professionalColumns = (alias?: string) =>
+  `${professionalOwnColumns(alias)}, coalesce((select array_agg(ps.service_id::text order by ps.service_id)
+     from professional_services ps where ps.professional_id = ${alias ?? "professionals"}.id), '{}') as "serviceIds"`;
+
+/** Orden de las agendas en el calendario, la página de reservas y los reportes. */
+export const PROFESSIONAL_ORDER = "sort_order, display_name";
 
 export const subscriptionColumns = columns({
   id: "id",
@@ -61,6 +78,7 @@ export const subscriptionColumns = columns({
   plan: "plan",
   status: "status",
   currentPeriodEnd: "current_period_end",
+  maxProfessionals: "max_professionals",
 });
 
 export const clientColumns = columns({
@@ -105,6 +123,7 @@ export const appointmentColumns = columns({
   price: "price",
   homeVisit: "home_visit",
   source: "source",
+  arrivedAt: "arrived_at",
   createdAt: "created_at",
   updatedAt: "updated_at",
 });
@@ -112,6 +131,7 @@ export const appointmentColumns = columns({
 export const scheduleColumns = columns({
   id: "id",
   businessId: "business_id",
+  professionalId: "professional_id",
   dayOfWeek: "day_of_week",
   isActive: "is_active",
   intervals: "intervals",
@@ -120,6 +140,7 @@ export const scheduleColumns = columns({
 export const blockedTimeColumns = columns({
   id: "id",
   businessId: "business_id",
+  professionalId: "professional_id",
   reason: "reason",
   startDate: "start_date",
   endDate: "end_date",

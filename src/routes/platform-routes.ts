@@ -89,6 +89,10 @@ adminRoutes.put(
   "/businesses/:businessId/plan",
   handle((req) => adminService.changeBusinessPlan(req.ctx, req.params.businessId, req.body?.plan)),
 );
+adminRoutes.put(
+  "/businesses/:businessId/max-professionals",
+  handle((req) => adminService.setMaxProfessionals(req.ctx, req.params.businessId, req.body?.maxProfessionals ?? null)),
+);
 adminRoutes.get(
   "/categories",
   handle((req) => categoryService.listForAdmin(req.ctx)),

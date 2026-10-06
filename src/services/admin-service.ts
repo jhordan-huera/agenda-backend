@@ -11,7 +11,7 @@ import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { DEFAULT_WEEKLY_SCHEDULE } from "../shared/lib/constants/business.ts";
-import { PLANS, getPlan } from "../shared/lib/constants/plans.ts";
+import { PLANS, getEffectiveLimits, getPlan } from "../shared/lib/constants/plans.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
 import { formatSupportContact, getFullName, plural } from "../shared/lib/format.ts";
 import { ROLE_LABELS } from "../shared/lib/permissions.ts";
@@ -100,7 +100,9 @@ async function findUser(db: Db, userId: string, lock = false): Promise<User> {
  * El mes en curso se calcula en la zona horaria de cada negocio.
  */
 async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBusinessSummary[]> {
-  const rows = await many<Business & { appointmentsThisMonth: number; clients: number; users: number; lastActivityAt: string | null }>(
+  const rows = await many<
+    Business & { appointmentsThisMonth: number; clients: number; users: number; professionals: number; lastActivityAt: string | null }
+  >(
     db,
     `select ${businessColumns("b")},
             (select count(*) from appointments a
@@ -110,6 +112,7 @@ async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBu
             ) as "appointmentsThisMonth",
             (select count(*) from clients c where c.business_id = b.id) as clients,
             (select count(*) from business_users bu where bu.business_id = b.id) as users,
+            (select count(*) from professionals p where p.business_id = b.id and p.is_active) as professionals,
             (select max(l.created_at) from audit_logs l where l.business_id = b.id) as "lastActivityAt"
        from businesses b
       where ($1::uuid is null or b.id = $1::uuid)
@@ -126,7 +129,7 @@ async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBu
     [ids],
   );
 
-  return rows.map(({ appointmentsThisMonth, clients, users, lastActivityAt, ...business }) => {
+  return rows.map(({ appointmentsThisMonth, clients, users, professionals, lastActivityAt, ...business }) => {
     const owner = owners.find((user) => user.id === business.ownerId);
     const subscription = subscriptions.find((s) => s.businessId === business.id) ?? null;
     const plan = getPlan(subscription?.plan ?? "free");
@@ -134,7 +137,14 @@ async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBu
       business,
       owner: owner ? { id: owner.id, name: getFullName(owner), email: owner.email } : null,
       subscription,
-      usage: { plan: plan.id, limits: plan.limits, appointmentsThisMonth, clients, users },
+      usage: {
+        plan: plan.id,
+        limits: getEffectiveLimits(plan, subscription?.maxProfessionals ?? null),
+        appointmentsThisMonth,
+        clients,
+        users,
+        professionals,
+      },
       lastActivityAt,
     };
   });
@@ -199,12 +209,7 @@ export const adminService = {
          from businesses b left join subscriptions s on s.business_id = b.id`,
     );
     const businessesByPlan = Object.fromEntries(PLANS.map((plan) => [plan.id, 0])) as Record<PlanId, number>;
-    let monthlyRecurringRevenue = 0;
-    for (const business of businesses) {
-      const plan = getPlan(business.plan ?? "free");
-      businessesByPlan[plan.id]++;
-      if (business.status === "active" && business.subscriptionStatus === "active") monthlyRecurringRevenue += plan.price;
-    }
+    for (const business of businesses) businessesByPlan[getPlan(business.plan ?? "free").id]++;
     const active = businesses.filter((b) => b.status === "active").length;
     const counts = (await one<{ users: number; appointments: number; online: number }>(
       pool,
@@ -223,7 +228,6 @@ export const adminService = {
         newThisMonth: businesses.filter((b) => b.createdAt.startsWith(month)).length,
       },
       businessesByPlan,
-      monthlyRecurringRevenue: Math.round(monthlyRecurringRevenue * 100) / 100,
       users: counts.users,
       appointmentsThisMonth: counts.appointments,
       onlineBookingsThisMonth: counts.online,
@@ -468,10 +472,43 @@ export const adminService = {
             owner.firstName,
             owner.businessName,
             getPlan(plan).name,
-            `${appOrigin()}/dashboard/settings?tab=suscripcion`,
+            `${appOrigin()}/dashboard`,
           ),
         });
       }
+      return subscription;
+    });
+  },
+
+  /**
+   * Agendas contratadas por un negocio Business (se cobran por profesional): cuántos profesionales puede
+   * tener activos. null: sin tope. No desactiva a nadie: si ya hay más activos, no deja sumar ni reactivar.
+   */
+  async setMaxProfessionals(ctx: RequestContext, businessId: string, value: unknown): Promise<Subscription> {
+    const actor = authorizeSuperAdmin(ctx);
+    const max = parseInput(
+      z.number({ error: "Indica cuántas agendas contrató" }).int().min(1, "Mínimo una agenda").max(200).nullable(),
+      value,
+    );
+    return transaction(async (db) => {
+      const business = await findBusiness(db, businessId, true);
+      const before = await one<Subscription>(db, `select ${subscriptionColumns()} from subscriptions where business_id = $1`, [businessId]);
+      if (!before) throw new AppError("not_found", "Suscripción no encontrada.");
+      const subscription = (await one<Subscription>(
+        db,
+        `update subscriptions set max_professionals = $2 where business_id = $1 returning ${subscriptionColumns()}`,
+        [businessId, max],
+      ))!;
+      const label = (value: number | null) => (value === null ? "Sin tope" : String(value));
+      await logAudit(db, {
+        businessId,
+        actor,
+        action: "platform.max_professionals_changed",
+        entityType: "subscription",
+        entityId: subscription.id,
+        summary: `Cambió las agendas contratadas de ${business.name} a ${label(max)}`,
+        changes: [{ label: "Agendas contratadas", before: label(before.maxProfessionals), after: label(max) }],
+      });
       return subscription;
     });
   },
@@ -512,7 +549,7 @@ export const adminService = {
             owner.firstName,
             owner.businessName,
             getPlan(request.requestedPlan).name,
-            `${appOrigin()}/dashboard/settings?tab=suscripcion`,
+            `${appOrigin()}/dashboard`,
           ),
         });
       }

@@ -1,9 +1,9 @@
 import { one, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
-import { getPlan, type Plan } from "../shared/lib/constants/plans.ts";
+import { getEffectiveLimits, getPlan, type Plan } from "../shared/lib/constants/plans.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { getZonedNow } from "../shared/lib/time.ts";
-import type { ISODate, PlanId, PlanUsage } from "../shared/types/index.ts";
+import type { ISODate, PlanId, PlanLimits, PlanUsage } from "../shared/types/index.ts";
 
 /**
  * Límites de cada plan. Se comprueban dentro de la transacción que bloquea la fila del
@@ -13,6 +13,16 @@ import type { ISODate, PlanId, PlanUsage } from "../shared/types/index.ts";
 export async function planOf(db: Db, businessId: string): Promise<Plan> {
   const row = await one<{ plan: PlanId }>(db, "select plan from subscriptions where business_id = $1", [businessId]);
   return getPlan(row?.plan ?? "free");
+}
+
+/** Límites del negocio: los de su plan con las agendas que contrató (Business). */
+export async function limitsOf(db: Db, businessId: string): Promise<PlanLimits> {
+  const row = await one<{ plan: PlanId; maxProfessionals: number | null }>(
+    db,
+    `select plan, max_professionals as "maxProfessionals" from subscriptions where business_id = $1`,
+    [businessId],
+  );
+  return getEffectiveLimits(getPlan(row?.plan ?? "free"), row?.maxProfessionals ?? null);
 }
 
 /** Citas no canceladas del mes "YYYY-MM" (opcionalmente sin contar una cita que se está editando). */
@@ -37,16 +47,28 @@ export async function countUsers(db: Db, businessId: string) {
     ?.count ?? 0;
 }
 
+/** Agendas en uso: profesionales activos (sin contar uno que se está editando). */
+export async function countActiveProfessionals(db: Db, businessId: string, excludeId?: string) {
+  return (
+    await one<{ count: number }>(
+      db,
+      "select count(*) from professionals where business_id = $1 and is_active and ($2::uuid is null or id <> $2::uuid)",
+      [businessId, excludeId ?? null],
+    )
+  )?.count ?? 0;
+}
+
 export async function getPlanUsage(db: Db, businessId: string): Promise<PlanUsage> {
   const plan = await planOf(db, businessId);
   const business = await one<{ timezone: string }>(db, "select timezone from businesses where id = $1", [businessId]);
   const month = getZonedNow(business?.timezone ?? DEFAULT_TIMEZONE).date.slice(0, 7);
   return {
     plan: plan.id,
-    limits: plan.limits,
+    limits: await limitsOf(db, businessId),
     appointmentsThisMonth: await activeAppointmentsInMonth(db, businessId, month),
     clients: await countClients(db, businessId),
     users: await countUsers(db, businessId),
+    professionals: await countActiveProfessionals(db, businessId),
   };
 }
 
@@ -63,6 +85,19 @@ export async function assertClientLimit(db: Db, businessId: string) {
   const { limits } = await planOf(db, businessId);
   if (limits.clients !== null && (await countClients(db, businessId)) >= limits.clients) {
     throw new AppError("plan_limit", "Has alcanzado el límite de clientes de tu plan.");
+  }
+}
+
+/** Agendas: se comprueba al crear un profesional activo o al reactivarlo. */
+export async function assertProfessionalLimit(db: Db, businessId: string, excludeId?: string) {
+  const { professionals } = await limitsOf(db, businessId);
+  if (professionals !== null && (await countActiveProfessionals(db, businessId, excludeId)) >= professionals) {
+    throw new AppError(
+      "plan_limit",
+      professionals === 1
+        ? "Tu plan incluye una sola agenda. Para sumar profesionales, escríbenos."
+        : `Tu plan incluye ${professionals} agendas y ya están en uso. Para sumar profesionales, escríbenos.`,
+    );
   }
 }
 

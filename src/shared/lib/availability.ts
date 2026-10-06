@@ -15,6 +15,7 @@ import type {
   BookingSettings,
   BusySlot,
   ISODate,
+  Professional,
   Schedule,
   TimeString,
 } from "../types/index.ts";
@@ -41,8 +42,12 @@ export type AvailabilitySettings = Pick<
 >;
 
 /** Lo que la disponibilidad necesita de un bloqueo (la página pública no recibe el motivo). */
-export type BlockedRange = Pick<BlockedTime, "startDate" | "endDate" | "allDay" | "startTime" | "endTime">;
+export type BlockedRange = Pick<BlockedTime, "professionalId" | "startDate" | "endDate" | "allDay" | "startTime" | "endTime">;
 
+/**
+ * Datos de disponibilidad. Con varias agendas, la de un profesional se obtiene con
+ * `scopeToProfessional` (su horario, sus citas y los bloqueos suyos o de todo el negocio).
+ */
 export interface AvailabilityContext {
   schedules: Schedule[];
   /** Franjas ocupadas por citas activas (ver `toBusySlots`). */
@@ -85,7 +90,22 @@ function getBusyRanges(busySlots: BusySlot[], date: ISODate): MinuteRange[] {
 export function toBusySlots(appointments: Appointment[]): BusySlot[] {
   return appointments
     .filter((appointment) => BLOCKING_STATUSES.has(appointment.status))
-    .map(({ date, startTime, endTime }) => ({ date, startTime, endTime }));
+    .map(({ date, startTime, endTime, professionalId }) => ({ date, startTime, endTime, professionalId }));
+}
+
+/** La agenda de un profesional: su horario, sus citas y los bloqueos suyos o de todo el negocio. */
+export function scopeToProfessional<T extends AvailabilityContext>(context: T, professionalId: string): T {
+  return {
+    ...context,
+    schedules: context.schedules.filter((schedule) => schedule.professionalId === professionalId),
+    busySlots: context.busySlots.filter((slot) => slot.professionalId === professionalId),
+    blockedTimes: context.blockedTimes.filter((block) => block.professionalId === null || block.professionalId === professionalId),
+  };
+}
+
+/** ¿Este profesional atiende el servicio? */
+export function offersService(professional: Pick<Professional, "allServices" | "serviceIds">, serviceId: string): boolean {
+  return professional.allServices || professional.serviceIds.includes(serviceId);
 }
 
 export function isDateWithinBookingWindow(
@@ -149,6 +169,23 @@ export function getAvailableSlots(
   return slots;
 }
 
+/**
+ * Horas libres con cualquiera de los profesionales indicados ("el primero disponible"): la unión de
+ * las horas de cada agenda, ordenada.
+ */
+export function getAvailableSlotsForAny(
+  date: ISODate,
+  durationMinutes: number,
+  context: AvailabilityContext,
+  professionalIds: string[],
+): TimeString[] {
+  const slots = new Set<TimeString>();
+  for (const professionalId of professionalIds) {
+    for (const slot of getAvailableSlots(date, durationMinutes, scopeToProfessional(context, professionalId))) slots.add(slot);
+  }
+  return [...slots].sort();
+}
+
 /** La reserva pública se valida con la misma cuadrícula: una hora fuera de ella se rechaza. */
 export function isSlotAvailable(
   date: ISODate,
@@ -178,6 +215,8 @@ export function getAvailableDates(
 
 interface TimeWindow {
   id?: string;
+  /** Con él, sólo chocan las citas de esa agenda. */
+  professionalId?: string;
   date: ISODate;
   startTime: TimeString;
   endTime: TimeString;
@@ -193,6 +232,7 @@ export function findConflictingAppointment(
   return appointments.find(
     (appointment) =>
       appointment.id !== window.id &&
+      (!window.professionalId || appointment.professionalId === window.professionalId) &&
       appointment.date === window.date &&
       BLOCKING_STATUSES.has(appointment.status) &&
       rangesOverlap(start, end, timeToMinutes(appointment.startTime), timeToMinutes(appointment.endTime)),

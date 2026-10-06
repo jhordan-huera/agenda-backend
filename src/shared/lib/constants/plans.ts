@@ -1,72 +1,64 @@
 // Copia de agenda-front/src/lib/constants/plans.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import type { PlanId, PlanLimits } from "../../types/index.ts";
 
+/**
+ * Planes de la plataforma. Los precios no están aquí: se acuerdan con cada negocio (según el plan y
+ * las agendas contratadas) y no se muestran en la aplicación. Sólo el super admin ve los planes.
+ */
 export interface Plan {
   id: PlanId;
   name: string;
-  price: number;
   description: string;
+  /** Qué incluye (sólo lo ve el super admin, en /admin/plans). */
   features: string[];
-  /** Los aplica el backend (repositorio / triggers de PostgreSQL), no sólo la interfaz. */
+  /** Los aplica el backend en cada operación, no sólo la interfaz. */
   limits: PlanLimits;
   /** Crear y adaptar formatos de historia clínica propios (los de la plataforma se usan en todos). */
   customClinicalTemplates: boolean;
   /** Subir archivos (radiografías, exámenes, fotos) a la historia clínica. */
   clinicalAttachments: boolean;
-  highlighted?: boolean;
 }
 
 export const PLANS: Plan[] = [
   {
     id: "free",
     name: "Free",
-    price: 0,
-    description: "Para empezar a organizar tu agenda.",
+    description: "Para empezar a organizar la agenda.",
     features: [
-      "Hasta 20 citas mensuales",
-      "Hasta 50 clientes",
-      "1 usuario",
-      "Página pública de reservas",
-      "Calendario, servicios y horarios",
+      "Hasta 20 citas al mes y 50 clientes",
+      "1 usuario y 1 agenda",
+      "Página de reservas, recordatorios y reportes",
+      "Historia clínica con los formatos de la plataforma",
     ],
-    limits: { appointmentsPerMonth: 20, clients: 50, users: 1 },
+    limits: { appointmentsPerMonth: 20, clients: 50, users: 1, professionals: 1 },
     customClinicalTemplates: false,
     clinicalAttachments: false,
   },
   {
     id: "pro",
     name: "Pro",
-    price: 9.99,
-    description: "Para profesionales con agenda completa.",
+    description: "Para el profesional independiente, solo o con asistente.",
     features: [
-      "Citas ilimitadas",
-      "Clientes ilimitados",
-      "Hasta 3 usuarios",
-      "Recordatorios por email",
-      "Reportes",
-      "Personalización",
+      "Citas y clientes ilimitados",
+      "Hasta 3 usuarios y 1 agenda",
       "Historia clínica con formatos propios y archivos",
     ],
-    limits: { appointmentsPerMonth: null, clients: null, users: 3 },
+    limits: { appointmentsPerMonth: null, clients: null, users: 3, professionals: 1 },
     customClinicalTemplates: true,
     clinicalAttachments: true,
-    highlighted: true,
   },
   {
     id: "business",
     name: "Business",
-    price: 14.99,
-    description: "Para pequeños negocios con equipo.",
+    description: "Para centros y clínicas con varios profesionales.",
     features: [
-      "Citas ilimitadas",
-      "Clientes ilimitados",
-      "Usuarios adicionales",
-      "Reportes avanzados",
-      "Varias agendas",
-      "Funciones administrativas",
+      "Citas, clientes y usuarios ilimitados",
+      "Varias agendas: las contratadas por el negocio",
+      "Roles de recepción y de profesional",
+      "Reportes por profesional y control de llegadas",
       "Historia clínica con formatos propios y archivos",
     ],
-    limits: { appointmentsPerMonth: null, clients: null, users: null },
+    limits: { appointmentsPerMonth: null, clients: null, users: null, professionals: null },
     customClinicalTemplates: true,
     clinicalAttachments: true,
   },
@@ -76,8 +68,12 @@ export function getPlan(id: PlanId): Plan {
   return PLANS.find((p) => p.id === id) ?? PLANS[0];
 }
 
-/** Plan sugerido al alcanzar un límite. */
-export function getNextPlan(id: PlanId): Plan | null {
-  const index = PLANS.findIndex((p) => p.id === id);
-  return PLANS[index + 1] ?? null;
+/**
+ * Límites efectivos de un negocio: los del plan y, en Business, las agendas que contrató (las fija
+ * el super admin). En Free y Pro siempre es una agenda.
+ */
+export function getEffectiveLimits(plan: Plan, maxProfessionals: number | null): PlanLimits {
+  return plan.id === "business" && maxProfessionals !== null
+    ? { ...plan.limits, professionals: maxProfessionals }
+    : plan.limits;
 }
