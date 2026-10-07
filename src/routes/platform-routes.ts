@@ -15,13 +15,25 @@ const bookingLimit = limitRequests({
   message: "Demasiadas reservas desde esta conexión. Espera unos minutos o contacta al negocio.",
 });
 
+// Datos de la plataforma que cambian poco: la CDN de Vercel los guarda un minuto (corto, porque el
+// super admin los edita y quiere verlos enseguida).
+const shortCache = "public, max-age=0, s-maxage=60, stale-while-revalidate=60";
+
 publicRoutes.get(
   "/platform-settings",
-  handle(() => platformService.getSettings()),
+  handle(async (_req, res) => {
+    const settings = await platformService.getSettings();
+    res.set("Cache-Control", shortCache); // Sólo si salió bien: un error no se guarda.
+    return settings;
+  }),
 );
 publicRoutes.get(
   "/categories",
-  handle(() => categoryService.listPublic()),
+  handle(async (_req, res) => {
+    const categories = await categoryService.listPublic();
+    res.set("Cache-Control", shortCache);
+    return categories;
+  }),
 );
 publicRoutes.get(
   "/businesses/:slug",
