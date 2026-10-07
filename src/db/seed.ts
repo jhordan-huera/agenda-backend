@@ -1,4 +1,4 @@
-import { config } from "../config.ts";
+import { config, isLocalDatabaseUrl } from "../config.ts";
 import { hashPassword } from "../services/accounts.ts";
 import { many, pool, transaction, type Db } from "./pool.ts";
 import { createSeedDatabase } from "./seed-data.ts";
@@ -56,19 +56,8 @@ async function insertRows(db: Db, table: string, columns: string[], rows: unknow
   }
 }
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1", ""]);
-
-/** El host de DATABASE_URL es este equipo (o un socket local, sin host). */
-function isLocalDatabase(url: string): boolean {
-  try {
-    return LOCAL_HOSTS.has(new URL(url).hostname);
-  } catch {
-    return false;
-  }
-}
-
 async function seed() {
-  if (!isLocalDatabase(config.databaseUrl)) {
+  if (!isLocalDatabaseUrl(config.databaseUrl)) {
     console.error(
       "✗ DATABASE_URL no es una base de datos local: los datos demo sólo se cargan en desarrollo, nunca en producción.",
     );

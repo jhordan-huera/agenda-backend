@@ -20,7 +20,23 @@ no envía emails (quedan en cola, se ven en el historial de emails del panel) ni
 Después arranca el frontend (`npm run dev` en agenda-front) y entra con `jhordan@demo.com` o
 `admin@demo.com` (contraseña `demo1234`).
 
-`npm run dev`, en cambio, usa el `DATABASE_URL` de `.env`: la base **real**.
+### Con la base de producción, sin gastar CPU de Vercel
+
+```bash
+npm run dev        # pregunta: 1) base local con datos demo · 2) base de producción
+npm run dev:prod   # directo a la base de producción (DATABASE_URL de .env)
+```
+
+Para tareas reales hechas por ti (dar de alta un negocio, revisar datos de un cliente) desde este
+equipo: lo que hagas es real, pero la CPU es la de tu ordenador. Con `config.productionDbFromHere`:
+- no arranca tareas de fondo (cola de emails, recordatorios): siguen en el cron de GitHub;
+- los emails de lo que hagas van a sus destinatarios reales (sin redirección) con enlaces a la web
+  publicada (`APP_URL`; por defecto la de Vercel);
+- no se suben archivos de la historia clínica (quedarían en el disco de este equipo);
+- `/api/health` devuelve `productionDatabase: true` y el frontend local (`npm run dev` en agenda-front)
+  muestra el aviso "Base de PRODUCCIÓN".
+
+Nunca uses `db:seed` ni `npm test` contra producción (los dos se niegan con una base remota).
 
 ### Ramas: `dev` para trabajar, `main` para publicar
 

@@ -167,6 +167,7 @@ const localStorage: FileStorage = {
 export const fileStorage: FileStorage | null =
   config.supabaseUrl && config.supabaseServiceRoleKey
     ? supabaseStorage(config.supabaseUrl, config.supabaseServiceRoleKey, config.storageBucket)
-    : config.onVercel || config.isProduction
+    : // Con la base de producción, un archivo en el disco de este equipo dejaría un enlace roto.
+      config.onVercel || config.isProduction || config.productionDbFromHere
       ? null
       : localStorage;

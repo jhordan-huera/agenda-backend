@@ -56,7 +56,13 @@ api.get("/health", async (_req, res) => {
       return { problem: databaseProblem(error), code: (error as { code?: string })?.code ?? null };
     },
   );
-  res.status(failure ? 503 : 200).json({ ok: !failure, database: !failure, ...failure });
+  res.status(failure ? 503 : 200).json({
+    ok: !failure,
+    database: !failure,
+    // Sólo desde un equipo propio: el frontend local muestra el aviso "Base de PRODUCCIÓN".
+    ...(config.productionDbFromHere ? { productionDatabase: true } : {}),
+    ...failure,
+  });
 });
 
 // Antes de la cabecera anti-CSRF y la sesión. Archivos con el almacenamiento local (desarrollo):

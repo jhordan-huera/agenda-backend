@@ -8,8 +8,9 @@
     "node": ">=22.18"
   },
   "scripts": {
-    "dev": "node --watch --env-file-if-exists=.env src/server.ts",
+    "dev": "node scripts/dev.ts",
     "dev:local": "node scripts/dev-local.ts",
+    "dev:prod": "node scripts/dev.ts prod",
     "start": "node --env-file-if-exists=.env src/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/test.ts",

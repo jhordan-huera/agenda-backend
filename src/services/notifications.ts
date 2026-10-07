@@ -16,7 +16,7 @@ export { PASSWORD_MASK };
 
 /** Enlaces de los emails: apuntan al frontend. */
 export function appOrigin(): string {
-  return config.frontendUrl;
+  return config.appUrl;
 }
 
 /**

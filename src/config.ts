@@ -44,6 +44,8 @@ const envSchema = z.object({
   TURNSTILE_SECRET_KEY: z.string().trim().optional(),
   // Sólo para las pruebas: un servidor local que imita a Cloudflare.
   TURNSTILE_VERIFY_URL: z.url().default("https://challenges.cloudflare.com/turnstile/v0/siteverify"),
+  /** Web publicada, para los enlaces de los emails si difiere de FRONTEND_URL (p. ej. desde este equipo). */
+  APP_URL: z.url().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -55,6 +57,24 @@ if (!parsed.success) {
 
 const env = parsed.data;
 const isProduction = env.NODE_ENV === "production";
+
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1", ""]);
+
+/** El host de DATABASE_URL es este equipo (o un socket local, sin host). */
+export function isLocalDatabaseUrl(url: string): boolean {
+  try {
+    return LOCAL_HOSTS.has(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+const onVercel = process.env.VERCEL === "1";
+/**
+ * Un equipo propio conectado a la base de producción (`npm run dev` → producción): lo que se hace es
+ * real, pero las tareas de fondo (cola de emails, recordatorios) siguen a cargo del cron de GitHub.
+ */
+const productionDbFromHere = !onVercel && !isLocalDatabaseUrl(env.DATABASE_URL);
 
 const gmail =
   env.GMAIL_USER && env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET && env.GMAIL_REFRESH_TOKEN
@@ -81,14 +101,17 @@ export const config = {
   databaseSsl: env.DATABASE_SSL === "true",
   databasePoolMax: env.DATABASE_POOL_MAX,
   /** La API corre como función de Vercel (sin servidor siempre encendido). */
-  onVercel: process.env.VERCEL === "1",
+  onVercel,
+  productionDbFromHere,
   supabaseUrl: env.SUPABASE_URL ?? null,
   supabaseServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY ?? null,
   storageBucket: env.STORAGE_BUCKET,
   proxySecret: env.PROXY_SECRET ?? null,
-  /** Orígenes permitidos por CORS. El primero se usa en los enlaces de los emails. */
+  /** Orígenes permitidos por CORS. */
   frontendUrls: env.FRONTEND_URL,
   frontendUrl: env.FRONTEND_URL[0],
+  /** Base de los enlaces de los emails: APP_URL o, si no está, el primer FRONTEND_URL. */
+  appUrl: (env.APP_URL ?? env.FRONTEND_URL[0]).replace(/\/+$/, ""),
   cookieSameSite: env.COOKIE_SAME_SITE,
   trustProxy: env.TRUST_PROXY,
   reminderJobIntervalMinutes: env.REMINDER_JOB_INTERVAL_MINUTES,
@@ -98,8 +121,11 @@ export const config = {
   turnstile,
   /**
    * Fuera de producción todos los emails van a esta dirección (por defecto, la propia cuenta
-   * de Gmail) para no escribir a los clientes de los datos demo. "off" la desactiva.
+   * de Gmail) para no escribir a los clientes de los datos demo. "off" la desactiva. Con la base
+   * de producción, aunque sea desde este equipo, van a sus destinatarios reales.
    */
   emailRedirectTo:
-    env.EMAIL_REDIRECT_TO === "off" ? null : env.EMAIL_REDIRECT_TO || (isProduction ? null : (gmail?.user ?? null)),
+    env.EMAIL_REDIRECT_TO === "off"
+      ? null
+      : env.EMAIL_REDIRECT_TO || (isProduction || productionDbFromHere ? null : (gmail?.user ?? null)),
 };
