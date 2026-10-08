@@ -3,6 +3,7 @@ import { config } from "./config.ts";
 import { pool } from "./db/pool.ts";
 import { startReminderJob } from "./jobs/reminders.ts";
 import { startEmailWorker } from "./services/mailer.ts";
+import { fileStorage } from "./services/file-storage.ts";
 
 /** Comprueba la base de datos al arrancar y avisa de lo que falta, sin detener el servidor. */
 async function checkDatabase(): Promise<void> {
@@ -31,7 +32,9 @@ const server = app.listen(config.port, () => {
         "  · Sin tareas de fondo: la cola de emails y los recordatorios siguen en el cron de GitHub.",
         "  · Los emails de lo que hagas van a sus destinatarios reales,",
         `    con enlaces a ${config.appUrl}${config.appUrl.includes("localhost") ? "  ⚠ define APP_URL con la web publicada" : ""}.`,
-        "  · Los archivos de la historia clínica no se suben desde aquí.",
+        fileStorage
+          ? "  · Archivos, comprobantes, logos y fotos van al Supabase Storage de producción."
+          : "  · Sin Supabase en .env: no se pueden subir archivos, comprobantes ni imágenes.",
         "",
       ].join("\n"),
     );

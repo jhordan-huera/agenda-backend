@@ -22,6 +22,8 @@ export const RECEIPT_TYPES = ["image/jpeg", "image/png", "image/webp", "image/he
 export const RECEIPT_MAX_BYTES = 10 * 1024 * 1024;
 /** Comprobantes por cita: para corregir uno equivocado, sin abrir la puerta al abuso. */
 export const RECEIPTS_PER_APPOINTMENT = 5;
+/** Meses después de la cita en que se borran sus comprobantes (así el almacenamiento no se llena). */
+export const RECEIPT_RETENTION_MONTHS = 3;
 
 export const receiptInputSchema = z.object({
   fileName: requiredText("El nombre del archivo", 1, 200),

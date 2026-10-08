@@ -4,7 +4,12 @@ import { appointmentColumns, paymentReceiptColumns } from "../db/columns.ts";
 import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { isPriceVisible } from "../shared/lib/format.ts";
-import { RECEIPT_MAX_BYTES, RECEIPTS_PER_APPOINTMENT, receiptInputSchema } from "../shared/lib/validations/payment.ts";
+import {
+  RECEIPT_MAX_BYTES,
+  RECEIPT_RETENTION_MONTHS,
+  RECEIPTS_PER_APPOINTMENT,
+  receiptInputSchema,
+} from "../shared/lib/validations/payment.ts";
 import type {
   Appointment,
   BankAccount,
@@ -292,6 +297,30 @@ export async function removeReceiptFiles(paths: string[]): Promise<void> {
   await receiptStorage
     .remove(paths)
     .catch((error: unknown) => console.error("No se pudieron borrar los comprobantes:", error));
+}
+
+/** Comprobantes que se borran en cada ejecución del cron, como máximo. */
+const PURGE_BATCH = 500;
+
+/**
+ * Comprobantes de citas de hace más de RECEIPT_RETENTION_MONTHS meses: se borran sus archivos y
+ * sus registros (la cita conserva si está pagada y cuándo llegó el comprobante). Primero los
+ * archivos: si Supabase falla, los registros quedan y se reintenta en la próxima ejecución. Lo
+ * llama el cron; devuelve cuántos borró, o null si no hay almacenamiento configurado.
+ */
+export async function purgeOldReceipts(): Promise<number | null> {
+  if (!receiptStorage) return null;
+  const old = await many<{ id: string; storagePath: string }>(
+    pool,
+    `select r.id, r.storage_path as "storagePath" from payment_receipts r join appointments a on a.id = r.appointment_id
+      where a.date < (now() - make_interval(months => $1))::date
+      order by a.date limit $2`,
+    [RECEIPT_RETENTION_MONTHS, PURGE_BATCH],
+  );
+  if (old.length === 0) return 0;
+  await receiptStorage.remove(old.map((receipt) => receipt.storagePath));
+  await pool.query("delete from payment_receipts where id = any($1::uuid[])", [old.map((receipt) => receipt.id)]);
+  return old.length;
 }
 
 /** Subidas que nunca se completaron (más de un día): se olvidan. Lo llama el cron. */

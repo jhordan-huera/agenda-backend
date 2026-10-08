@@ -84,9 +84,9 @@ const profile: PublicBusinessProfile = (await visitor("GET", `/public/businesses
 const now = getZonedNow(profile.business.timezone);
 const context = { ...profile, settings: profile.business.bookingSettings, now };
 const slots: { date: string; startTime: string }[] = [];
-for (let d = 1; d < 40 && slots.length < 4; d++) {
+for (let d = 1; d < 40 && slots.length < 6; d++) {
   const date = addDaysISO(now.date, d);
-  for (const startTime of getAvailableSlots(date, Math.max(paid.durationMinutes, 30), scopeToProfessional(context, professional.id)).filter((_, i) => i % 3 === 0).slice(0, 4 - slots.length)) {
+  for (const startTime of getAvailableSlots(date, Math.max(paid.durationMinutes, 30), scopeToProfessional(context, professional.id)).filter((_, i) => i % 3 === 0).slice(0, 6 - slots.length)) {
     slots.push({ date, startTime });
   }
 }
@@ -183,6 +183,31 @@ const clientId = sql(`select client_id from appointments where id = '${appointme
 r = await owner("DELETE", `${B}/clients/${clientId}`);
 ok(r.status === 200 || r.status === 204, "paciente eliminado", r.body);
 ok(!existsSync(receiptFile) && sql(`select count(*) from payment_receipts where appointment_id = '${appointmentId}'`) === "0", "sus comprobantes ya no existen", receiptFile);
+
+console.log("Borrado de los comprobantes de más de 3 meses");
+/** Reserva con un comprobante subido; devuelve la cita y la ruta del archivo. */
+async function bookWithReceipt(slot: object, seed: string) {
+  const { body } = await book(paid.id, slot, seed);
+  const request = (await anonymous("POST", `/public/payments/${body.payment.token}/receipts`, receiptInput)).body;
+  await put(request.upload, PNG);
+  await anonymous("POST", `/public/payments/${body.payment.token}/receipts/${request.receipt.id}/complete`);
+  const path = sql(`select storage_path from payment_receipts where id = '${request.receipt.id}'`);
+  return { appointmentId: body.appointmentId as string, file: join(process.env.LOCAL_STORAGE_DIR!, "comprobantes", path) };
+}
+const oldOne = await bookWithReceipt(slots[4], "viejo1");
+const recent = await bookWithReceipt(slots[5], "reciente1");
+await owner("PATCH", `${B}/appointments/${oldOne.appointmentId}/payment`, { paid: true });
+// La cita pasa a ser de hace 4 meses (el borrado mira la fecha de la cita).
+sql(`update appointments set date = (current_date - interval '4 months')::date where id = '${oldOne.appointmentId}'`);
+const purgeOutput = execFileSync(
+  process.execPath,
+  ["--input-type=module", "-e", 'const { purgeOldReceipts } = await import("./src/services/payment-service.ts"); console.log(await purgeOldReceipts()); process.exit(0);'],
+  { env: process.env, encoding: "utf8" },
+).trim();
+ok(purgeOutput === "1", "el cron borra el comprobante de la cita de hace 4 meses (y sólo ese)", purgeOutput);
+ok(!existsSync(oldOne.file) && sql(`select count(*) from payment_receipts where appointment_id = '${oldOne.appointmentId}'`) === "0", "archivo y registro borrados", oldOne.file);
+ok(sql(`select (paid_at is not null) and (receipt_at is not null) from appointments where id = '${oldOne.appointmentId}'`) === "t", "la cita sigue pagada y con la fecha del comprobante", null);
+ok(existsSync(recent.file) && sql(`select count(*) from payment_receipts where appointment_id = '${recent.appointmentId}'`) === "1", "el de una cita reciente se conserva", recent.file);
 
 console.log("Imágenes en el almacenamiento");
 r = await anonymous("POST", "/images", { target: "avatar", contentType: "image/png", sizeBytes: PNG.length });

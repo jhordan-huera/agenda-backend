@@ -32,7 +32,9 @@ equipo: lo que hagas es real, pero la CPU es la de tu ordenador. Con `config.pro
 - no arranca tareas de fondo (cola de emails, recordatorios): siguen en el cron de GitHub;
 - los emails de lo que hagas van a sus destinatarios reales (sin redirección) con enlaces a la web
   publicada (`APP_URL`; por defecto la de Vercel);
-- no se suben archivos de la historia clínica (quedarían en el disco de este equipo);
+- con `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` en `.env`, los archivos, comprobantes, logos y
+  fotos van al Supabase Storage de producción; sin ellas no se pueden subir (quedarían en el disco
+  de este equipo);
 - `/api/health` devuelve `productionDatabase: true` y el frontend local (`npm run dev` en agenda-front)
   muestra el aviso "Base de PRODUCCIÓN".
 
@@ -239,7 +241,10 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   canceladas o "No asistió") y `POST …/receipts/:id/complete` (avisa por email al negocio). En el
   panel: `GET /businesses/:id/appointments/:id/receipts`, `GET /businesses/:id/payment-receipts/:id/url`
   (URL firmada de 5 min) y `PATCH /businesses/:id/appointments/:id/payment` (`{ paid }`). Los
-  comprobantes se borran con la cita (al eliminar el paciente o el negocio, también sus archivos).
+  comprobantes se borran con la cita (al eliminar el paciente o el negocio, también sus archivos) y,
+  para que el almacenamiento no se llene, el cron borra los de citas de hace más de 3 meses
+  (`RECEIPT_RETENTION_MONTHS`; la cita conserva `paid_at` y `receipt_at`). El navegador reduce las
+  fotos antes de subirlas (WebP, 2000 px: unos 200–450 KB); los PDF van tal cual.
 - **Almacenamiento** (`src/services/file-storage.ts`): tres buckets de Supabase Storage que se crean
   solos con su tamaño máximo y sus tipos de archivo: `historias-clinicas` (privado, o el de
   `STORAGE_BUCKET`), `comprobantes` (privado) e `imagenes` (público: logos y fotos). Las imágenes se
@@ -440,7 +445,9 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    por su cuenta a la base y a Gmail, sin pasar por Vercel):
    - Secrets: `DATABASE_URL` (la misma de Vercel), `GMAIL_USER`, `GMAIL_CLIENT_ID`,
      `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `NTFY_TOPIC` (canal de ntfy al que te suscribes en
-     el celular) y, opcional, `HEALTHCHECK_URL` (healthchecks.io avisa si el cron deja de ejecutarse).
+     el celular), `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` (las de Vercel: para borrar los
+     comprobantes de pago de más de 3 meses; sin ellas se omite) y, opcional, `HEALTHCHECK_URL`
+     (healthchecks.io avisa si el cron deja de ejecutarse).
    - Variables: `APP_URL` (la del frontend: enlaces de los emails y del aviso) y, opcionales,
      `GMAIL_FROM_NAME` (por defecto "Agenda360") y `NTFY_SERVER`.
    - Copias de seguridad: secreto `BACKUP_PASSPHRASE` (el de `.env`), variable `BACKUP_EMAIL`

@@ -1,7 +1,7 @@
 import { many, one, pool, transaction } from "../db/pool.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
 import { deleteStalePendingAttachments } from "../services/clinical-attachment-service.ts";
-import { deleteStalePendingReceipts } from "../services/payment-service.ts";
+import { deleteStalePendingReceipts, purgeOldReceipts } from "../services/payment-service.ts";
 import { processEmailQueue, type EmailQueueReport } from "../services/mailer.ts";
 import { runDailyAgendaJob, runReminderJob } from "../services/notifications.ts";
 import type { EmailType } from "../shared/types/index.ts";
@@ -48,6 +48,8 @@ export interface ScheduledTasksReport {
   auditPurged: number;
   /** Emails con más de EMAIL_CONTENT_DAYS días a los que se les borró el contenido. */
   emailContentPurged: number;
+  /** Comprobantes de pago borrados por antigüedad (null: sin almacenamiento configurado). */
+  receiptsPurged: number | null;
   durationMs: number;
 }
 
@@ -145,6 +147,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const security = await findLoginAttacks(previous?.ranAt ?? null);
   const purged = await one<{ deleted: number }>(pool, "select purge_audit_logs() as deleted");
   const emailContentPurged = await purgeOldEmailContent();
+  const receiptsPurged = await purgeOldReceipts();
   // Corte en "ahora": lo enviado hasta aquí cuenta en esta ejecución y no en la siguiente.
   const totals = await one<{ at: string; pending: number; sent: number }>(
     pool,
@@ -182,6 +185,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     security,
     auditPurged: purged?.deleted ?? 0,
     emailContentPurged,
+    receiptsPurged,
     durationMs: Date.now() - started,
   };
   await pool.query("insert into cron_runs (ran_at, report) values (coalesce($1::timestamptz, now()), $2)", [

@@ -48,7 +48,8 @@ const envSchema = z.object({
   APP_URL: z.url().optional(),
 });
 
-const parsed = envSchema.safeParse(process.env);
+// Una variable vacía cuenta como no puesta: en GitHub Actions, un secreto que no existe llega como "".
+const parsed = envSchema.safeParse(Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== "")));
 if (!parsed.success) {
   console.error("Configuración inválida:");
   for (const issue of parsed.error.issues) console.error(`  - ${issue.path.join(".")}: ${issue.message}`);

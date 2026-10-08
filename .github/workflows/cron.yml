@@ -53,6 +53,9 @@ jobs:
           APP_URL: ${{ vars.APP_URL }}
           NTFY_SERVER: ${{ vars.NTFY_SERVER }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          # Para borrar los comprobantes de pago de más de 3 meses (sin ellas, se omite).
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: node scripts/cron.ts
 
       # Señal de vida para healthchecks.io: si deja de llegar, avisa que el cron se detuvo.
