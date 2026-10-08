@@ -7,7 +7,7 @@ import { isPriceVisible } from "../shared/lib/format.ts";
 import {
   RECEIPT_MAX_BYTES,
   RECEIPT_RETENTION_MONTHS,
-  RECEIPTS_PER_APPOINTMENT,
+  RECEIPT_UPLOAD_ATTEMPTS,
   receiptInputSchema,
 } from "../shared/lib/validations/payment.ts";
 import type {
@@ -38,6 +38,8 @@ const EXTENSIONS: Record<string, string> = {
   "image/heic": "heic",
   "application/pdf": "pdf",
 };
+
+const ALREADY_SENT = "Ya enviaste el comprobante de esta cita. Si te equivocaste de archivo, escríbele al negocio por WhatsApp.";
 
 /** A una cita cancelada o en la que el paciente no se presentó ya no se le envían comprobantes. */
 const CLOSED_STATUSES = ["cancelled", "no_show"];
@@ -148,9 +150,10 @@ export const paymentService = {
            from payment_receipts where appointment_id = $1`,
         [appointment.id],
       );
-      // Unos pocos por cita (para corregir uno equivocado) y un tope de intentos sin terminar.
-      if ((sent?.ready ?? 0) >= RECEIPTS_PER_APPOINTMENT || (sent?.total ?? 0) >= RECEIPTS_PER_APPOINTMENT * 2) {
-        throw new AppError("conflict", "Ya enviaste varios comprobantes para esta cita. Si necesitas otro, escríbele al negocio.");
+      // Un comprobante por cita, y un tope de intentos que no terminaron de subirse.
+      if ((sent?.ready ?? 0) > 0) throw new AppError("conflict", ALREADY_SENT);
+      if ((sent?.total ?? 0) >= RECEIPT_UPLOAD_ATTEMPTS) {
+        throw new AppError("conflict", "Demasiados intentos de subida para esta cita. Envía el comprobante por WhatsApp al negocio.");
       }
       const id = randomUUID();
       const storagePath = `${businessId}/${appointment.id}/${id}.${EXTENSIONS[data.contentType]}`;
@@ -181,11 +184,17 @@ export const paymentService = {
         : null;
       if (!receipt) throw new AppError("not_found", "Comprobante no encontrado.");
       if (receipt.status === "pending") {
+        // Dos pestañas a la vez: la cita está bloqueada, así que sólo la primera queda.
+        const alreadySent = await one(db, "select 1 from payment_receipts where appointment_id = $1 and status = 'ready'", [appointment.id]);
+        if (alreadySent) {
+          await db.query("delete from payment_receipts where id = $1", [receiptId]);
+          return { receipt: null, discarded: receipt.storagePath, tooLarge: null };
+        }
         const size = await storage.sizeOf(receipt.storagePath);
         if (size === null) throw new AppError("conflict", "El comprobante no terminó de subirse. Vuelve a intentarlo.");
         if (size > RECEIPT_MAX_BYTES) {
           await db.query("delete from payment_receipts where id = $1", [receiptId]);
-          return { receipt: null, tooLarge: receipt.storagePath };
+          return { receipt: null, discarded: null, tooLarge: receipt.storagePath };
         }
         await db.query("update payment_receipts set status = 'ready', size_bytes = $2 where id = $1", [receiptId, size]);
         const updated = (await one<Appointment>(
@@ -204,10 +213,14 @@ export const paymentService = {
         });
       }
       const ready = await one<PaymentReceipt>(db, `select ${paymentReceiptColumns()} from payment_receipts where id = $1`, [receiptId]);
-      return { receipt: ready!, tooLarge: null };
+      return { receipt: ready!, discarded: null, tooLarge: null };
     });
+    if (result.discarded) {
+      await removeReceiptFiles([result.discarded]);
+      throw new AppError("conflict", ALREADY_SENT);
+    }
     if (!result.receipt) {
-      await removeReceiptFiles([result.tooLarge]);
+      await removeReceiptFiles([result.tooLarge!]);
       throw new AppError("validation", "El archivo supera los 10 MB.");
     }
     return result.receipt;

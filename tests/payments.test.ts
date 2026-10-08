@@ -165,13 +165,22 @@ const confirmed = sql(`select body from notifications where to_email = 'pago1@ex
 ok(confirmed && !/Pago por transferencia/.test(confirmed), "pagada: la confirmación ya no pide la transferencia", confirmed.slice(0, 300));
 
 console.log("Límites");
-for (let i = 2; i <= 5; i++) {
-  const { body } = await anonymous("POST", `/public/payments/${token}/receipts`, { ...receiptInput, fileName: `otro-${i}.png` });
-  await put(body.upload, PNG);
-  await anonymous("POST", `/public/payments/${token}/receipts/${body.receipt.id}/complete`);
-}
 r = await anonymous("POST", `/public/payments/${token}/receipts`, receiptInput);
-ok(r.status === 409 && /varios comprobantes/.test(r.body.error.message), "más de 5 comprobantes por cita → 409", r.body);
+ok(r.status === 409 && /Ya enviaste el comprobante/.test(r.body.error.message), "un comprobante por cita: el segundo → 409", r.body);
+// Dos pestañas a la vez: las dos piden subir antes de que ninguna termine; sólo vale la primera.
+const twoTabs = (await book(paid.id, slots[3], "doble1")).body.payment.token;
+const tabA = (await anonymous("POST", `/public/payments/${twoTabs}/receipts`, receiptInput)).body;
+const tabB = (await anonymous("POST", `/public/payments/${twoTabs}/receipts`, receiptInput)).body;
+await put(tabA.upload, PNG);
+await put(tabB.upload, PNG);
+const completedA = await anonymous("POST", `/public/payments/${twoTabs}/receipts/${tabA.receipt.id}/complete`);
+const completedB = await anonymous("POST", `/public/payments/${twoTabs}/receipts/${tabB.receipt.id}/complete`);
+const tabBPath = join(process.env.LOCAL_STORAGE_DIR!, "comprobantes", sql(`select storage_path from payment_receipts where id = '${tabA.receipt.id}'`).replace(tabA.receipt.id, tabB.receipt.id));
+ok(
+  completedA.status === 200 && completedB.status === 409 && sql(`select count(*) from payment_receipts r join appointments a on a.id = r.appointment_id where a.payment_token = '${twoTabs}'`) === "1" && !existsSync(tabBPath),
+  "dos pestañas a la vez: queda un solo comprobante y el otro archivo se borra",
+  [completedA.status, completedB.status],
+);
 r = await book(paid.id, slots[2], "cancela1");
 const cancelToken = r.body.payment.token;
 await owner("PATCH", `${B}/appointments/${r.body.appointmentId}/status`, { status: "cancelled" });

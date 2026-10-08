@@ -246,8 +246,8 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   frontend), `receipt_at` (último comprobante) y `paid_at`. Con datos bancarios y precio mayor que 0,
   la confirmación de la reserva (`payment`) y los emails de reserva y confirmación (mientras no esté
   pagada) llevan los datos y el enlace. Sin sesión: `GET /public/payments/:token`, `POST
-  /public/payments/:token/receipts` (JPG, PNG, WebP, HEIC o PDF, 10 MB, 5 por cita; no en citas
-  canceladas o "No asistió") y `POST …/receipts/:id/complete` (avisa por email al negocio). En el
+  /public/payments/:token/receipts` (JPG, PNG, WebP, HEIC o PDF, 10 MB; **uno por cita**: enviado,
+  se rechaza otro, también si dos pestañas suben a la vez; no en citas canceladas o "No asistió") y `POST …/receipts/:id/complete` (avisa por email al negocio). En el
   panel: `GET /businesses/:id/appointments/:id/receipts`, `GET /businesses/:id/payment-receipts/:id/url`
   (URL firmada de 5 min) y `PATCH /businesses/:id/appointments/:id/payment` (`{ paid }`). Los
   comprobantes se borran con la cita (al eliminar el paciente o el negocio, también sus archivos) y,

@@ -20,8 +20,11 @@ export type BankAccountInput = z.infer<typeof bankAccountSchema>;
 /** Comprobante de pago que sube el paciente (foto de la transferencia o PDF del banco). */
 export const RECEIPT_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "application/pdf"] as const;
 export const RECEIPT_MAX_BYTES = 10 * 1024 * 1024;
-/** Comprobantes por cita: para corregir uno equivocado, sin abrir la puerta al abuso. */
-export const RECEIPTS_PER_APPOINTMENT = 5;
+/**
+ * Un comprobante por cita: enviado, ya no se sube otro (si el paciente se equivocó de archivo, se lo
+ * manda al negocio por WhatsApp). Intentos de subida por cita, contando los que no terminaron.
+ */
+export const RECEIPT_UPLOAD_ATTEMPTS = 5;
 /** Meses después de la cita en que se borran sus comprobantes (así el almacenamiento no se llena). */
 export const RECEIPT_RETENTION_MONTHS = 3;
 
