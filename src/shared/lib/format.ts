@@ -1,6 +1,8 @@
 // Copia de agenda-front/src/lib/format.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
-import { format } from "date-fns";
-import { es } from "date-fns/locale";
+// Sólo la función y el idioma que se usan: importar "date-fns" o "date-fns/locale" enteros carga cientos
+// de módulos y le cuesta al backend ~1 s de CPU en cada arranque en frío (en Vercel se paga).
+import { format } from "date-fns/format";
+import { es } from "date-fns/locale/es";
 import { DEFAULT_CURRENCY, DEFAULT_TIMEZONE } from "./constants/app.ts";
 import { parseISODate } from "./time.ts";
 import type { ISODate, Service, TimeString } from "../types/index.ts";

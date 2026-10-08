@@ -28,6 +28,7 @@ import type {
 import { describeAppointment, logAudit } from "./audit.ts";
 import { lockBusiness, parseInput } from "./context.ts";
 import { listSchedules } from "./business-data-service.ts";
+import { receiptStorage } from "./file-storage.ts";
 import { notifyAppointmentChange } from "./notifications.ts";
 import { assertAppointmentLimit, assertClientLimit } from "./plan-limits.ts";
 import { listProfessionals } from "./professional-service.ts";
@@ -153,7 +154,7 @@ function toPublicBlockedTime({ reason: _reason, createdAt: _created, ...block }:
 }
 
 /** "María López Vera" → "María L." (para saludar sin exponer el nombre completo). */
-function greetingName(name: string): string {
+export function greetingName(name: string): string {
   const [first = "", second = ""] = name.trim().split(/\s+/);
   return second ? `${first} ${second[0].toUpperCase()}.` : first;
 }
@@ -365,6 +366,11 @@ export const publicBookingService = {
         // A quien reservó con la cédula de un cliente existente no se le muestra su email completo.
         clientEmail: knownClient ? maskEmail(client.email) : client.email,
         emailSent,
+        // Pago por transferencia: los datos de la agenda y el enlace para subir el comprobante.
+        payment:
+          professional.bankAccount && appointment.price > 0
+            ? { bankAccount: professional.bankAccount, token: appointment.paymentToken, receiptsEnabled: Boolean(receiptStorage) }
+            : null,
       };
     });
   },

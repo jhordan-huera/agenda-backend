@@ -1,4 +1,4 @@
-import { config } from "../config.ts";
+import { config, isLocalDatabaseUrl } from "../config.ts";
 import { hashPassword } from "../services/accounts.ts";
 import { many, pool, transaction, type Db } from "./pool.ts";
 import { createSeedDatabase } from "./seed-data.ts";
@@ -56,19 +56,8 @@ async function insertRows(db: Db, table: string, columns: string[], rows: unknow
   }
 }
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1", ""]);
-
-/** El host de DATABASE_URL es este equipo (o un socket local, sin host). */
-function isLocalDatabase(url: string): boolean {
-  try {
-    return LOCAL_HOSTS.has(new URL(url).hostname);
-  } catch {
-    return false;
-  }
-}
-
 async function seed() {
-  if (!isLocalDatabase(config.databaseUrl)) {
+  if (!isLocalDatabaseUrl(config.databaseUrl)) {
     console.error(
       "✗ DATABASE_URL no es una base de datos local: los datos demo sólo se cargan en desarrollo, nunca en producción.",
     );
@@ -159,11 +148,12 @@ async function seed() {
       "professionals",
       [
         "id", "business_id", "user_id", "display_name", "title", "avatar_url", "color", "email", "all_services",
-        "notify_new_appointments", "daily_agenda", "is_active", "sort_order", "created_at",
+        "notify_new_appointments", "daily_agenda", "is_active", "sort_order", "created_at", "meeting_url", "bank_account",
       ],
       data.professionals.map((p) => [
         p.id, p.businessId, p.userId, p.displayName, p.title, p.avatarUrl, p.color, p.email, p.allServices,
-        p.notifyNewAppointments, p.dailyAgenda, p.isActive, p.sortOrder, p.createdAt,
+        p.notifyNewAppointments, p.dailyAgenda, p.isActive, p.sortOrder, p.createdAt, p.meetingUrl,
+        p.bankAccount ? JSON.stringify(p.bankAccount) : null,
       ]),
     );
     await insertRows(
@@ -217,11 +207,12 @@ async function seed() {
       "appointments",
       [
         "id", "business_id", "client_id", "service_id", "professional_id", "date", "start_time", "end_time",
-        "status", "notes", "price", "home_visit", "is_virtual", "source", "created_at", "updated_at",
+        "status", "notes", "price", "home_visit", "is_virtual", "source", "payment_token", "created_at", "updated_at",
       ],
       data.appointments.map((a) => [
         a.id, a.businessId, a.clientId, a.serviceId, a.professionalId, a.date, a.startTime, a.endTime,
-        a.status, a.notes, a.price, a.homeVisit ? JSON.stringify(a.homeVisit) : null, a.isVirtual, a.source, a.createdAt, a.updatedAt,
+        a.status, a.notes, a.price, a.homeVisit ? JSON.stringify(a.homeVisit) : null, a.isVirtual, a.source, a.paymentToken,
+        a.createdAt, a.updatedAt,
       ]),
     );
     await insertRows(

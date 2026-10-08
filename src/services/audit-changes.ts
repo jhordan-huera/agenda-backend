@@ -124,6 +124,8 @@ export interface ProfessionalForAudit {
   color: string;
   email: string;
   meetingUrl: string;
+  /** "Banco Pichincha · Ahorros · 2200123456 · Ana Ruiz" (null: sin datos bancarios). */
+  bankAccount: string | null;
   memberName: string | null;
   servicesLabel: string;
   notifyNewAppointments: boolean;
@@ -138,6 +140,7 @@ export const PROFESSIONAL_FIELDS: ChangeField<ProfessionalForAudit>[] = [
   { key: "color", label: "Color", format: (value: string) => value.toUpperCase() },
   { key: "email", label: "Email de avisos" },
   { key: "meetingUrl", label: "Enlace de videollamada" },
+  { key: "bankAccount", label: "Datos bancarios", format: (value: string | null) => value ?? "Sin datos bancarios" },
   { key: "memberName", label: "Usuario del equipo", format: (value: string | null) => value ?? "Sin usuario" },
   { key: "servicesLabel", label: "Servicios que atiende" },
   { key: "notifyNewAppointments", label: "Aviso de cada cita nueva", format: yesNo },

@@ -8,7 +8,8 @@
  * Variables: DATABASE_URL, DATABASE_SSL, GMAIL_USER, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET,
  * GMAIL_REFRESH_TOKEN, GMAIL_FROM_NAME, FRONTEND_URL (enlaces de los emails), NODE_ENV=production
  * (si no, los emails se redirigen a la cuenta de Gmail), NTFY_TOPIC y, opcionales, NTFY_SERVER
- * (por defecto https://ntfy.sh) y APP_URL (enlace del aviso).
+ * (por defecto https://ntfy.sh), APP_URL (enlace del aviso) y SUPABASE_URL y
+ * SUPABASE_SERVICE_ROLE_KEY (sin ellas no se borran los comprobantes de más de 3 meses).
  *
  * Prueba local: node --env-file=.env scripts/cron.ts
  */
@@ -33,6 +34,7 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   booking_received: ["Aviso de nueva reserva (al negocio)", "Avisos de nueva reserva (al negocio)"],
   professional_new_appointment: ["Aviso de cita nueva (al profesional)", "Avisos de cita nueva (al profesional)"],
   professional_daily_agenda: ["Agenda del día (al profesional)", "Agendas del día (al profesional)"],
+  payment_receipt_received: ["Comprobante de pago (al negocio)", "Comprobantes de pago (al negocio)"],
   business_created: ["Negocio creado", "Negocios creados"],
   team_invite: ["Alta en un equipo", "Altas en un equipo"],
   password_reset: ["Contraseña cambiada", "Contraseñas cambiadas"],
@@ -191,7 +193,8 @@ async function main(): Promise<void> {
       `Recordatorios: ${report.reminders} · enviados desde la anterior: ${report.sentSinceLastRun} · ` +
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +
         `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ` +
-        `emails sin contenido (más de 90 días): ${report.emailContentPurged} · ${report.durationMs} ms`,
+        `emails sin contenido (más de 90 días): ${report.emailContentPurged} · ` +
+        `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"} · ${report.durationMs} ms`,
     );
     const notices = [buildNotice(report, { gmailConfigured: Boolean(config.gmail) }), buildSecurityNotice(report)].filter(
       (notice) => notice !== null,

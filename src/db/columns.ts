@@ -57,6 +57,7 @@ const professionalOwnColumns = columns({
   color: "color",
   email: "email",
   meetingUrl: "meeting_url",
+  bankAccount: "bank_account",
   allServices: "all_services",
   notifyNewAppointments: "notify_new_appointments",
   dailyAgenda: "daily_agenda",
@@ -126,8 +127,20 @@ export const appointmentColumns = columns({
   isVirtual: "is_virtual",
   source: "source",
   arrivedAt: "arrived_at",
+  paymentToken: "payment_token",
+  receiptAt: "receipt_at",
+  paidAt: "paid_at",
   createdAt: "created_at",
   updatedAt: "updated_at",
+});
+
+export const paymentReceiptColumns = columns({
+  id: "id",
+  appointmentId: "appointment_id",
+  fileName: "file_name",
+  contentType: "content_type",
+  sizeBytes: "size_bytes",
+  createdAt: "created_at",
 });
 
 export const scheduleColumns = columns({

@@ -161,12 +161,12 @@ const old = (entityType, days, summary) =>
        values ('Prueba', '${entityType}.test', '${entityType}', '${summary}', now() - interval '${days} days')`);
 old("session", 100, "sesión vieja");
 old("session", 10, "sesión reciente");
-old("client", 400, "acción vieja");
-old("client", 300, "acción reciente");
+old("client", 160, "acción vieja");
+old("client", 140, "acción reciente");
 old("clinical_record", 730, "acceso clínico de hace 2 años");
 const purged = Number(sql("select purge_audit_logs()"));
 const left = sql("select string_agg(summary, ', ' order by summary) from audit_logs where actor_name = 'Prueba'");
-ok(purged >= 2 && left === "acceso clínico de hace 2 años, acción reciente, sesión reciente", "limpieza: sesiones 90 días, acciones 1 año, historia clínica 5 años", [purged, left]);
+ok(purged >= 2 && left === "acceso clínico de hace 2 años, acción reciente, sesión reciente", "limpieza: sesiones 90 días, acciones 5 meses, historia clínica 5 años", [purged, left]);
 ok(/no se puede modificar ni borrar/.test(sqlError("delete from audit_logs where actor_name = 'Prueba'") ?? ""), "tras limpiar, vuelve a estar protegida");
 
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de la auditoría pasaron");

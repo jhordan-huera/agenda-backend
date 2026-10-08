@@ -1,0 +1,56 @@
+# Publica el backend en AWS Lambda al hacer push a main (Vercel sigue publicando también, hasta que se
+# quite allí). Sin claves de AWS guardadas: GitHub asume un rol de IAM con OIDC (ver README,
+# "Backend en AWS Lambda"). En Settings → Secrets and variables → Actions:
+#   Variables: AWS_LAMBDA_FUNCTION (nombre de la función, p. ej. agenda-backend) y
+#              AWS_DEPLOY_ROLE_ARN (ARN del rol que asume GitHub)
+#   Secreto:   AWS_LAMBDA_URL (Function URL, para comprobar /api/health). Es secreto porque el
+#              repositorio es público y los registros de Actions muestran el valor de las variables.
+# Mientras no exista AWS_LAMBDA_FUNCTION, no hace nada.
+name: Publicar en AWS Lambda
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-lambda
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: vars.AWS_LAMBDA_FUNCTION != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Empaquetar (dependencias de producción)
+        run: npm run lambda:package
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-west-2
+
+      - name: Subir el código a Lambda
+        env:
+          FUNCTION: ${{ vars.AWS_LAMBDA_FUNCTION }}
+        run: |
+          aws lambda update-function-code --function-name "$FUNCTION" --zip-file fileb://dist/lambda.zip --query LastUpdateStatus --output text
+          aws lambda wait function-updated --function-name "$FUNCTION"
+
+      - name: Comprobar /api/health
+        env:
+          LAMBDA_URL: ${{ secrets.AWS_LAMBDA_URL }}
+        run: |
+          if [ -z "$LAMBDA_URL" ]; then echo "Sin el secreto AWS_LAMBDA_URL: no se comprueba."; exit 0; fi
+          curl -fsS --retry 3 --retry-delay 5 -o /dev/null -w "/api/health → %{http_code}\n" "${LAMBDA_URL%/}/api/health"

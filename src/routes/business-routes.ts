@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { handle, queryParam } from "../http/handlers.ts";
+import { handle, limitRequests, queryParam } from "../http/handlers.ts";
 import { businessService, subscriptionService, teamService, userService } from "../services/account-service.ts";
 import { auditLogService, notificationService } from "../services/activity-service.ts";
 import { clinicalAttachmentService } from "../services/clinical-attachment-service.ts";
@@ -13,6 +13,8 @@ import {
   serviceService,
   setAppointmentArrival,
 } from "../services/business-data-service.ts";
+import { imageService } from "../services/image-service.ts";
+import { paymentService } from "../services/payment-service.ts";
 import { professionalService } from "../services/professional-service.ts";
 
 /* ------------------------------------------------------------ /api/users ---- */
@@ -26,6 +28,17 @@ userRoutes.get(
 userRoutes.put(
   "/:userId",
   handle((req) => userService.update(req.ctx, req.params.userId, req.body)),
+);
+
+/* ------------------------------------------------------------ /api/images --- */
+
+/** Logo o foto de perfil: URL firmada para subirla al almacenamiento y su dirección pública. */
+export const imageRoutes = Router();
+
+imageRoutes.post(
+  "/",
+  limitRequests({ windowMinutes: 15, max: 40, message: "Demasiadas imágenes seguidas. Espera unos minutos." }),
+  handle((req) => imageService.requestUpload(req.ctx, req.body)),
 );
 
 /* ------------------------------------------------------- /api/businesses ---- */
@@ -252,6 +265,18 @@ businessRoutes.patch(
 businessRoutes.patch(
   "/:businessId/appointments/:appointmentId/arrival",
   handle((req) => setAppointmentArrival(req.ctx, req.params.businessId, req.params.appointmentId, req.body?.arrived)),
+);
+businessRoutes.patch(
+  "/:businessId/appointments/:appointmentId/payment",
+  handle((req) => paymentService.setPaid(req.ctx, req.params.businessId, req.params.appointmentId, req.body?.paid)),
+);
+businessRoutes.get(
+  "/:businessId/appointments/:appointmentId/receipts",
+  handle((req) => paymentService.listReceipts(req.ctx, req.params.businessId, req.params.appointmentId)),
+);
+businessRoutes.get(
+  "/:businessId/payment-receipts/:receiptId/url",
+  handle((req) => paymentService.receiptUrl(req.ctx, req.params.businessId, req.params.receiptId)),
 );
 businessRoutes.post(
   "/:businessId/appointments/:appointmentId/whatsapp-notice",

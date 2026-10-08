@@ -56,6 +56,8 @@ import { logAudit } from "./audit.ts";
 import { insertBusiness, isSlugTaken } from "./business-factory.ts";
 import { authorizeSuperAdmin, parseInput, requireUser, type RequestContext } from "./context.ts";
 import { fileStorage } from "./file-storage.ts";
+import { releaseImages } from "./image-service.ts";
+import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
 import { appOrigin, PASSWORD_MASK, queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
 import { assertRoleAllowed, assertUserLimit } from "./plan-limits.ts";
@@ -440,7 +442,7 @@ export const adminService = {
   async deleteBusiness(ctx: RequestContext, businessId: string, input: unknown): Promise<void> {
     const actor = authorizeSuperAdmin(ctx);
     const { confirmName } = parseInput(businessDeletionSchema, input);
-    const files = await transaction(async (db) => {
+    const { files, receipts, images } = await transaction(async (db) => {
       const business = await findBusiness(db, businessId);
       if (!isSameBusinessName(confirmName, business.name)) {
         throw new AppError("validation", `El nombre no coincide. Escribe «${business.name}» para confirmar.`);
@@ -453,6 +455,12 @@ export const adminService = {
         [businessId],
       );
       const members = await many<{ id: string }>(db, "select user_id as id from business_users where business_id = $1", [businessId]);
+      const receipts = await receiptPaths(db, { businessId });
+      const images = await many<{ url: string | null }>(
+        db,
+        "select logo_url as url from businesses where id = $1 union select avatar_url from professionals where business_id = $1",
+        [businessId],
+      );
 
       // Antes que el negocio, lo que frenaría la cascada: la historia clínica (sus triggers impiden
       // modificarla, y borrar una cita le pondría appointment_id a null) y las citas (sus
@@ -461,13 +469,13 @@ export const adminService = {
         await db.query(`delete from ${table} where business_id = $1`, [businessId]);
       }
       await db.query("delete from businesses where id = $1", [businessId]); // El resto cae en cascada.
-      const accounts = await many<{ id: string }>(
+      const accounts = await many<{ id: string; avatarUrl: string | null }>(
         db,
         `delete from users u
           where u.id = any($1::uuid[]) and u.platform_role is null
             and not exists (select 1 from business_users bu where bu.user_id = u.id)
             and not exists (select 1 from businesses b where b.owner_id = u.id)
-          returning u.id`,
+          returning u.id, u.avatar_url as "avatarUrl"`,
         [members.map((member) => member.id)],
       );
 
@@ -481,7 +489,7 @@ export const adminService = {
           accounts.length ? ` y ${plural(accounts.length, "cuenta", "cuentas")} de su equipo` : ""
         }`,
       });
-      return files;
+      return { files, receipts, images: [...images.map((image) => image.url), ...accounts.map((account) => account.avatarUrl)] };
     });
 
     // Los archivos, una vez confirmado el borrado. Si falla, quedan sin ningún registro que los enlace.
@@ -490,6 +498,8 @@ export const adminService = {
         .remove(files.map((file) => file.storagePath))
         .catch((error: unknown) => console.error("No se pudieron borrar los archivos del negocio eliminado:", error));
     }
+    await removeReceiptFiles(receipts);
+    await releaseImages(images);
   },
 
   /** Cambio de plan desde el panel de plataforma: se aplica y se avisa al propietario por email. */

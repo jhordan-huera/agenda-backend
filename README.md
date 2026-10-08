@@ -11,16 +11,39 @@ Zod · bcrypt · Nodemailer (Gmail OAuth2).
 ```bash
 npm run dev:local              # API + base de datos PostgreSQL en este equipo, con los datos demo
 npm run dev:local -- --reset   # borra los datos locales y vuelve a cargar la demo
+npm run dev:local -- --recordatorios   # también los recordatorios automáticos de las citas demo
 ```
 
 Crea la base en `.local-db/` la primera vez (necesita `brew install postgresql@16`), la conserva entre
 arranques y la detiene al salir (Ctrl+C). Aplica las migraciones nuevas en cada arranque: es el sitio
-para probar una migración antes de aplicarla en Supabase. No lee `.env`, así que no toca Supabase,
-no envía emails (quedan en cola, se ven en el historial de emails del panel) ni pide CAPTCHA.
+para probar una migración antes de aplicarla en Supabase. De `.env` sólo lee la cuenta de Gmail
+(`GMAIL_*`): nunca la base, Supabase ni el CAPTCHA. Con ella los emails se envían de verdad, pero
+**todos a tu propio correo** (`EMAIL_REDIRECT_TO` o, si no, `GMAIL_USER`) con el destinatario
+original en el asunto (`[Para maria@…]`); lo que estaba en cola de otras sesiones no se envía. Sin
+ella quedan en cola (historial de emails del panel). Los recordatorios automáticos de las citas
+demo (unos 20 al día) sólo con `--recordatorios`.
 Después arranca el frontend (`npm run dev` en agenda-front) y entra con `jhordan@demo.com` o
 `admin@demo.com` (contraseña `demo1234`).
 
-`npm run dev`, en cambio, usa el `DATABASE_URL` de `.env`: la base **real**.
+### Con la base de producción, sin gastar CPU de Vercel
+
+```bash
+npm run dev        # pregunta: 1) base local con datos demo · 2) base de producción
+npm run dev:prod   # directo a la base de producción (DATABASE_URL de .env)
+```
+
+Para tareas reales hechas por ti (dar de alta un negocio, revisar datos de un cliente) desde este
+equipo: lo que hagas es real, pero la CPU es la de tu ordenador. Con `config.productionDbFromHere`:
+- no arranca tareas de fondo (cola de emails, recordatorios): siguen en el cron de GitHub;
+- los emails de lo que hagas van a sus destinatarios reales (sin redirección) con enlaces a la web
+  publicada (`APP_URL`; por defecto la de Vercel);
+- con `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` en `.env`, los archivos, comprobantes, logos y
+  fotos van al Supabase Storage de producción; sin ellas no se pueden subir (quedarían en el disco
+  de este equipo);
+- `/api/health` devuelve `productionDatabase: true` y el frontend local (`npm run dev` en agenda-front)
+  muestra el aviso "Base de PRODUCCIÓN".
+
+Nunca uses `db:seed` ni `npm test` contra producción (los dos se niegan con una base remota).
 
 ### Ramas: `dev` para trabajar, `main` para publicar
 
@@ -91,7 +114,9 @@ Publica primero la API y después agenda-front si el cambio toca a los dos.
 | `npm run db:migrate` | Aplica las migraciones pendientes de `db/migrations` |
 | `npm run db:seed` | Carga los datos demo (no hace nada si ya hay datos; `-- --reset` lo **borra todo** antes) |
 | `npm run db:create-admin -- <email> <contraseña> [nombre] [apellido]` | Crea el super admin |
+| `npm run db:move-images` | Pasa al bucket `imagenes` los logos y fotos antiguos guardados dentro de la base (data URL); se puede repetir |
 | `npm run sync:shared` | Copia de agenda-front el código compartido (ver abajo) |
+| `npm run lambda:package` | Prepara `dist/lambda.zip` para AWS Lambda (ver "Backend en AWS Lambda") |
 
 ## Estructura
 
@@ -211,7 +236,33 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   propietario crea y edita sus formatos (`/clinical-templates`, cada cambio es una versión nueva; un
   campo existente no cambia de tipo) o duplica uno de la plataforma. (`services.clinical_template_id` sigue en la API, pero el panel
   ya no lo ofrece: se usa el formato del negocio.) Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
-  Storage (en local, carpeta `storage/` y rutas `/api/files`); no se borran.
+  Storage (en local, carpeta `storage/historias-clinicas/` y rutas `/api/files`); no se borran.
+- **Retención de la auditoría** (migración 026): `purge_audit_logs()` (la llama el cron) borra los
+  inicios y cierres de sesión a los 90 días, las acciones del panel a los 5 meses (antes, 1 año) y
+  los accesos y cambios en la historia clínica a los 5 años. Las citas, pacientes y pagos no se
+  tocan; nadie más puede borrar ni editar la auditoría (triggers).
+- **Pago por transferencia** (migración 025): `professionals.bank_account` (jsonb: banco, tipo de
+  cuenta `savings`/`checking`, número sólo con dígitos, titular y cédula/RUC opcional) se guarda con
+  la ficha del profesional. Cada cita tiene `payment_token` (enlace privado `/pago/:token` del
+  frontend), `receipt_at` (último comprobante) y `paid_at`. Con datos bancarios y precio mayor que 0,
+  la confirmación de la reserva (`payment`) y los emails de reserva y confirmación (mientras no esté
+  pagada) llevan los datos y el enlace. Sin sesión: `GET /public/payments/:token`, `POST
+  /public/payments/:token/receipts` (JPG, PNG, WebP, HEIC o PDF, 10 MB; **uno por cita**: enviado,
+  se rechaza otro, también si dos pestañas suben a la vez; no en citas canceladas o "No asistió") y `POST …/receipts/:id/complete` (avisa por email al negocio). En el
+  panel: `GET /businesses/:id/appointments/:id/receipts`, `GET /businesses/:id/payment-receipts/:id/url`
+  (URL firmada de 5 min) y `PATCH /businesses/:id/appointments/:id/payment` (`{ paid }`). Los
+  comprobantes se borran con la cita (al eliminar el paciente o el negocio, también sus archivos) y,
+  para que el almacenamiento no se llene, el cron borra los de citas de hace más de 3 meses
+  (`RECEIPT_RETENTION_MONTHS`; la cita conserva `paid_at` y `receipt_at`). El navegador reduce las
+  fotos antes de subirlas (WebP, 2000 px: unos 200–450 KB); los PDF van tal cual.
+- **Almacenamiento** (`src/services/file-storage.ts`): tres buckets de Supabase Storage que se crean
+  solos con su tamaño máximo y sus tipos de archivo: `historias-clinicas` (privado, o el de
+  `STORAGE_BUCKET`), `comprobantes` (privado) e `imagenes` (público: logos y fotos). Las imágenes se
+  suben con `POST /images` (`target`: avatar, logo o professional; 2 MB) y se guarda su dirección
+  pública; la API no acepta imágenes nuevas que no estén en el bucket (las antiguas en data URL valen
+  mientras no se cambien; `npm run db:move-images` las pasa). Al cambiar o quitar una imagen se
+  borra la que ya nadie usa. En local, carpeta `storage/<bucket>/` (las imágenes en
+  `/api/files/public/imagenes/…`); con la base de producción y sin Supabase en `.env`, no hay subidas.
 - **Equipo de la plataforma** (migración 020): `users.platform_owner` marca al super admin principal
   (la migración lo pone en el que ya existía; `db:create-admin` lo pone si aún no hay ninguno).
   `GET/POST /admin/platform-admins` lista y agrega super admins (agregar, sólo el principal). Las
@@ -394,7 +445,7 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    | `FRONTEND_URL` | URL pública del frontend (p. ej. `https://agenda-front.vercel.app`) |
    | `TRUST_PROXY` | `1` |
    | `GMAIL_USER`, `GMAIL_FROM_NAME`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` | Los de `.env` |
-   | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Para los archivos de la historia clínica (Supabase → Project Settings → API Keys) |
+   | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Almacenamiento: historia clínica, comprobantes de pago, logos y fotos (Supabase → Project Settings → API Keys). Sin ellas no se pueden subir archivos ni imágenes |
    | `PROXY_SECRET` | El de `.env` (mismo valor que en el frontend) |
    | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | CAPTCHA de la página de reservas (Cloudflare → Turnstile → Add widget, hostname del frontend, modo *Managed*) |
 
@@ -404,7 +455,9 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    por su cuenta a la base y a Gmail, sin pasar por Vercel):
    - Secrets: `DATABASE_URL` (la misma de Vercel), `GMAIL_USER`, `GMAIL_CLIENT_ID`,
      `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `NTFY_TOPIC` (canal de ntfy al que te suscribes en
-     el celular) y, opcional, `HEALTHCHECK_URL` (healthchecks.io avisa si el cron deja de ejecutarse).
+     el celular), `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` (las de Vercel: para borrar los
+     comprobantes de pago de más de 3 meses; sin ellas se omite) y, opcional, `HEALTHCHECK_URL`
+     (healthchecks.io avisa si el cron deja de ejecutarse).
    - Variables: `APP_URL` (la del frontend: enlaces de los emails y del aviso) y, opcionales,
      `GMAIL_FROM_NAME` (por defecto "Agenda360") y `NTFY_SERVER`.
    - Copias de seguridad: secreto `BACKUP_PASSPHRASE` (el de `.env`), variable `BACKUP_EMAIL`
@@ -421,6 +474,52 @@ lanzar el workflow con la API de GitHub (`POST /repos/<dueño>/agenda-backend/ac
 con `{"ref":"main"}` y un token con permiso *Actions: write* sólo para este repositorio). GitHub
 pausa los cron de los repositorios públicos tras 60 días sin actividad (avisa por email antes):
 basta con un commit o con reactivarlo en Actions.
+
+## Backend en AWS Lambda (us-west-2)
+
+La misma API, sin cambios de código entre una y otra: [Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter)
+arranca `node src/server.ts` (con `run.sh`) y le pasa las peticiones. La API sabe que está alojada
+(`AWS_LAMBDA_FUNCTION_NAME`): no arranca tareas de fondo (las hace el cron de GitHub) y, como Lambda
+congela la ejecución al responder, envía los emails que la petición puso en cola **antes** de
+responder (`flushEmailDelivery`, ~1 s más sólo en las peticiones que envían emails). Oregón, la
+misma región de AWS que Supabase: misma latencia que Vercel `pdx1`. Gratis: el nivel siempre
+gratuito de Lambda (1 M de peticiones y 400.000 GB-s al mes) queda muy por encima del uso.
+
+Mientras dure la migración, Vercel sigue sirviendo la API: las dos versiones usan la misma base y el
+frontend decide a cuál llama con su variable `API_URL`.
+
+1. **Cuenta de AWS** en el plan *Paid* (el *Free* cierra la cuenta a los 6 meses; lo gratuito de
+   Lambda sigue siéndolo), con MFA y un presupuesto con alerta de 1 USD (Billing → Budgets).
+2. **Función** (región *US West (Oregon)*): Create function → Author from scratch, nombre
+   `agenda-backend`, runtime **Node.js 24.x**, arquitectura **arm64**.
+   - Código: `npm run lambda:package` y subir `dist/lambda.zip` (Upload from → .zip file).
+   - Runtime settings → Handler: `run.sh`.
+   - Layers → Add a layer → Specify an ARN: el de *LambdaAdapterLayerArm64* para us-west-2 que
+     indica el README de Lambda Web Adapter.
+   - Configuration → General: memoria 1024 MB, timeout 30 s.
+   - Configuration → Environment variables: `AWS_LAMBDA_EXEC_WRAPPER=/opt/bootstrap`, `PORT=8080`
+     y las mismas de la API en Vercel (tabla de arriba) con `DATABASE_POOL_MAX=2` (Lambda atiende
+     una petición por instancia) y `APP_URL` con la URL del frontend.
+   - Configuration → Function URL → Create, Auth type **NONE**. `<url>/api/health` debe responder
+     `{"ok":true,"database":true}`.
+3. **Publicación desde GitHub** (`.github/workflows/deploy-lambda.yml`, al hacer push a `main`):
+   - IAM → Identity providers → Add provider: OpenID Connect, URL
+     `https://token.actions.githubusercontent.com`, audience `sts.amazonaws.com`.
+   - IAM → Roles → Create role → Web identity: ese proveedor, audience `sts.amazonaws.com`,
+     GitHub organization `jhordan-huera`, repository `agenda-backend`, branch `main`. Permiso
+     (política en línea): `lambda:UpdateFunctionCode`, `lambda:GetFunction` y
+     `lambda:GetFunctionConfiguration` sobre `arn:aws:lambda:us-west-2:<cuenta>:function:agenda-backend`.
+   - Variables del repositorio: `AWS_LAMBDA_FUNCTION` (`agenda-backend`) y `AWS_DEPLOY_ROLE_ARN`
+     (ARN del rol); **secreto** `AWS_LAMBDA_URL` (la Function URL: el repositorio es público y los
+     registros de Actions muestran las variables). Probar con Actions → *Publicar en AWS Lambda* →
+     Run workflow.
+   - CloudWatch → Grupos de registros → `/aws/lambda/agenda-backend` → retención de 1 mes (los
+     registros no se acumulan).
+4. **Cambio:** en el proyecto del frontend en Vercel, `API_URL` = la Function URL (sin `/` final) y
+   Redeploy. Probar el login, una reserva (su email), subir un logo y la agenda.
+   **Vuelta atrás:** `API_URL` otra vez con la URL de la API en Vercel y Redeploy.
+5. Tras unos días estable, borrar el proyecto de la API en Vercel. Los logs quedan en CloudWatch
+   (Lambda → Monitor → View CloudWatch logs).
 
 ## Pendiente
 

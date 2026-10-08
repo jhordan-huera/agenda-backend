@@ -3,6 +3,7 @@ import { config } from "./config.ts";
 import { pool } from "./db/pool.ts";
 import { startReminderJob } from "./jobs/reminders.ts";
 import { startEmailWorker } from "./services/mailer.ts";
+import { fileStorage } from "./services/file-storage.ts";
 
 /** Comprueba la base de datos al arrancar y avisa de lo que falta, sin detener el servidor. */
 async function checkDatabase(): Promise<void> {
@@ -23,10 +24,28 @@ async function checkDatabase(): Promise<void> {
 
 const server = app.listen(config.port, () => {
   console.info(`API de Agenda360 en http://localhost:${config.port}/api (frontend: ${config.frontendUrl})`);
+  if (config.productionDbFromHere) {
+    console.warn(
+      [
+        "",
+        "\x1b[41m\x1b[97m BASE DE PRODUCCIÓN \x1b[0m Lo que hagas aquí es real: negocios, clientes, citas y emails.",
+        "  · Sin tareas de fondo: la cola de emails y los recordatorios siguen en el cron de GitHub.",
+        "  · Los emails de lo que hagas van a sus destinatarios reales,",
+        `    con enlaces a ${config.appUrl}${config.appUrl.includes("localhost") ? "  ⚠ define APP_URL con la web publicada" : ""}.`,
+        fileStorage
+          ? "  · Archivos, comprobantes, logos y fotos van al Supabase Storage de producción."
+          : "  · Sin Supabase en .env: no se pueden subir archivos, comprobantes ni imágenes.",
+        "",
+      ].join("\n"),
+    );
+  }
   void checkDatabase();
 });
-const stopReminderJob = startReminderJob();
-const stopEmailWorker = startEmailWorker();
+// Alojada (Lambda) o contra la base de producción desde este equipo, no: el cron de GitHub ya lo
+// hace (y aquí competiría con él por la cola).
+const backgroundJobs = !config.hosted && !config.productionDbFromHere;
+const stopReminderJob = backgroundJobs ? startReminderJob() : () => undefined;
+const stopEmailWorker = backgroundJobs ? startEmailWorker() : () => undefined;
 
 function shutdown() {
   stopReminderJob();
