@@ -67,7 +67,7 @@ r = await ricardo("POST", `${B}/clients/${patient.id}/clinical-record/attachment
 await fetch(ORIGIN + r.body.upload.url, { method: "PUT", headers: r.body.upload.headers, body: Buffer.from("%PDF-1.4 prueba") });
 r = await ricardo("POST", `${B}/clinical-attachments/${r.body.attachment.id}/complete`);
 ok(r.status === 200, "archivo subido", r.body);
-const file = join(process.env.LOCAL_STORAGE_DIR, sql(`select storage_path from clinical_attachments where business_id = '${id}'`));
+const file = join(process.env.LOCAL_STORAGE_DIR, "historias-clinicas", sql(`select storage_path from clinical_attachments where business_id = '${id}'`));
 ok(existsSync(file), "el archivo está en el almacenamiento");
 const before = {
   appointments: count(`select count(*) from appointments where business_id = '${id}'`),

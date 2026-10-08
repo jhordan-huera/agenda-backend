@@ -233,10 +233,26 @@ export interface Professional {
   dailyAgenda: boolean;
   /** Enlace de su sala de videollamada (Meet, Zoom…) para las citas virtuales ("" = sin enlace). */
   meetingUrl: string;
+  /** Cuenta a la que le transfieren sus pacientes; null: no cobra por transferencia. */
+  bankAccount: BankAccount | null;
   /** Inactivo: no recibe citas nuevas ni aparece en la página de reservas; su historial se conserva. */
   isActive: boolean;
   sortOrder: number;
   createdAt: ISODateTime;
+}
+
+export type BankAccountType = "savings" | "checking";
+
+/** Datos para que el paciente pague la cita por transferencia. */
+export interface BankAccount {
+  /** "Banco Pichincha", "Produbanco"… */
+  bank: string;
+  accountType: BankAccountType;
+  number: string;
+  /** Nombre del titular, tal como lo pide el banco. */
+  holder: string;
+  /** Cédula o RUC del titular ("" = no se indica). */
+  holderId: string;
 }
 
 export type PlanId = "free" | "pro" | "business";
@@ -353,6 +369,12 @@ export interface Appointment {
   source: AppointmentSource;
   /** Cuándo llegó el paciente (recepción lo marca); null: aún no llegó o no se registró. */
   arrivedAt: ISODateTime | null;
+  /** Enlace privado de pago (/pago/:token): datos para transferir y subida del comprobante. */
+  paymentToken: string;
+  /** Último comprobante de pago que envió el paciente; null: ninguno. */
+  receiptAt: ISODateTime | null;
+  /** Cuándo se marcó como pagada; null: sin marcar. */
+  paidAt: ISODateTime | null;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
 }
@@ -413,7 +435,8 @@ export type EmailType =
   | "plan_change_rejected"
   | "platform_admin_added"
   | "professional_new_appointment"
-  | "professional_daily_agenda";
+  | "professional_daily_agenda"
+  | "payment_receipt_received";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -675,10 +698,40 @@ export interface ClinicalAttachment {
   createdAt: ISODateTime;
 }
 
-/** Subida directa al almacenamiento: el navegador envía el archivo a esta URL. */
+/** Subida directa al almacenamiento (Supabase Storage): el navegador envía el archivo a esta URL. */
+export interface UploadTarget {
+  url: string;
+  method: "PUT";
+  headers: Record<string, string>;
+}
+
 export interface ClinicalAttachmentUpload {
   attachment: ClinicalAttachment;
-  upload: { url: string; method: "PUT"; headers: Record<string, string> };
+  upload: UploadTarget;
+}
+
+/** Para qué es una imagen: foto del propio perfil, logo del negocio o foto de un profesional. */
+export type ImageTarget = "avatar" | "logo" | "professional";
+
+/** Subida de una imagen pública: `url` es la dirección que se guarda (logoUrl, avatarUrl). */
+export interface ImageUpload {
+  upload: UploadTarget;
+  url: string;
+}
+
+/** Comprobante de pago (foto o PDF) que envió el paciente desde su enlace de pago. */
+export interface PaymentReceipt {
+  id: string;
+  appointmentId: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: ISODateTime;
+}
+
+export interface PaymentReceiptUpload {
+  receipt: PaymentReceipt;
+  upload: UploadTarget;
 }
 
 export interface ClinicalRecord {
@@ -865,4 +918,36 @@ export interface BookingConfirmation {
   clientEmail: string;
   /** true si se envió el email de confirmación al cliente. */
   emailSent: boolean;
+  /** Pago por transferencia: la agenda tiene datos bancarios y la cita tiene precio. */
+  payment: BookingPayment | null;
+}
+
+export interface BookingPayment {
+  bankAccount: BankAccount;
+  /** Enlace privado de pago de la cita (/pago/:token). */
+  token: string;
+  /** false: no se pueden subir comprobantes (sólo enviarlos por WhatsApp). */
+  receiptsEnabled: boolean;
+}
+
+/** Página de pago de una cita (/pago/:token), sin sesión: el token es la autorización. */
+export interface PublicPayment {
+  business: Pick<PublicBusiness, "name" | "slug" | "logoUrl" | "phone" | "timezone" | "currency" | "brandColors">;
+  /** Para el mensaje de WhatsApp: "María L.". */
+  clientName: string;
+  serviceName: string;
+  professionalName: string;
+  date: ISODate;
+  startTime: TimeString;
+  endTime: TimeString;
+  status: AppointmentStatus;
+  /** Monto a transferir; null: el negocio no muestra el precio de este servicio. */
+  amount: number | null;
+  /** null: la agenda ya no tiene datos bancarios. */
+  bankAccount: BankAccount | null;
+  /** Comprobantes enviados, del más antiguo al más reciente. */
+  receipts: Pick<PaymentReceipt, "id" | "fileName" | "createdAt">[];
+  /** El negocio ya marcó la cita como pagada. */
+  paid: boolean;
+  receiptsEnabled: boolean;
 }

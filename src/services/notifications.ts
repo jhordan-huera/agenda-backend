@@ -3,7 +3,7 @@ import { appointmentColumns, businessColumns } from "../db/columns.ts";
 import { many, one, type Db } from "../db/pool.ts";
 import { emailTemplates, type AppointmentEmailData, type EmailContent } from "../shared/lib/email/templates.ts";
 import { addDaysISO, daysBetween, getZonedNow, timeToMinutes, type ZonedNow } from "../shared/lib/time.ts";
-import type { Appointment, Business, EmailType } from "../shared/types/index.ts";
+import type { Appointment, BankAccount, Business, EmailType } from "../shared/types/index.ts";
 import { PASSWORD_MASK, scheduleEmailDelivery } from "./mailer.ts";
 
 export { PASSWORD_MASK };
@@ -18,6 +18,9 @@ export { PASSWORD_MASK };
 export function appOrigin(): string {
   return config.appUrl;
 }
+
+/** Enlace privado de pago de una cita: datos para transferir y subida del comprobante. */
+export const paymentUrl = (token: string) => `${appOrigin()}/pago/${token}`;
 
 /**
  * Pone el email en cola. Devuelve false si ya existía (recordatorio duplicado). `secret`: la
@@ -70,6 +73,8 @@ interface AppointmentContext {
   professionalUserId: string | null;
   /** Sala de videollamada del profesional ("" = sin enlace). */
   meetingUrl: string;
+  /** Cuenta para el pago por transferencia de esta agenda (null: no cobra por transferencia). */
+  bankAccount: BankAccount | null;
 }
 
 async function loadAppointmentContext(db: Db, appointment: Appointment): Promise<AppointmentContext | null> {
@@ -81,6 +86,7 @@ async function loadAppointmentContext(db: Db, appointment: Appointment): Promise
     `select c.name as "clientName", c.email as "clientEmail", s.name as "serviceName",
             s.show_price as "showPrice",
             coalesce(p.meeting_url, '') as "meetingUrl",
+            p.bank_account as "bankAccount",
             p.display_name as "professionalName",
             coalesce(p.email, '') as "professionalEmail",
             coalesce(p.notify_new_appointments, false) as "professionalNotify",
@@ -114,6 +120,11 @@ function buildEmailData(context: AppointmentContext, appointment: Appointment): 
     homeVisit: appointment.homeVisit,
     isVirtual: appointment.isVirtual,
     meetingUrl: appointment.isVirtual ? context.meetingUrl || null : null,
+    // Sólo si hay algo que pagar y aún no se marcó como pagada.
+    payment:
+      context.bankAccount && appointment.price > 0 && !appointment.paidAt
+        ? { bankAccount: context.bankAccount, url: paymentUrl(appointment.paymentToken) }
+        : null,
   };
 }
 
@@ -145,6 +156,23 @@ async function notifyProfessional(
       agendaUrl: `${appOrigin()}/dashboard/calendar?date=${after.date}`,
     }),
   });
+}
+
+/**
+ * El paciente subió un comprobante: aviso al email del negocio y al profesional (si recibe los
+ * avisos de sus citas y no es el mismo email).
+ */
+export async function notifyReceiptReceived(db: Db, appointment: Appointment): Promise<void> {
+  const context = await loadAppointmentContext(db, appointment);
+  if (!context) return;
+  const recipients = new Set([context.business.email, context.professionalNotify ? context.professionalEmail : ""].filter(Boolean));
+  const content = emailTemplates.paymentReceiptReceived({
+    ...buildEmailData(context, appointment),
+    agendaUrl: `${appOrigin()}/dashboard/calendar?date=${appointment.date}&appointment=${appointment.id}`,
+  });
+  for (const to of recipients) {
+    await queueEmail(db, { businessId: context.business.id, type: "payment_receipt_received", to, appointmentId: appointment.id, ...content });
+  }
 }
 
 /**

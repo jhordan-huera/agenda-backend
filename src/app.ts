@@ -7,7 +7,7 @@ import { pool } from "./db/pool.ts";
 import { errorHandler, notFoundHandler } from "./http/errors.ts";
 import { loadSession, requireAjaxHeader } from "./http/session.ts";
 import { authRoutes } from "./routes/auth-routes.ts";
-import { businessRoutes, userRoutes } from "./routes/business-routes.ts";
+import { businessRoutes, imageRoutes, userRoutes } from "./routes/business-routes.ts";
 import { fileRoutes } from "./routes/file-routes.ts";
 import { adminRoutes, publicRoutes } from "./routes/platform-routes.ts";
 
@@ -26,7 +26,8 @@ app.set("trust proxy", config.trustProxy);
 app.disable("x-powered-by");
 app.use(helmet());
 app.use(cors({ origin: config.frontendUrls, credentials: true }));
-// Las imágenes (foto de perfil, logo) llegan como data URL dentro del JSON.
+// Las imágenes van al almacenamiento, pero las antiguas (data URL) aún llegan sin cambios dentro del
+// JSON al guardar el perfil o el negocio, hasta pasarlas con src/db/move-images-to-storage.ts (npm run db:move-images).
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 
@@ -74,6 +75,7 @@ api.use(loadSession);
 api.use("/auth", authRoutes);
 api.use("/public", publicRoutes);
 api.use("/users", userRoutes);
+api.use("/images", imageRoutes);
 api.use("/businesses", businessRoutes);
 api.use("/admin", adminRoutes);
 

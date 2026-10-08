@@ -3,6 +3,7 @@ import { requireCaptcha } from "../http/captcha.ts";
 import { handle, limitRequests } from "../http/handlers.ts";
 import { adminService, platformService } from "../services/admin-service.ts";
 import { categoryService } from "../services/category-service.ts";
+import { paymentService } from "../services/payment-service.ts";
 import { publicBookingService } from "../services/public-booking-service.ts";
 
 /* -------------------------------------- /api/public (sin sesión) ------------ */
@@ -63,6 +64,38 @@ publicRoutes.post(
   bookingLimit,
   requireCaptcha,
   handle((req) => publicBookingService.book(req.params.slug, req.body)),
+);
+
+// Enlace de pago de una cita (/pago/:token): el token es la autorización. Sin caché: el paciente
+// tiene que ver enseguida el comprobante que acaba de subir.
+const paymentLimit = limitRequests({
+  windowMinutes: 15,
+  max: 60,
+  message: "Demasiadas solicitudes desde esta conexión. Espera unos minutos.",
+});
+const receiptLimit = limitRequests({
+  windowMinutes: 15,
+  max: 20,
+  message: "Demasiados comprobantes desde esta conexión. Espera unos minutos o envíalo por WhatsApp.",
+});
+
+publicRoutes.get(
+  "/payments/:token",
+  paymentLimit,
+  handle(async (req, res) => {
+    res.set("Cache-Control", "private, no-store");
+    return paymentService.getPublic(req.params.token);
+  }),
+);
+publicRoutes.post(
+  "/payments/:token/receipts",
+  receiptLimit,
+  handle((req) => paymentService.requestUpload(req.params.token, req.body)),
+);
+publicRoutes.post(
+  "/payments/:token/receipts/:receiptId/complete",
+  receiptLimit,
+  handle((req) => paymentService.completeUpload(req.params.token, req.params.receiptId)),
 );
 
 /* --------------------------------------- /api/admin (super admin) ----------- */

@@ -1,6 +1,7 @@
 import { many, one, pool, transaction } from "../db/pool.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
 import { deleteStalePendingAttachments } from "../services/clinical-attachment-service.ts";
+import { deleteStalePendingReceipts } from "../services/payment-service.ts";
 import { processEmailQueue, type EmailQueueReport } from "../services/mailer.ts";
 import { runDailyAgendaJob, runReminderJob } from "../services/notifications.ts";
 import type { EmailType } from "../shared/types/index.ts";
@@ -140,6 +141,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const emails = await processEmailQueue({ maxBatches: MAX_EMAIL_BATCHES });
   await deleteExpiredSessions();
   await deleteStalePendingAttachments();
+  await deleteStalePendingReceipts();
   const security = await findLoginAttacks(previous?.ranAt ?? null);
   const purged = await one<{ deleted: number }>(pool, "select purge_audit_logs() as deleted");
   const emailContentPurged = await purgeOldEmailContent();

@@ -1,14 +1,16 @@
 // Copia de agenda-front/src/lib/validations/professional.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
 import { optionalEmailField, optionalText, requiredText } from "./fields.ts";
+import { imageUrlField } from "./images.ts";
+import { bankAccountSchema } from "./payment.ts";
 
 /** Ficha de un profesional (su agenda). La crean el propietario y los administradores. */
 export const professionalSchema = z
   .object({
     displayName: requiredText("El nombre", 2, 80),
     title: optionalText(80),
-    /** Foto: data URL (como la del perfil) o URL pública. */
-    avatarUrl: z.string().trim().max(700_000, "La foto es demasiado grande").nullable().default(null),
+    /** Foto: la URL en el almacenamiento de imágenes. */
+    avatarUrl: imageUrlField.default(null),
     color: z
       .string()
       .trim()
@@ -23,6 +25,8 @@ export const professionalSchema = z
       .max(300, "El enlace es demasiado largo")
       .refine((value) => value === "" || /^https:\/\/\S+$/.test(value), "Pega el enlace completo (empieza con https://)")
       .default(""),
+    /** Cuenta para el pago por transferencia; null: no cobra por transferencia. */
+    bankAccount: bankAccountSchema.nullable().default(null),
     /** Miembro del equipo que usa esta agenda (null: no entra al sistema). */
     userId: z.string().nullable().default(null),
     allServices: z.boolean(),

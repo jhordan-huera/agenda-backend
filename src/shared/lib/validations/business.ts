@@ -2,6 +2,7 @@
 import { z } from "zod";
 import { DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY } from "../constants/business.ts";
 import { emailField, optionalEmailField, optionalText, phoneField, requiredText } from "./fields.ts";
+import { imageUrlField } from "./images.ts";
 
 /** Categoría del negocio: la API comprueba que exista en la base de datos y esté activa. */
 export const businessCategorySchema = z
@@ -23,7 +24,7 @@ export const profileSchema = z.object({
   lastName: requiredText("El apellido"),
   email: emailField,
   phone: phoneField,
-  avatarUrl: z.string().nullable(),
+  avatarUrl: imageUrlField,
 });
 
 export const businessProfileSchema = z.object({
@@ -38,7 +39,7 @@ export const businessProfileSchema = z.object({
   /** Punto del local en el mapa: los dos o ninguno (null). */
   lat: z.number().min(-90).max(90).nullable(),
   lng: z.number().min(-180).max(180).nullable(),
-  logoUrl: z.string().nullable(),
+  logoUrl: imageUrlField,
 });
 
 export const bookingSettingsSchema = z.object({

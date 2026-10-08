@@ -1,5 +1,6 @@
 // Copia de agenda-front/src/lib/constants/business.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import type {
+  BankAccountType,
   BookingSettings,
   DayOfWeek,
   NotificationSettings,
@@ -52,6 +53,11 @@ export function describeServiceModes(modes: ServiceMode[]): string {
   );
   return labels.length <= 1 ? (labels[0] ?? "") : `${labels.slice(0, -1).join(", ")} o ${labels.at(-1)}`;
 }
+
+export const BANK_ACCOUNT_TYPE_LABELS: Record<BankAccountType, string> = {
+  savings: "Ahorros",
+  checking: "Corriente",
+};
 
 /** Días ordenados de lunes a domingo, como se muestran en la interfaz. */
 export const WEEK_DAYS: { value: DayOfWeek; label: string; short: string }[] = [

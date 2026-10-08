@@ -43,6 +43,7 @@ import {
 } from "./agenda-scope.ts";
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
 import { notifyAppointmentChange } from "./notifications.ts";
+import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
 import { assertAppointmentLimit, assertClientLimit } from "./plan-limits.ts";
 import { findProfessional, listProfessionals } from "./professional-service.ts";
 
@@ -213,7 +214,7 @@ export const clientService = {
 
   /** Elimina el cliente y su historial de citas. */
   async remove(ctx: RequestContext, businessId: string, clientId: string): Promise<void> {
-    await transaction(async (db) => {
+    const receipts = await transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "clients.delete", { lock: true });
       const client = await findOwned<Client>(db, "clients", "name", businessId, clientId, "Cliente no encontrado.");
       // La historia clínica no se puede borrar: el paciente se desactiva en su lugar.
@@ -230,6 +231,8 @@ export const clientService = {
       const { count } = (await one<{ count: number }>(db, "select count(*) from appointments where client_id = $1", [
         clientId,
       ]))!;
+      // Los comprobantes de sus citas se borran con ellas (y sus archivos, después).
+      const receipts = await receiptPaths(db, { clientId });
       await db.query("delete from clients where id = $1", [clientId]); // las citas se borran en cascada
       await logAudit(db, {
         businessId,
@@ -239,7 +242,9 @@ export const clientService = {
         entityId: clientId,
         summary: `Eliminó el cliente ${client.name} y ${count} cita(s) de su historial`,
       });
+      return receipts;
     });
+    await removeReceiptFiles(receipts);
   },
 };
 
@@ -584,6 +589,9 @@ export const appointmentService = {
         ...fields,
         source: "dashboard",
         arrivedAt: null,
+        paymentToken: "",
+        receiptAt: null,
+        paidAt: null,
         createdAt: "",
         updatedAt: "",
       };

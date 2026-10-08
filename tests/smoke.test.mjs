@@ -279,8 +279,13 @@ ok(r.body?.role === "owner" && r.body.businessId, "tras onboarding la sesión ti
 const AB = `/businesses/${r.body.businessId}`;
 r = await ana("GET", `${AB}/services`);
 ok(r.body?.length === 1, "primer servicio creado");
-r = await ana("PUT", `/users/${(await ana("GET", "/auth/session")).body.userId}`, { firstName: "Ana", lastName: "Editada", email: "ana@example.com", phone: "", avatarUrl: "data:image/png;base64," + "A".repeat(600_000) });
-ok(r.status === 200 && r.body.lastName === "Editada", "perfil con imagen de ~600 KB", r.body?.error);
+const anaId = (await ana("GET", "/auth/session")).body.userId;
+const profileBody = { firstName: "Ana", lastName: "Editada", email: "ana@example.com", phone: "" };
+r = await ana("PUT", `/users/${anaId}`, { ...profileBody, avatarUrl: "data:image/png;base64," + "A".repeat(600_000) });
+ok(r.status === 400, "una foto nueva dentro del JSON (data URL) ya no se acepta", r.body?.error);
+r = await ana("POST", "/images", { target: "avatar", contentType: "image/png", sizeBytes: 100 });
+r = await ana("PUT", `/users/${anaId}`, { ...profileBody, avatarUrl: r.body.url });
+ok(r.status === 200 && r.body.lastName === "Editada", "perfil con la foto del almacenamiento", r.body?.error);
 r = await ana("GET", `${AB}/professional`);
 ok(r.body?.displayName === "Ana Editada", "el profesional se actualiza con el perfil");
 

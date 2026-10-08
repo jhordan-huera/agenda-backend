@@ -500,12 +500,20 @@ function seedTenant(
     professionalScope: "all",
     createdAt,
   });
-  const professionalBase = { businessId, avatarUrl: null, email: "", meetingUrl: "", allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, isActive: true, createdAt };
+  const professionalBase = { businessId, avatarUrl: null, email: "", meetingUrl: "", bankAccount: null, allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, isActive: true, createdAt };
   db.professionals.push({
     ...professionalBase,
     id: professionalId,
     userId,
     displayName: `${tenant.user.firstName} ${tenant.user.lastName}`,
+    // La agenda principal cobra por transferencia (cuenta de ejemplo).
+    bankAccount: {
+      bank: "Banco Pichincha",
+      accountType: "savings",
+      number: `22${String(1_000_000 + db.professionals.length * 7_919).padStart(8, "0")}`,
+      holder: `${tenant.user.firstName} ${tenant.user.lastName}`,
+      holderId: "",
+    },
     title: tenant.professionalTitle,
     color: "#4a6cb0",
     sortOrder: 0,
@@ -673,6 +681,9 @@ function seedTenant(
       isVirtual,
       source: random.next() < 0.25 ? "booking_page" : "dashboard",
       arrivedAt: null,
+      paymentToken: crypto.randomUUID().replaceAll("-", ""),
+      receiptAt: null,
+      paidAt: null,
       createdAt,
       updatedAt: createdAt,
     };

@@ -1,13 +1,14 @@
 import { PROFESSIONAL_ORDER, professionalColumns, scheduleColumns } from "../db/columns.ts";
 import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
-import { DEFAULT_WEEKLY_SCHEDULE } from "../shared/lib/constants/business.ts";
+import { BANK_ACCOUNT_TYPE_LABELS, DEFAULT_WEEKLY_SCHEDULE } from "../shared/lib/constants/business.ts";
 import { getFullName } from "../shared/lib/format.ts";
 import { professionalSchema, type ProfessionalInput } from "../shared/lib/validations/professional.ts";
 import type { Professional, Schedule } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
 import { diffChanges, PROFESSIONAL_FIELDS, type ProfessionalForAudit } from "./audit-changes.ts";
 import { authorize, parseInput, type RequestContext } from "./context.ts";
+import { assertStoredImage, releaseImages } from "./image-service.ts";
 import { assertMultipleAgendas, assertProfessionalLimit } from "./plan-limits.ts";
 
 /**
@@ -110,6 +111,9 @@ async function professionalForAudit(db: Db, professional: Professional): Promise
     color: professional.color,
     email: professional.email,
     meetingUrl: professional.meetingUrl,
+    bankAccount: professional.bankAccount
+      ? `${professional.bankAccount.bank} · ${BANK_ACCOUNT_TYPE_LABELS[professional.bankAccount.accountType]} · ${professional.bankAccount.number} · ${professional.bankAccount.holder}`
+      : null,
     memberName: member ? getFullName(member) : null,
     servicesLabel: services,
     notifyNewAppointments: professional.notifyNewAppointments,
@@ -151,6 +155,7 @@ export const professionalService = {
       if (data.isActive) await assertProfessionalLimit(db, businessId);
       await assertAssignableMember(db, businessId, data.userId);
       await assertOwnServices(db, businessId, data);
+      assertStoredImage(data.avatarUrl, null, "La foto");
       const next = await one<{ order: number }>(
         db,
         `select coalesce(max(sort_order), 0) + 1 as "order" from professionals where business_id = $1`,
@@ -160,8 +165,8 @@ export const professionalService = {
         db,
         `insert into professionals
            (business_id, user_id, display_name, title, avatar_url, color, email, all_services,
-            notify_new_appointments, daily_agenda, is_active, sort_order, meeting_url)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            notify_new_appointments, daily_agenda, is_active, sort_order, meeting_url, bank_account)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
          returning id`,
         [
           businessId,
@@ -177,6 +182,7 @@ export const professionalService = {
           data.isActive,
           next?.order ?? 1,
           data.meetingUrl,
+          data.bankAccount ? JSON.stringify(data.bankAccount) : null,
         ],
       ))!;
       await saveServices(db, id, data);
@@ -196,9 +202,10 @@ export const professionalService = {
 
   async update(ctx: RequestContext, businessId: string, professionalId: string, input: unknown): Promise<Professional> {
     const data = parseInput(professionalSchema, input);
-    return transaction(async (db) => {
+    const { professional, previousAvatar } = await transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "professionals.manage", { lock: true });
       const before = await findProfessional(db, businessId, professionalId);
+      assertStoredImage(data.avatarUrl, before.avatarUrl, "La foto");
       if (data.isActive && !before.isActive) await assertProfessionalLimit(db, businessId, professionalId);
       if (!data.isActive && before.isActive) await assertAnotherActive(db, businessId, professionalId);
       await assertAssignableMember(db, businessId, data.userId, professionalId);
@@ -207,7 +214,7 @@ export const professionalService = {
         `update professionals
             set user_id = $2, display_name = $3, title = $4, avatar_url = $5, color = $6, email = $7,
                 all_services = $8, notify_new_appointments = $9, daily_agenda = $10, is_active = $11,
-                meeting_url = $12
+                meeting_url = $12, bank_account = $13
           where id = $1`,
         [
           professionalId,
@@ -222,6 +229,7 @@ export const professionalService = {
           data.dailyAgenda,
           data.isActive,
           data.meetingUrl,
+          data.bankAccount ? JSON.stringify(data.bankAccount) : null,
         ],
       );
       await saveServices(db, professionalId, data);
@@ -236,13 +244,15 @@ export const professionalService = {
         summary: `${verb} al profesional ${professional.displayName}`,
         changes: diffChanges(await professionalForAudit(db, before), await professionalForAudit(db, professional), PROFESSIONAL_FIELDS),
       });
-      return professional;
+      return { professional, previousAvatar: before.avatarUrl };
     });
+    if (previousAvatar !== professional.avatarUrl) await releaseImages([previousAvatar]);
+    return professional;
   },
 
   /** Sólo sin citas: con historial se desactiva (así se conservan sus citas y reportes). */
   async remove(ctx: RequestContext, businessId: string, professionalId: string): Promise<void> {
-    await transaction(async (db) => {
+    const removed = await transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "professionals.manage", { lock: true });
       const professional = await findProfessional(db, businessId, professionalId);
       if (professional.isActive) await assertAnotherActive(db, businessId, professionalId);
@@ -259,6 +269,8 @@ export const professionalService = {
         entityId: professionalId,
         summary: `Eliminó al profesional ${professional.displayName}`,
       });
+      return professional;
     });
+    await releaseImages([removed.avatarUrl]);
   },
 };

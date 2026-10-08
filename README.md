@@ -107,6 +107,7 @@ Publica primero la API y después agenda-front si el cambio toca a los dos.
 | `npm run db:migrate` | Aplica las migraciones pendientes de `db/migrations` |
 | `npm run db:seed` | Carga los datos demo (no hace nada si ya hay datos; `-- --reset` lo **borra todo** antes) |
 | `npm run db:create-admin -- <email> <contraseña> [nombre] [apellido]` | Crea el super admin |
+| `npm run db:move-images` | Pasa al bucket `imagenes` los logos y fotos antiguos guardados dentro de la base (data URL); se puede repetir |
 | `npm run sync:shared` | Copia de agenda-front el código compartido (ver abajo) |
 
 ## Estructura
@@ -227,7 +228,26 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   propietario crea y edita sus formatos (`/clinical-templates`, cada cambio es una versión nueva; un
   campo existente no cambia de tipo) o duplica uno de la plataforma. (`services.clinical_template_id` sigue en la API, pero el panel
   ya no lo ofrece: se usa el formato del negocio.) Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
-  Storage (en local, carpeta `storage/` y rutas `/api/files`); no se borran.
+  Storage (en local, carpeta `storage/historias-clinicas/` y rutas `/api/files`); no se borran.
+- **Pago por transferencia** (migración 025): `professionals.bank_account` (jsonb: banco, tipo de
+  cuenta `savings`/`checking`, número sólo con dígitos, titular y cédula/RUC opcional) se guarda con
+  la ficha del profesional. Cada cita tiene `payment_token` (enlace privado `/pago/:token` del
+  frontend), `receipt_at` (último comprobante) y `paid_at`. Con datos bancarios y precio mayor que 0,
+  la confirmación de la reserva (`payment`) y los emails de reserva y confirmación (mientras no esté
+  pagada) llevan los datos y el enlace. Sin sesión: `GET /public/payments/:token`, `POST
+  /public/payments/:token/receipts` (JPG, PNG, WebP, HEIC o PDF, 10 MB, 5 por cita; no en citas
+  canceladas o "No asistió") y `POST …/receipts/:id/complete` (avisa por email al negocio). En el
+  panel: `GET /businesses/:id/appointments/:id/receipts`, `GET /businesses/:id/payment-receipts/:id/url`
+  (URL firmada de 5 min) y `PATCH /businesses/:id/appointments/:id/payment` (`{ paid }`). Los
+  comprobantes se borran con la cita (al eliminar el paciente o el negocio, también sus archivos).
+- **Almacenamiento** (`src/services/file-storage.ts`): tres buckets de Supabase Storage que se crean
+  solos con su tamaño máximo y sus tipos de archivo: `historias-clinicas` (privado, o el de
+  `STORAGE_BUCKET`), `comprobantes` (privado) e `imagenes` (público: logos y fotos). Las imágenes se
+  suben con `POST /images` (`target`: avatar, logo o professional; 2 MB) y se guarda su dirección
+  pública; la API no acepta imágenes nuevas que no estén en el bucket (las antiguas en data URL valen
+  mientras no se cambien; `npm run db:move-images` las pasa). Al cambiar o quitar una imagen se
+  borra la que ya nadie usa. En local, carpeta `storage/<bucket>/` (las imágenes en
+  `/api/files/public/imagenes/…`); con la base de producción y sin Supabase en `.env`, no hay subidas.
 - **Equipo de la plataforma** (migración 020): `users.platform_owner` marca al super admin principal
   (la migración lo pone en el que ya existía; `db:create-admin` lo pone si aún no hay ninguno).
   `GET/POST /admin/platform-admins` lista y agrega super admins (agregar, sólo el principal). Las
@@ -410,7 +430,7 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    | `FRONTEND_URL` | URL pública del frontend (p. ej. `https://agenda-front.vercel.app`) |
    | `TRUST_PROXY` | `1` |
    | `GMAIL_USER`, `GMAIL_FROM_NAME`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` | Los de `.env` |
-   | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Para los archivos de la historia clínica (Supabase → Project Settings → API Keys) |
+   | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Almacenamiento: historia clínica, comprobantes de pago, logos y fotos (Supabase → Project Settings → API Keys). Sin ellas no se pueden subir archivos ni imágenes |
    | `PROXY_SECRET` | El de `.env` (mismo valor que en el frontend) |
    | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | CAPTCHA de la página de reservas (Cloudflare → Turnstile → Add widget, hostname del frontend, modo *Managed*) |
 

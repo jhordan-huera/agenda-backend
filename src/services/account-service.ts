@@ -38,6 +38,7 @@ import type {
 } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
 import { businessChanges, type BusinessForAudit } from "./audit-changes.ts";
+import { assertStoredImage, releaseImages } from "./image-service.ts";
 import { insertBusiness, isSlugTaken, uniqueSlug } from "./business-factory.ts";
 import { requireAssignableCategory } from "./category-service.ts";
 import { authorize, parseInput, requireUser, type RequestContext } from "./context.ts";
@@ -98,10 +99,15 @@ export const userService = {
     const me = requireUser(ctx);
     if (me.id !== userId) throw new AppError("forbidden", "Sólo puedes editar tu propio perfil.");
     const data = parseInput(profileSchema, input);
-    return transaction(async (db) => {
+    // Las fotos que deja de usar (la suya y la de su agenda) se borran del almacenamiento después.
+    const replaced: (string | null)[] = [];
+    const updated = await transaction(async (db) => {
       if (await one(db, "select 1 from users where email = $1 and id <> $2", [data.email, userId])) {
         throw new AppError("conflict", "Ese email ya está registrado en otra cuenta.");
       }
+      assertStoredImage(data.avatarUrl, me.avatarUrl, "La foto");
+      const agendas = await many<{ avatarUrl: string | null }>(db, 'select avatar_url as "avatarUrl" from professionals where user_id = $1', [userId]);
+      replaced.push(me.avatarUrl, ...agendas.map((agenda) => agenda.avatarUrl));
       const user = (await one<User>(
         db,
         `update users set first_name = $2, last_name = $3, email = $4, phone = $5, avatar_url = $6
@@ -116,6 +122,8 @@ export const userService = {
       ]);
       return user;
     });
+    await releaseImages(replaced);
+    return updated;
   },
 };
 
@@ -212,9 +220,10 @@ export const businessService = {
     const brand = brandColors === undefined ? undefined : parseInput(brandColorsSchema, brandColors);
     const scope = professionalScope === undefined ? null : parseInput(professionalScopeSchema, professionalScope);
 
-    return transaction(async (db) => {
+    const updated = await transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "business.manage", { lock: true });
       const previous = await one<Business>(db, `select ${businessColumns()} from businesses where id = $1`, [businessId]);
+      assertStoredImage(profileData.logoUrl, previous?.logoUrl ?? null, "El logo");
       if (profileData.category) {
         const current = await one<{ category: string }>(db, "select category from businesses where id = $1", [businessId]);
         // La categoría sólo la cambia el super admin (desde /admin o en modo soporte).
@@ -289,8 +298,10 @@ export const businessService = {
         summary: `Actualizó ${section}`,
         changes: previous ? businessChanges(await businessForAudit(db, previous), await businessForAudit(db, business)) : null,
       });
-      return business;
+      return { business, previousLogo: previous?.logoUrl ?? null };
     });
+    if (updated.previousLogo !== updated.business.logoUrl) await releaseImages([updated.previousLogo]);
+    return updated.business;
   },
 
   async isSlugAvailable(ctx: RequestContext, slug: string, excludeBusinessId?: string): Promise<boolean> {
