@@ -130,7 +130,9 @@ export async function processEmailQueue(
           [BATCH_SIZE],
         );
         for (const email of batch) {
-          if (isUndeliverable(email.to)) {
+          // Con los emails desviados a tu correo (pruebas en local), también los de los datos demo:
+          // al destinatario falso no le llega nada, sólo a ti.
+          if (!config.emailRedirectTo && isUndeliverable(email.to)) {
             await db.query(
               "update notifications set status = 'failed', last_error = $2, secret = null where id = $1",
               [email.id, "Dirección de demostración: no se envía."],
