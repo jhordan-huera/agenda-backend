@@ -22,6 +22,7 @@ import type {
   Appointment,
   AppointmentStatus,
   AuditLog,
+  BankAccount,
   BlockedTime,
   Business,
   BusinessCategory,
@@ -46,6 +47,29 @@ import type {
   User,
 } from "../shared/types/index.ts";
 import type { AuditActor } from "../services/context.ts";
+
+/** Bancos de las cuentas de ejemplo de las agendas demo. */
+const DEMO_BANKS = [
+  "Banco Pichincha",
+  "Banco Guayaquil",
+  "Produbanco",
+  "Banco del Pacífico",
+  "Cooperativa JEP",
+  "Banco Internacional",
+  "Cooperativa Atuntaqui",
+];
+
+/** Cuenta de ejemplo de una agenda demo (pago por transferencia): siempre la misma para el mismo nombre. */
+export function demoBankAccount(displayName: string): BankAccount {
+  const hash = [...displayName].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 100_000_000, 7);
+  return {
+    bank: DEMO_BANKS[hash % DEMO_BANKS.length],
+    accountType: hash % 3 === 0 ? "checking" : "savings",
+    number: `22${String(hash).padStart(8, "0")}`,
+    holder: displayName.replace(/^(Dra?\.|Lic\.|Psic\.)\s+/, ""),
+    holderId: "",
+  };
+}
 
 /** Categorías de salud de la migración 005 (historia clínica activada por defecto). */
 const HEALTH_CATEGORIES = new Set(["psychology", "speech_therapy", "dentistry", "nutrition", "physiotherapy"]);
@@ -506,14 +530,8 @@ function seedTenant(
     id: professionalId,
     userId,
     displayName: `${tenant.user.firstName} ${tenant.user.lastName}`,
-    // La agenda principal cobra por transferencia (cuenta de ejemplo).
-    bankAccount: {
-      bank: "Banco Pichincha",
-      accountType: "savings",
-      number: `22${String(1_000_000 + db.professionals.length * 7_919).padStart(8, "0")}`,
-      holder: `${tenant.user.firstName} ${tenant.user.lastName}`,
-      holderId: "",
-    },
+    // Todas las agendas demo cobran por transferencia (cuentas de ejemplo).
+    bankAccount: demoBankAccount(`${tenant.user.firstName} ${tenant.user.lastName}`),
     title: tenant.professionalTitle,
     color: "#4a6cb0",
     sortOrder: 0,
@@ -592,6 +610,7 @@ function seedTenant(
         displayName: extra.displayName,
         title: extra.title,
         color: extra.color,
+        bankAccount: demoBankAccount(extra.displayName),
         allServices: !extra.services,
         serviceIds: extra.services ? offered.map((service) => service.id) : [],
         sortOrder: index + 1,
