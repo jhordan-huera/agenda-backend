@@ -116,6 +116,7 @@ Publica primero la API y después agenda-front si el cambio toca a los dos.
 | `npm run db:create-admin -- <email> <contraseña> [nombre] [apellido]` | Crea el super admin |
 | `npm run db:move-images` | Pasa al bucket `imagenes` los logos y fotos antiguos guardados dentro de la base (data URL); se puede repetir |
 | `npm run sync:shared` | Copia de agenda-front el código compartido (ver abajo) |
+| `npm run lambda:package` | Prepara `dist/lambda.zip` para AWS Lambda (ver "Backend en AWS Lambda") |
 
 ## Estructura
 
@@ -473,6 +474,49 @@ lanzar el workflow con la API de GitHub (`POST /repos/<dueño>/agenda-backend/ac
 con `{"ref":"main"}` y un token con permiso *Actions: write* sólo para este repositorio). GitHub
 pausa los cron de los repositorios públicos tras 60 días sin actividad (avisa por email antes):
 basta con un commit o con reactivarlo en Actions.
+
+## Backend en AWS Lambda (us-west-2)
+
+La misma API, sin cambios de código entre una y otra: [Lambda Web Adapter](https://github.com/awslabs/aws-lambda-web-adapter)
+arranca `node src/server.ts` (con `run.sh`) y le pasa las peticiones. La API sabe que está alojada
+(`AWS_LAMBDA_FUNCTION_NAME`): no arranca tareas de fondo (las hace el cron de GitHub) y, como Lambda
+congela la ejecución al responder, envía los emails que la petición puso en cola **antes** de
+responder (`flushEmailDelivery`, ~1 s más sólo en las peticiones que envían emails). Oregón, la
+misma región de AWS que Supabase: misma latencia que Vercel `pdx1`. Gratis: el nivel siempre
+gratuito de Lambda (1 M de peticiones y 400.000 GB-s al mes) queda muy por encima del uso.
+
+Mientras dure la migración, Vercel sigue sirviendo la API: las dos versiones usan la misma base y el
+frontend decide a cuál llama con su variable `API_URL`.
+
+1. **Cuenta de AWS** en el plan *Paid* (el *Free* cierra la cuenta a los 6 meses; lo gratuito de
+   Lambda sigue siéndolo), con MFA y un presupuesto con alerta de 1 USD (Billing → Budgets).
+2. **Función** (región *US West (Oregon)*): Create function → Author from scratch, nombre
+   `agenda-backend`, runtime **Node.js 24.x**, arquitectura **arm64**.
+   - Código: `npm run lambda:package` y subir `dist/lambda.zip` (Upload from → .zip file).
+   - Runtime settings → Handler: `run.sh`.
+   - Layers → Add a layer → Specify an ARN: el de *LambdaAdapterLayerArm64* para us-west-2 que
+     indica el README de Lambda Web Adapter.
+   - Configuration → General: memoria 1024 MB, timeout 30 s.
+   - Configuration → Environment variables: `AWS_LAMBDA_EXEC_WRAPPER=/opt/bootstrap`, `PORT=8080`
+     y las mismas de la API en Vercel (tabla de arriba) con `DATABASE_POOL_MAX=2` (Lambda atiende
+     una petición por instancia) y `APP_URL` con la URL del frontend.
+   - Configuration → Function URL → Create, Auth type **NONE**. `<url>/api/health` debe responder
+     `{"ok":true,"database":true}`.
+3. **Publicación desde GitHub** (`.github/workflows/deploy-lambda.yml`, al hacer push a `main`):
+   - IAM → Identity providers → Add provider: OpenID Connect, URL
+     `https://token.actions.githubusercontent.com`, audience `sts.amazonaws.com`.
+   - IAM → Roles → Create role → Web identity: ese proveedor, audience `sts.amazonaws.com`,
+     GitHub organization `jhordan-huera`, repository `agenda-backend`, branch `main`. Permiso
+     (política en línea): `lambda:UpdateFunctionCode`, `lambda:GetFunction` y
+     `lambda:GetFunctionConfiguration` sobre `arn:aws:lambda:us-west-2:<cuenta>:function:agenda-backend`.
+   - Variables del repositorio: `AWS_LAMBDA_FUNCTION` (`agenda-backend`), `AWS_DEPLOY_ROLE_ARN`
+     (ARN del rol) y `AWS_LAMBDA_URL` (la Function URL). Probar con Actions → *Publicar en AWS
+     Lambda* → Run workflow.
+4. **Cambio:** en el proyecto del frontend en Vercel, `API_URL` = la Function URL (sin `/` final) y
+   Redeploy. Probar el login, una reserva (su email), subir un logo y la agenda.
+   **Vuelta atrás:** `API_URL` otra vez con la URL de la API en Vercel y Redeploy.
+5. Tras unos días estable, borrar el proyecto de la API en Vercel. Los logs quedan en CloudWatch
+   (Lambda → Monitor → View CloudWatch logs).
 
 ## Pendiente
 

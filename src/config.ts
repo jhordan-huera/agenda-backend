@@ -71,11 +71,15 @@ export function isLocalDatabaseUrl(url: string): boolean {
 }
 
 const onVercel = process.env.VERCEL === "1";
+/** AWS Lambda (con Lambda Web Adapter, que ejecuta `node src/server.ts` como en local). */
+const onLambda = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+/** Alojada en la nube: no es un equipo propio. Las tareas de fondo las hace el cron de GitHub. */
+const hosted = onVercel || onLambda;
 /**
  * Un equipo propio conectado a la base de producción (`npm run dev` → producción): lo que se hace es
  * real, pero las tareas de fondo (cola de emails, recordatorios) siguen a cargo del cron de GitHub.
  */
-const productionDbFromHere = !onVercel && !isLocalDatabaseUrl(env.DATABASE_URL);
+const productionDbFromHere = !hosted && !isLocalDatabaseUrl(env.DATABASE_URL);
 
 const gmail =
   env.GMAIL_USER && env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET && env.GMAIL_REFRESH_TOKEN
@@ -103,6 +107,8 @@ export const config = {
   databasePoolMax: env.DATABASE_POOL_MAX,
   /** La API corre como función de Vercel (sin servidor siempre encendido). */
   onVercel,
+  onLambda,
+  hosted,
   productionDbFromHere,
   supabaseUrl: env.SUPABASE_URL ?? null,
   supabaseServiceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY ?? null,

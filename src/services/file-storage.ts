@@ -236,7 +236,7 @@ const BUCKETS = [CLINICAL, RECEIPTS, IMAGES];
 export const MAX_UPLOAD_BYTES = Math.max(...BUCKETS.map((spec) => spec.maxBytes));
 
 /** Sin Supabase: la carpeta local, salvo con la base de producción (dejaría enlaces rotos). */
-const localAllowed = !(config.onVercel || config.isProduction || config.productionDbFromHere);
+const localAllowed = !(config.hosted || config.isProduction || config.productionDbFromHere);
 
 function storageFor(spec: BucketSpec): FileStorage | null {
   const { supabaseUrl, supabaseServiceRoleKey } = config;

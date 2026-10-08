@@ -1,6 +1,6 @@
 import cookieParser from "cookie-parser";
 import cors from "cors";
-import express, { Router, type RequestHandler } from "express";
+import express, { Router, type RequestHandler, type Response } from "express";
 import * as helmetModule from "helmet";
 import { config } from "./config.ts";
 import { pool } from "./db/pool.ts";
@@ -10,6 +10,7 @@ import { authRoutes } from "./routes/auth-routes.ts";
 import { businessRoutes, imageRoutes, userRoutes } from "./routes/business-routes.ts";
 import { fileRoutes } from "./routes/file-routes.ts";
 import { adminRoutes, publicRoutes } from "./routes/platform-routes.ts";
+import { flushEmailDelivery } from "./services/mailer.ts";
 
 // helmet trae tipos ESM y CommonJS: según cómo los resuelva TypeScript (en local o al compilar
 // en Vercel), `default` es la función o el módulo entero. Se toma la función en ambos casos.
@@ -30,6 +31,18 @@ app.use(cors({ origin: config.frontendUrls, credentials: true }));
 // JSON al guardar el perfil o el negocio, hasta pasarlas con src/db/move-images-to-storage.ts (npm run db:move-images).
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
+// En AWS Lambda la ejecución se congela al responder: los emails que la petición puso en cola se
+// envían antes de que salga la respuesta (ver flushEmailDelivery).
+if (config.onLambda) {
+  app.use((_req, res, next) => {
+    const end = res.end.bind(res) as (...args: unknown[]) => Response;
+    res.end = ((...args: unknown[]) => {
+      void flushEmailDelivery().finally(() => end(...args));
+      return res;
+    }) as Response["end"];
+    next();
+  });
+}
 
 const api = Router();
 

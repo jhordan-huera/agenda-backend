@@ -186,6 +186,8 @@ export async function processEmailQueue(
 }
 
 let scheduled: NodeJS.Timeout | null = null;
+/** Lambda: esta petición puso emails en cola (se envían antes de responder). */
+let deliveryRequested = false;
 let immediateDelivery = true;
 
 /**
@@ -202,7 +204,13 @@ export function disableImmediateDelivery(): void {
  * Envía confirmaciones y avisos al momento; los recordatorios quedan para el cron.
  */
 export function scheduleEmailDelivery(): void {
-  if (!transporter || scheduled || !immediateDelivery) return;
+  if (!transporter || !immediateDelivery) return;
+  // En Lambda nada corre después de responder: se envía al final de la petición (flushEmailDelivery).
+  if (config.onLambda) {
+    deliveryRequested = true;
+    return;
+  }
+  if (scheduled) return;
   const delivery = new Promise<void>((resolve) => {
     scheduled = setTimeout(() => {
       scheduled = null;
@@ -211,6 +219,19 @@ export function scheduleEmailDelivery(): void {
   });
   // En Vercel la función se congela al responder: waitUntil la mantiene viva hasta enviar.
   if (config.onVercel) waitUntil(delivery);
+}
+
+/**
+ * Lambda congela la ejecución al responder: los emails que la petición puso en cola (confirmaciones,
+ * avisos) se envían justo antes (lo llama app.ts). Sin emails pendientes no hace nada. En Vercel se
+ * envían después con waitUntil; en un servidor normal, con el temporizador de scheduleEmailDelivery.
+ */
+export async function flushEmailDelivery(): Promise<void> {
+  if (!deliveryRequested) return;
+  deliveryRequested = false;
+  await processEmailQueue({ skipReminders: true }).catch((error: unknown) =>
+    console.error("[emails] No se pudieron enviar al responder:", error instanceof Error ? error.message : error),
+  );
 }
 
 /** Arranca el envío periódico (reintentos y emails pendientes). Devuelve la función para detenerlo. */

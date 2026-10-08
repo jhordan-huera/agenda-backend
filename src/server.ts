@@ -41,10 +41,11 @@ const server = app.listen(config.port, () => {
   }
   void checkDatabase();
 });
-// Contra la base de producción, desde este equipo no: el cron de GitHub ya lo hace (y aquí
-// competiría con él por la cola).
-const stopReminderJob = config.productionDbFromHere ? () => undefined : startReminderJob();
-const stopEmailWorker = config.productionDbFromHere ? () => undefined : startEmailWorker();
+// Alojada (Lambda) o contra la base de producción desde este equipo, no: el cron de GitHub ya lo
+// hace (y aquí competiría con él por la cola).
+const backgroundJobs = !config.hosted && !config.productionDbFromHere;
+const stopReminderJob = backgroundJobs ? startReminderJob() : () => undefined;
+const stopEmailWorker = backgroundJobs ? startEmailWorker() : () => undefined;
 
 function shutdown() {
   stopReminderJob();
