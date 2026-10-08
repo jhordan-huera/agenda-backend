@@ -11,12 +11,17 @@ Zod · bcrypt · Nodemailer (Gmail OAuth2).
 ```bash
 npm run dev:local              # API + base de datos PostgreSQL en este equipo, con los datos demo
 npm run dev:local -- --reset   # borra los datos locales y vuelve a cargar la demo
+npm run dev:local -- --recordatorios   # también los recordatorios automáticos de las citas demo
 ```
 
 Crea la base en `.local-db/` la primera vez (necesita `brew install postgresql@16`), la conserva entre
 arranques y la detiene al salir (Ctrl+C). Aplica las migraciones nuevas en cada arranque: es el sitio
-para probar una migración antes de aplicarla en Supabase. No lee `.env`, así que no toca Supabase,
-no envía emails (quedan en cola, se ven en el historial de emails del panel) ni pide CAPTCHA.
+para probar una migración antes de aplicarla en Supabase. De `.env` sólo lee la cuenta de Gmail
+(`GMAIL_*`): nunca la base, Supabase ni el CAPTCHA. Con ella los emails se envían de verdad, pero
+**todos a tu propio correo** (`EMAIL_REDIRECT_TO` o, si no, `GMAIL_USER`) con el destinatario
+original en el asunto (`[Para maria@…]`); lo que estaba en cola de otras sesiones no se envía. Sin
+ella quedan en cola (historial de emails del panel). Los recordatorios automáticos de las citas
+demo (unos 20 al día) sólo con `--recordatorios`.
 Después arranca el frontend (`npm run dev` en agenda-front) y entra con `jhordan@demo.com` o
 `admin@demo.com` (contraseña `demo1234`).
 
