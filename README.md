@@ -509,9 +509,12 @@ frontend decide a cuál llama con su variable `API_URL`.
      GitHub organization `jhordan-huera`, repository `agenda-backend`, branch `main`. Permiso
      (política en línea): `lambda:UpdateFunctionCode`, `lambda:GetFunction` y
      `lambda:GetFunctionConfiguration` sobre `arn:aws:lambda:us-west-2:<cuenta>:function:agenda-backend`.
-   - Variables del repositorio: `AWS_LAMBDA_FUNCTION` (`agenda-backend`), `AWS_DEPLOY_ROLE_ARN`
-     (ARN del rol) y `AWS_LAMBDA_URL` (la Function URL). Probar con Actions → *Publicar en AWS
-     Lambda* → Run workflow.
+   - Variables del repositorio: `AWS_LAMBDA_FUNCTION` (`agenda-backend`) y `AWS_DEPLOY_ROLE_ARN`
+     (ARN del rol); **secreto** `AWS_LAMBDA_URL` (la Function URL: el repositorio es público y los
+     registros de Actions muestran las variables). Probar con Actions → *Publicar en AWS Lambda* →
+     Run workflow.
+   - CloudWatch → Grupos de registros → `/aws/lambda/agenda-backend` → retención de 1 mes (los
+     registros no se acumulan).
 4. **Cambio:** en el proyecto del frontend en Vercel, `API_URL` = la Function URL (sin `/` final) y
    Redeploy. Probar el login, una reserva (su email), subir un logo y la agenda.
    **Vuelta atrás:** `API_URL` otra vez con la URL de la API en Vercel y Redeploy.
