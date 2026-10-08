@@ -231,6 +231,10 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   campo existente no cambia de tipo) o duplica uno de la plataforma. (`services.clinical_template_id` sigue en la API, pero el panel
   ya no lo ofrece: se usa el formato del negocio.) Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
   Storage (en local, carpeta `storage/historias-clinicas/` y rutas `/api/files`); no se borran.
+- **Retención de la auditoría** (migración 026): `purge_audit_logs()` (la llama el cron) borra los
+  inicios y cierres de sesión a los 90 días, las acciones del panel a los 5 meses (antes, 1 año) y
+  los accesos y cambios en la historia clínica a los 5 años. Las citas, pacientes y pagos no se
+  tocan; nadie más puede borrar ni editar la auditoría (triggers).
 - **Pago por transferencia** (migración 025): `professionals.bank_account` (jsonb: banco, tipo de
   cuenta `savings`/`checking`, número sólo con dígitos, titular y cédula/RUC opcional) se guarda con
   la ficha del profesional. Cada cita tiene `payment_token` (enlace privado `/pago/:token` del

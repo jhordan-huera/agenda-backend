@@ -44,7 +44,7 @@ export interface ScheduledTasksReport {
   pending: number;
   /** Cuentas con muchos intentos fallidos de inicio de sesión (ver findLoginAttacks). */
   security: LoginAlert[];
-  /** Registros de auditoría borrados por antigüedad (purge_audit_logs). */
+  /** Registros de auditoría borrados por antigüedad (purge_audit_logs: sesiones 90 días, acciones 5 meses, historia clínica 5 años). */
   auditPurged: number;
   /** Emails con más de EMAIL_CONTENT_DAYS días a los que se les borró el contenido. */
   emailContentPurged: number;
