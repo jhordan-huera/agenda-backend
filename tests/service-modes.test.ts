@@ -108,18 +108,22 @@ ok(
 );
 const email = sql(`select body from notifications where to_email = 'virtual1@example.com' order by created_at desc limit 1`);
 ok(/meet\.google\.com\/abc-defg-hij/.test(email) && /Gratis/.test(email) && /Virtual/.test(email), "el email lleva la videollamada y «Gratis»", email.slice(0, 300));
+ok(/Hora: \d\d:\d\d – \d\d:\d\d \(hora de Ecuador, GMT-5\)/.test(email), "y la hora con la zona del negocio (el paciente puede estar en otro país)", email.slice(0, 400));
 r = await book({ serviceId: mixed.id, ...slots[1], ...person("mixed1"), homeVisit: visit });
 ok(r.status === 400 && /domicilio/.test(r.body.error.message), "local o virtual: a domicilio → 400", r.body);
 r = await book({ serviceId: mixed.id, ...slots[1], ...person("mixed2"), isVirtual: true, homeVisit: visit });
 ok(r.status === 400, "virtual y a domicilio a la vez → 400", r.body);
 r = await book({ serviceId: mixed.id, ...slots[1], ...person("mixed3") });
 ok(r.status === 200 && !r.body.isVirtual && r.body.meetingUrl === null, "local o virtual: en el local", r.body);
+const localEmail = sql(`select body from notifications where to_email = 'mixed3@example.com' order by created_at desc limit 1`);
+ok(localEmail && !/hora de /.test(localEmail), "en el local, la hora va sin zona", localEmail.slice(0, 300));
 r = await book({ serviceId: hidden.id, ...slots[2], ...person("hidden1") });
 const hiddenEmail = sql(`select body from notifications where to_email = 'hidden1@example.com' order by created_at desc limit 1`);
 ok(r.status === 200 && !/Precio:/.test(hiddenEmail), "precio a consultar: el email no habla de precio", hiddenEmail.slice(0, 300));
 
 console.log("Panel");
-const client = (await owner("GET", `${B}/clients`)).body[0];
+const clients = (await owner("GET", `${B}/clients`)).body;
+const client = clients.find((c: { email: string }) => c.email) ?? clients[0];
 const appointment = { clientId: client.id, serviceId: mixed.id, ...slots[3], durationMinutes: 45, price: 30, status: "confirmed", notes: "" };
 r = await owner("POST", `${B}/appointments`, { ...appointment, isVirtual: true, homeVisit: { ...visit } });
 ok(r.status === 400, "cita virtual y a domicilio → 400", r.body);
@@ -129,6 +133,8 @@ r = await owner("PUT", `${B}/appointments/${r.body.id}`, { ...appointment, isVir
 ok(r.status === 200 && r.body.isVirtual === false, "pasarla al local", r.body);
 const changes = (await owner("GET", `${B}/audit-logs?entityId=${r.body.id}`)).body.entries[0]?.changes ?? [];
 ok(changes.some((c: { label: string; before: string; after: string }) => c.label === "Modalidad" && c.before === "Virtual" && c.after === "En el local"), "la actividad dice el cambio de modalidad", changes);
+const modeNotices = Number(sql(`select count(*) from notifications where appointment_id = '${r.body.id}' and type = 'appointment_updated'`));
+ok(modeNotices === (client.email ? 1 : 0), "y al paciente se le avisa que ya no es por videollamada", { email: client.email, modeNotices });
 
 console.log(failures === 0 ? "\nTodo bien." : `\n${failures} fallos.`);
 process.exitCode = failures === 0 ? 0 : 1;

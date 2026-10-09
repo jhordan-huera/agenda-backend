@@ -1,7 +1,7 @@
 // El super admin elimina un negocio: se borran sus datos, sus archivos y las cuentas de su equipo.
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createBusinessWithOwner } from "./helpers/business.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
@@ -77,6 +77,42 @@ const before = {
 };
 ok(before.appointments > 0 && before.notes > 0, "tiene citas e historias clínicas", before);
 
+console.log("Subidas que nunca se completaron (las borra el cron)");
+const { pool } = await import("../src/db/pool.ts");
+const { deleteStalePendingAttachments } = await import("../src/services/clinical-attachment-service.ts");
+const { deleteStalePendingReceipts } = await import("../src/services/payment-service.ts");
+/** Un archivo en el almacenamiento local, como si el navegador lo hubiera subido. */
+const putFile = (bucket, objectPath) => {
+  const path = join(process.env.LOCAL_STORAGE_DIR, bucket, objectPath);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, "x");
+  return path;
+};
+const stalePath = `${id}/${patient.id}/abandonado.pdf`;
+sql(
+  `insert into clinical_attachments (business_id, client_id, file_name, content_type, size_bytes, storage_path, uploaded_by_name, created_at)
+   values ('${id}', '${patient.id}', 'abandonado.pdf', 'application/pdf', 10, '${stalePath}', 'Ricardo', now() - interval '2 days')`,
+);
+const staleFile = putFile("historias-clinicas", stalePath);
+const receiptAppointment = sql(`select id from appointments where business_id = '${id}' order by date limit 1`);
+const receiptPath = `${id}/${receiptAppointment}/abandonado.jpg`;
+sql(
+  `insert into payment_receipts (business_id, appointment_id, file_name, content_type, size_bytes, storage_path, created_at)
+   values ('${id}', '${receiptAppointment}', 'transferencia.jpg', 'image/jpeg', 10, '${receiptPath}', now() - interval '2 days')`,
+);
+const receiptFile = putFile("comprobantes", receiptPath);
+await deleteStalePendingAttachments();
+await deleteStalePendingReceipts();
+ok(
+  !existsSync(staleFile) && count(`select count(*) from clinical_attachments where storage_path = '${stalePath}'`) === 0,
+  "un archivo de la historia sin terminar de subir se borra del almacenamiento, no sólo de la base",
+);
+ok(
+  !existsSync(receiptFile) && count(`select count(*) from payment_receipts where storage_path = '${receiptPath}'`) === 0,
+  "y un comprobante sin terminar de subir, igual",
+);
+ok(existsSync(file), "el archivo ya subido sigue");
+
 console.log("Quién puede y cómo se confirma");
 r = await ricardo("DELETE", `/admin/businesses/${id}`, { confirmName: name });
 ok(r.status === 403, "el propietario no puede → 403", r.body);
@@ -87,6 +123,15 @@ ok(r.status === 400 && r.body.error.message.includes(name), "con otro nombre →
 ok(count(`select count(*) from businesses where id = '${id}'`) === 1, "el negocio sigue ahí");
 r = await admin("DELETE", "/admin/businesses/no-existe", { confirmName: name });
 ok(r.status === 404, "un negocio que no existe → 404", r.body);
+
+// Restos sin registro en las carpetas del negocio (y uno de otro negocio, que no se toca).
+const orphans = [
+  putFile("historias-clinicas", `${id}/sin-registro/resto.pdf`),
+  putFile("comprobantes", `${id}/sin-registro/resto.jpg`),
+  putFile("imagenes", `logos/${id}/logo-anterior.png`),
+  putFile("imagenes", `profesionales/${id}/foto-anterior.png`),
+];
+const otherBusinessFile = putFile("historias-clinicas", `${ls.businessId}/otro/archivo.pdf`);
 
 console.log("Eliminar");
 r = await admin("DELETE", `/admin/businesses/${id}`, { confirmName: `  ${name.toUpperCase()} ` });
@@ -102,6 +147,8 @@ const leftovers = Object.fromEntries(
 ok(left("businesses", "id") === 0 && Object.values(leftovers).every((n) => n === 0), "no queda nada del negocio", leftovers);
 ok(count("select count(*) from clinical_template_versions v where not exists (select 1 from clinical_templates t where t.id = v.template_id)") === 0, "ni versiones de sus formatos");
 ok(!existsSync(file), "su archivo se borró del almacenamiento");
+ok(!orphans.some((orphan) => existsSync(orphan)), "y todo lo que quedaba en sus carpetas, aunque no tuviera registro", orphans.filter((orphan) => existsSync(orphan)));
+ok(existsSync(otherBusinessFile), "los archivos de otro negocio no se tocan");
 ok(count("select count(*) from users where email in ('ricardo@demo.com', 'elena@demo.com', 'valeria@demo.com')") === 0, "las cuentas de su equipo se eliminan");
 ok((await ricardo("GET", "/auth/session")).body === null && (await elena("GET", "/auth/session")).body === null, "y sus sesiones se cierran");
 ok((await login("ricardo@demo.com")).session?.error?.code !== undefined, "ya no pueden iniciar sesión");
@@ -127,6 +174,7 @@ r = await createBusinessWithOwner(
 );
 ok(r.status === 200 && r.body.owner.email === "ricardo@demo.com", "se puede crear otro negocio con ese email y ese enlace", r.body);
 
+await pool.end();
 if (failures) {
   console.log(`\n${failures} comprobación(es) fallaron`);
   process.exit(1);

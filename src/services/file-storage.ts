@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.ts";
 import { IMAGE_MAX_BYTES, IMAGE_TYPES } from "../shared/lib/validations/images.ts";
@@ -37,6 +37,8 @@ export interface FileStorage {
   sizeOf(objectPath: string): Promise<number | null>;
   /** Borra los archivos (los que no existan se ignoran). */
   remove(objectPaths: string[]): Promise<void>;
+  /** Todos los archivos de una carpeta ("<negocio>/"), también los de sus subcarpetas. */
+  list(prefix: string): Promise<string[]>;
 }
 
 interface BucketSpec {
@@ -48,6 +50,8 @@ interface BucketSpec {
 
 const UPLOAD_URL_SECONDS = 10 * 60;
 const DOWNLOAD_URL_SECONDS = 5 * 60;
+/** Archivos por página al listar una carpeta de Supabase. */
+const LIST_PAGE = 1000;
 
 const encodePath = (objectPath: string) => objectPath.split("/").map(encodeURIComponent).join("/");
 
@@ -137,6 +141,28 @@ function supabaseStorage(baseUrl: string, key: string, spec: BucketSpec): FileSt
         await request("DELETE", `/object/${bucket}`, { prefixes: objectPaths.slice(i, i + 1000) });
       }
     },
+    async list(prefix) {
+      // Supabase lista un nivel cada vez: las subcarpetas llegan sin id y se recorren después.
+      const found: string[] = [];
+      const folders = [prefix.replace(/\/+$/, "")];
+      while (folders.length > 0) {
+        const folder = folders.pop()!;
+        for (let offset = 0; ; offset += LIST_PAGE) {
+          const objects = await request<{ name: string; id: string | null }[]>("POST", `/object/list/${bucket}`, {
+            prefix: `${folder}/`,
+            limit: LIST_PAGE,
+            offset,
+            sortBy: { column: "name", order: "asc" },
+          });
+          for (const object of objects) {
+            if (object.id === null) folders.push(`${folder}/${object.name}`);
+            else found.push(`${folder}/${object.name}`);
+          }
+          if (objects.length < LIST_PAGE) break;
+        }
+      }
+      return found;
+    },
   };
 }
 
@@ -218,7 +244,26 @@ function localStorage(spec: BucketSpec): FileStorage {
     async remove(objectPaths) {
       await Promise.all(objectPaths.map((objectPath) => rm(localFilePath(bucket, objectPath), { force: true })));
     },
+    async list(prefix) {
+      const folder = prefix.replace(/\/+$/, "");
+      if (!isSafePath(folder)) return [];
+      const root = path.join(LOCAL_STORAGE_DIR, bucket);
+      const entries = await readdir(localFilePath(bucket, folder), { recursive: true, withFileTypes: true }).catch(() => []);
+      return entries
+        .filter((entry) => entry.isFile())
+        .map((entry) => path.relative(root, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"));
+    },
   };
+}
+
+/**
+ * Borra todo lo que haya en una carpeta (p. ej. "<negocio>/" al eliminar un negocio: también las
+ * subidas a medias y los restos sin registro). Devuelve cuántos archivos.
+ */
+export async function removeFolder(storage: FileStorage, prefix: string): Promise<number> {
+  const objectPaths = await storage.list(prefix);
+  if (objectPaths.length > 0) await storage.remove(objectPaths);
+  return objectPaths.length;
 }
 
 /** Tamaño máximo que acepta la subida local de cada bucket. */

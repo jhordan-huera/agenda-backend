@@ -184,7 +184,9 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   al editar su ficha. En la reserva pública el cliente escribe
   su cédula: si ya es cliente, se reutiliza su ficha sin pedir ni mostrar sus datos (sólo "Hola,
   María L."); si es nuevo, completa nombre, email y teléfono. Un cliente antiguo sin cédula con el
-  mismo email recibe la cédula en lugar de duplicarse. El email ya no es único (familias).
+  mismo email **y el mismo nombre** (sin tildes, mayúsculas ni espacios de más) recibe la cédula en
+  lugar de duplicarse; con otro nombre es otra persona (una madre y su hijo con un solo email) y se
+  crea su propia ficha, para no mezclar citas ni historias clínicas. El email ya no es único (familias).
 - **Ubicación del local** (migración 007, columnas `businesses.lat`/`lng`): el negocio marca su
   local en un mapa; la página de reservas lo muestra y los emails enlazan "Cómo llegar" al punto
   exacto (sin punto, a la dirección escrita). Latitud y longitud van juntas o ninguna.
@@ -236,7 +238,9 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   propietario crea y edita sus formatos (`/clinical-templates`, cada cambio es una versión nueva; un
   campo existente no cambia de tipo) o duplica uno de la plataforma. (`services.clinical_template_id` sigue en la API, pero el panel
   ya no lo ofrece: se usa el formato del negocio.) Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
-  Storage (en local, carpeta `storage/historias-clinicas/` y rutas `/api/files`); no se borran.
+  Storage (en local, carpeta `storage/historias-clinicas/` y rutas `/api/files`); no se borran. Las
+  subidas que nunca se completaron (más de un día en `pending`) las borra el cron: primero el archivo
+  y después el registro (igual con los comprobantes).
 - **Retención de la auditoría** (migración 026): `purge_audit_logs()` (la llama el cron) borra los
   inicios y cierres de sesión a los 90 días, las acciones del panel a los 5 meses (antes, 1 año) y
   los accesos y cambios en la historia clínica a los 5 años. Las citas, pacientes y pagos no se
@@ -263,6 +267,9 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   mientras no se cambien; `npm run db:move-images` las pasa). Al cambiar o quitar una imagen se
   borra la que ya nadie usa. En local, carpeta `storage/<bucket>/` (las imágenes en
   `/api/files/public/imagenes/…`); con la base de producción y sin Supabase en `.env`, no hay subidas.
+  `list(prefix)` recorre una carpeta con sus subcarpetas: al eliminar un negocio se vacían
+  `<negocio>/` en los buckets privados y `logos/<negocio>/` y `profesionales/<negocio>/` en el de
+  imágenes (sólo lo que nadie más usa), también lo que no tenía registro.
 - **Equipo de la plataforma** (migración 020): `users.platform_owner` marca al super admin principal
   (la migración lo pone en el que ya existía; `db:create-admin` lo pone si aún no hay ninguno).
   `GET/POST /admin/platform-admins` lista y agrega super admins (agregar, sólo el principal). Las
@@ -305,8 +312,13 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 - **Citas por persona y día desde la página** (migración 021): `bookingSettings.maxClientBookingsPerDay`
   (1 por defecto; 0 = sin límite). Cuenta las citas activas de esa cédula ese día (también las del
   panel) y responde 409 con código `daily_limit`. Desde el panel no hay límite.
-- Pruebas: `tests/concurrency.test.ts` y `tests/booking-limits.test.ts` (reservas simultáneas de la
-  misma persona y de personas distintas).
+- **Reintento de la misma reserva**: si se pierde la respuesta y el paciente vuelve a confirmar, su
+  propia cita ocupa la hora. Si la misma cédula tiene una cita activa reservada online hace menos de
+  30 minutos con el mismo servicio, fecha, hora y modalidad (y el mismo profesional, si lo eligió),
+  se devuelve la confirmación de esa cita, sin crear otra ni reenviar emails. Más tarde ya no (la
+  confirmación trae el enlace de pago y el de la videollamada).
+- Pruebas: `tests/concurrency.test.ts`, `tests/booking-limits.test.ts` (reservas simultáneas de la
+  misma persona y de personas distintas) y `tests/booking-retry.test.ts` (reintentos y fichas por email).
 
 ## Rendimiento y crecimiento
 
@@ -329,10 +341,14 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   `sessions`). "Recordarme" = 30 días; si no, 24 h y la cookie se borra al cerrar el navegador.
   Cuando el super admin cambia una contraseña o desactiva una cuenta, se cierran sus sesiones.
 - **Contraseñas** con bcrypt. El login tarda lo mismo exista o no el email.
-- **Bloqueo por intentos fallidos:** 10 fallos con una cuenta (desde su último inicio de sesión
-  correcto) o 50 desde una conexión, en 15 minutos, bloquean el inicio de sesión hasta que pasen
-  (aunque la contraseña sea la correcta). Se cuentan en la auditoría, así que valen para todas
-  las instancias de Vercel. Un email no registrado se bloquea igual: no revela qué cuentas existen.
+- **Bloqueo por intentos fallidos:** se frena a la conexión que falla, no a la cuenta (el email del
+  dueño es público: cualquiera podría dejarlo fuera a propósito). En 15 minutos y desde el último
+  inicio de sesión correcto: 10 fallos con una cuenta desde una conexión la bloquean para esa cuenta
+  (aunque la contraseña sea la correcta); 50 desde una conexión, con cualquier cuenta, la bloquean
+  entera; y 30 con una cuenta sumando todas las conexiones (un ataque repartido entre muchas IP)
+  dejan probar sólo desde conexiones en las que esa cuenta ya inició sesión. Se cuentan en la
+  auditoría, así que valen para todas las instancias. Un email no registrado se bloquea igual: no
+  revela qué cuentas existen.
 - **Verificación en dos pasos** (TOTP: Google Authenticator, Microsoft Authenticator…) para la
   cuenta de super admin, desde Configuración. Tras la contraseña, el login devuelve
   `{ twoFactorRequired, challenge }` y la sesión se abre en `POST /api/auth/login/two-factor` con
@@ -367,7 +383,31 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 
 Los servicios guardan cada email "en cola" (tabla `notifications`) dentro de la misma transacción
 que el cambio que lo provoca; `src/services/mailer.ts` los envía por Gmail en segundo plano y los
-marca como enviados o, tras 5 intentos, fallidos (con el motivo en `last_error`).
+marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`).
+
+- **Reintentos con espera creciente** (migración 027, `notifications.next_attempt_at`): tras cada
+  fallo, el siguiente intento espera el doble (5 min, 10, 20… 320): unas 10 horas en total, así una
+  caída de Gmail no agota los intentos en minutos.
+- **Cada email se marca apenas sale**: el lote se toma con una consulta corta (`for update skip
+  locked`) que lo reserva 10 minutos (`next_attempt_at`) y cada email queda `sent` al enviarse, sin
+  transacciones largas. Si el proceso muere a mitad (tiempo máximo de Lambda, Vercel o Actions), lo
+  enviado no se repite y lo pendiente vuelve a la cola al vencer la reserva. Nodemailer tiene
+  límites de conexión (8 s) y de inactividad (12 s); el cron deja de empezar envíos a los 6 minutos.
+- **Recordatorios** (`runReminderJob`, reglas en `src/services/reminder-rules.ts`): salen
+  `reminderHoursBefore` horas antes, pero nunca entre las 21:00 y las 7:00 del negocio (a las 7:00
+  salen los de las citas que aún no empezaron), ni si la cita se agendó, se movió o se reactivó ya
+  dentro de esas horas y el negocio envía confirmaciones (el paciente acaba de recibir la
+  confirmación o el aviso del cambio). Hay uno por cada fecha y hora de la cita (clave
+  `dedupe_key` con `appointments.scheduled_at`, que cambia al reprogramarla o reactivarla): al
+  moverla, sale otro para la fecha nueva. Antes de enviarlo se comprueba otra vez: si la cita se
+  canceló, cambió o ya empezó, se descarta; en horas de silencio, espera a las 7:00.
+- **Cambios que se avisan al paciente**: fecha, hora, servicio, profesional o modalidad (en el
+  local, virtual o a domicilio, y la dirección de la visita). Una cita cancelada que vuelve a estar
+  activa le envía "Tu cita ha sido restablecida". En las citas virtuales la hora lleva la zona del
+  negocio ("10:00 (hora de Ecuador, GMT-5)"): el paciente puede estar en otro país.
+- **Zona horaria**: la API sólo acepta zonas que existen (`isValidTimezone`); la migración 027 pasó
+  a America/Guayaquil las inválidas que ya estaban guardadas. Si aun así falla un negocio, el cron
+  lo registra y sigue con los demás y con la cola de emails (el aviso de ntfy lo cuenta).
 
 - **Fuera de producción todos los emails se redirigen a `EMAIL_REDIRECT_TO`** (por defecto la propia
   cuenta de Gmail), con el destinatario original en el asunto. Así nunca se escribe a clientes de prueba.
@@ -481,7 +521,8 @@ La misma API, sin cambios de código entre una y otra: [Lambda Web Adapter](http
 arranca `node src/server.ts` (con `run.sh`) y le pasa las peticiones. La API sabe que está alojada
 (`AWS_LAMBDA_FUNCTION_NAME`): no arranca tareas de fondo (las hace el cron de GitHub) y, como Lambda
 congela la ejecución al responder, envía los emails que la petición puso en cola **antes** de
-responder (`flushEmailDelivery`, ~1 s más sólo en las peticiones que envían emails). Oregón, la
+responder (`flushEmailDelivery`, ~1 s más sólo en las peticiones que envían emails; como mucho un
+lote y 8 s para empezar envíos, unos 20 s en el peor caso; lo que no salga lo envía el cron). Oregón, la
 misma región de AWS que Supabase: misma latencia que Vercel `pdx1`. Gratis: el nivel siempre
 gratuito de Lambda (1 M de peticiones y 400.000 GB-s al mes) queda muy por encima del uso.
 

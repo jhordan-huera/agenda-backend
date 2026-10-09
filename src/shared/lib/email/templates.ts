@@ -1,6 +1,6 @@
 // Copia de agenda-front/src/lib/email/templates.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { APP_NAME } from "../constants/app.ts";
-import { BANK_ACCOUNT_TYPE_LABELS } from "../constants/business.ts";
+import { BANK_ACCOUNT_TYPE_LABELS, describeTimezone } from "../constants/business.ts";
 import { capitalize, formatLongDate, formatPrice, formatTimeRange } from "../format.ts";
 import { describeHomeVisit, getDirectionsUrl, getPlaceMapsUrl, hasMapPoint } from "../maps.ts";
 import type { BankAccount, HomeVisitAddress, ISODate } from "../../types/index.ts";
@@ -39,6 +39,11 @@ export interface AppointmentEmailData {
   meetingUrl: string | null;
   /** Pago por transferencia: datos de la cuenta y enlace para subir el comprobante (null: no aplica). */
   payment: { bankAccount: BankAccount; url: string } | null;
+  /**
+   * Zona horaria del negocio (p. ej. America/Guayaquil). En las citas virtuales la hora lleva la
+   * zona ("10:00 (hora de Ecuador, GMT-5)"): el paciente puede estar en otro país.
+   */
+  timezone?: string;
 }
 
 /* ------------------------------------------------------------------ Piezas -- */
@@ -62,6 +67,15 @@ const clientEmail = (data: AppointmentEmailData, message: MessageContent): Email
     footer: `Reserva gestionada con ${APP_NAME}.`,
   });
 
+/** " (hora de Ecuador, GMT-5)" en las citas virtuales; "" en las demás o sin zona. */
+function zoneSuffix(data: AppointmentEmailData): string {
+  // El desfase de ese día (horario de verano): a mediodía UTC, nunca en pleno cambio de hora.
+  return data.isVirtual && data.timezone ? ` (${describeTimezone(data.timezone, new Date(`${data.date}T12:00:00Z`))})` : "";
+}
+
+/** La hora de inicio, con la zona en las citas virtuales: "10:00 (hora de Ecuador, GMT-5)". */
+const startAt = (data: AppointmentEmailData) => `${data.startTime}${zoneSuffix(data)}`;
+
 const credentials = (email: string, password: string): EmailBlock => ({
   kind: "details",
   title: "Tus datos de acceso",
@@ -78,7 +92,7 @@ function appointmentDetails(data: AppointmentEmailData, title = "Tu cita"): Emai
     { label: "Servicio", value: data.serviceName },
     { label: "Profesional", value: data.professionalName },
     { label: "Fecha", value: capitalize(formatLongDate(data.date)) },
-    { label: "Hora", value: formatTimeRange(data.startTime, data.endTime) },
+    { label: "Hora", value: `${formatTimeRange(data.startTime, data.endTime)}${zoneSuffix(data)}` },
   ];
   if (data.showPrice) rows.push({ label: "Precio", value: formatPrice(data.price, data.currency) });
   if (data.isVirtual) {
@@ -321,7 +335,7 @@ export const emailTemplates = {
   bookingCreated: (data: AppointmentEmailData): EmailContent =>
     clientEmail(data, {
       subject: "Tu cita ha sido reservada",
-      preheader: `${capitalize(formatLongDate(data.date))} a las ${data.startTime} en ${data.businessName}.`,
+      preheader: `${capitalize(formatLongDate(data.date))} a las ${startAt(data)} en ${data.businessName}.`,
       title: "Tu cita ha sido reservada",
       greeting: `Hola ${data.clientName}:`,
       blocks: [
@@ -422,7 +436,7 @@ export const emailTemplates = {
   appointmentConfirmed: (data: AppointmentEmailData): EmailContent =>
     clientEmail(data, {
       subject: "Tu cita ha sido confirmada",
-      preheader: `Te esperamos el ${formatLongDate(data.date)} a las ${data.startTime}.`,
+      preheader: `Te esperamos el ${formatLongDate(data.date)} a las ${startAt(data)}.`,
       title: "Tu cita está confirmada",
       greeting: `Hola ${data.clientName}:`,
       blocks: [
@@ -436,12 +450,27 @@ export const emailTemplates = {
   appointmentUpdated: (data: AppointmentEmailData): EmailContent =>
     clientEmail(data, {
       subject: "Tu cita ha sido modificada",
-      preheader: `Nuevo horario: ${formatLongDate(data.date)} a las ${data.startTime}.`,
+      preheader: `Nuevo horario: ${formatLongDate(data.date)} a las ${startAt(data)}.`,
       title: "Tu cita ha sido modificada",
       greeting: `Hola ${data.clientName}:`,
       blocks: [
         { kind: "text", text: `Tu cita en ${data.businessName} ha sido modificada. Estos son los nuevos datos:` },
         appointmentDetails(data),
+      ],
+    }),
+
+  /** Una cita cancelada vuelve a quedar activa: el negocio la restableció. */
+  appointmentRestored: (data: AppointmentEmailData): EmailContent =>
+    clientEmail(data, {
+      subject: "Tu cita ha sido restablecida",
+      preheader: `Te esperamos el ${formatLongDate(data.date)} a las ${startAt(data)}.`,
+      title: "Tu cita ha sido restablecida",
+      greeting: `Hola ${data.clientName}:`,
+      blocks: [
+        { kind: "text", text: `Tu cita en ${data.businessName}, que había sido cancelada, vuelve a estar en pie. Estos son sus datos:` },
+        appointmentDetails(data),
+        ...payment(data),
+        ...policy(data),
       ],
     }),
 
@@ -455,7 +484,7 @@ export const emailTemplates = {
         {
           kind: "callout",
           tone: "warning",
-          text: `Tu cita del ${formatLongDate(data.date)} a las ${data.startTime} en ${data.businessName} ha sido cancelada.`,
+          text: `Tu cita del ${formatLongDate(data.date)} a las ${startAt(data)} en ${data.businessName} ha sido cancelada.`,
         },
         { kind: "text", text: "Si quieres, puedes reservar una nueva cita:" },
         { kind: "button", label: "Reservar una nueva cita", url: data.bookingUrl },
@@ -465,7 +494,7 @@ export const emailTemplates = {
   appointmentReminder: (data: AppointmentEmailData, when: "hoy" | "mañana" | null): EmailContent =>
     clientEmail(data, {
       subject: when ? `Recuerda que tienes una cita ${when}` : "Recordatorio de tu cita",
-      preheader: `${capitalize(formatLongDate(data.date))} a las ${data.startTime} en ${data.businessName}.`,
+      preheader: `${capitalize(formatLongDate(data.date))} a las ${startAt(data)} en ${data.businessName}.`,
       title: when ? `Tu cita es ${when}` : "Recordatorio de tu cita",
       greeting: `Hola ${data.clientName}:`,
       blocks: [{ kind: "text", text: "Te recordamos tu próxima cita:" }, appointmentDetails(data), ...policy(data)],

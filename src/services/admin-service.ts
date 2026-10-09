@@ -55,7 +55,7 @@ import { findTeamMember, listTeamMembers } from "./account-service.ts";
 import { logAudit } from "./audit.ts";
 import { insertBusiness, isSlugTaken } from "./business-factory.ts";
 import { authorizeSuperAdmin, parseInput, requireUser, type RequestContext } from "./context.ts";
-import { fileStorage } from "./file-storage.ts";
+import { fileStorage, imageStorage, receiptStorage, removeFolder } from "./file-storage.ts";
 import { releaseImages } from "./image-service.ts";
 import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
 import { appOrigin, PASSWORD_MASK, queueEmail } from "./notifications.ts";
@@ -499,7 +499,26 @@ export const adminService = {
         .catch((error: unknown) => console.error("No se pudieron borrar los archivos del negocio eliminado:", error));
     }
     await removeReceiptFiles(receipts);
-    await releaseImages(images);
+    // Y todo lo que quede en sus carpetas, aunque no tenga registro (subidas a medias, restos).
+    for (const storage of [fileStorage, receiptStorage]) {
+      if (!storage) continue;
+      await removeFolder(storage, `${businessId}/`).catch((error: unknown) =>
+        console.error(`No se pudo vaciar la carpeta del negocio eliminado en ${storage.bucket}:`, error),
+      );
+    }
+    // Sus logos y fotos de agendas anteriores: releaseImages sólo borra los que nadie más usa.
+    const leftoverImages: string[] = [];
+    const storage = imageStorage;
+    if (storage) {
+      for (const folder of [`logos/${businessId}/`, `profesionales/${businessId}/`]) {
+        const found = await storage.list(folder).catch((error: unknown) => {
+          console.error("No se pudieron listar las imágenes del negocio eliminado:", error);
+          return [];
+        });
+        leftoverImages.push(...found.map((objectPath) => storage.publicUrl(objectPath)));
+      }
+    }
+    await releaseImages([...images, ...leftoverImages]);
   },
 
   /** Cambio de plan desde el panel de plataforma: se aplica y se avisa al propietario por email. */
