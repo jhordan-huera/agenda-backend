@@ -297,7 +297,7 @@ r = await jhordan("PATCH", `${J}/team/${miguel.userId}`, { role: "professional" 
 ok(r.status === 402 && /varias agendas/.test(r.body.error.message), "no se da el rol Profesional", r.body);
 r = await jhordan("PATCH", `${J}/team/${miguel.userId}`, { role: "admin" });
 ok(r.status === 204 || r.status === 200, "los demás roles sí", r.body);
-r = await admin("POST", `/admin/businesses/${js.businessId}/members`, { firstName: "Pía", lastName: "Mora", email: "pia@example.com", role: "professional" });
+r = await admin("POST", `/admin/businesses/${js.businessId}/members`, { firstName: "Pía", lastName: "Mora", email: "pia@example.com", role: "professional", password: "PiaClave2026" });
 ok(r.status === 402 && /varias agendas/.test(r.body.error.message), "ni el super admin agrega a alguien con ese rol", r.body);
 
 console.log(failures === 0 ? "\nTodo bien." : `\n${failures} fallos.`);

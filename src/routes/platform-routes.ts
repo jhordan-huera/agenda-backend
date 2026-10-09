@@ -196,10 +196,9 @@ adminRoutes.patch(
   "/users/:userId/active",
   handle((req) => adminService.setUserActive(req.ctx, req.params.userId, req.body?.isActive)),
 );
-// Enlace de un solo uso para que el usuario defina su contraseña (el super admin no la elige ni la ve).
-adminRoutes.post(
-  "/users/:userId/password-link",
-  handle((req) => adminService.sendPasswordLink(req.ctx, req.params.userId)),
+adminRoutes.put(
+  "/users/:userId/password",
+  handle((req) => adminService.setUserPassword(req.ctx, req.params.userId, req.body)),
 );
 adminRoutes.get(
   "/platform-admins",

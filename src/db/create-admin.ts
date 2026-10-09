@@ -11,7 +11,7 @@ import { one, pool } from "./pool.ts";
  * La contraseña se pide en la terminal sin mostrarla (o se lee de ADMIN_PASSWORD): como argumento
  * quedaría en el historial de la shell. Mínimo MIN_ADMIN_PASSWORD caracteres.
  */
-const MIN_ADMIN_PASSWORD = 12;
+const MIN_ADMIN_PASSWORD = 8;
 const USAGE = "Uso: npm run db:create-admin -- <email> [--nombre Ana] [--apellido Pérez]  (la contraseña se pide después)";
 
 /** Lee una línea de la terminal sin mostrar lo que se escribe. */

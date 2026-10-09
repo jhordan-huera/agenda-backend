@@ -1,7 +1,7 @@
 // «Sólo sus pacientes»: un profesional no abre la ficha ni la historia clínica de un paciente ajeno
 // reservándole una cita en su propia agenda desde la página pública. Además: la actividad clínica sólo
-// la ve quien tiene acceso clínico, y las lecturas clínicas del super admin en modo soporte quedan en
-// la actividad del negocio.
+// la ve quien tiene acceso clínico, y las lecturas clínicas del super admin en modo soporte no quedan
+// en la actividad del negocio (sólo lo que crea o cambia).
 import pg from "pg";
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
@@ -271,14 +271,14 @@ ok(entries.length === ownerClinical.length, "con acceso clínico, sí", [entries
 await ricardo("PATCH", `${B}/team/${es.userId}/clinical-access`, { access: false });
 await ricardo("PATCH", `${B}/team/${es.userId}`, { role: "staff" });
 
-console.log("Lecturas clínicas del super admin en modo soporte");
+console.log("Lecturas clínicas del super admin en modo soporte: no quedan en la actividad");
 const { a: admin } = await login("admin@demo.com");
 r = await admin("GET", `${B}/clients/${ajeno.id}/clinical-record`);
 ok(r.status === 200, "el super admin abre una historia en modo soporte", r.status);
 const views = (await ricardo("GET", `${B}/audit-logs?entityType=clinical_record&entityId=${ajeno.id}`)).body.entries;
 ok(
-  views.some((l: { action: string; actorName: string }) => l.action === "clinical_record.viewed" && /\(Super admin\)/.test(l.actorName)),
-  "queda en la actividad del negocio, a la vista del propietario",
+  !views.some((l: { action: string; actorName: string }) => l.action === "clinical_record.viewed" && /\(Super admin\)/.test(l.actorName)),
+  "su consulta no queda en la actividad del negocio",
   views.map((l: { actorName: string; action: string }) => `${l.actorName}: ${l.action}`),
 );
 const pdf = Buffer.from("%PDF-1.4 informe ".repeat(20));
@@ -289,11 +289,18 @@ r = await ricardo("POST", `${B}/clients/${ajeno.id}/clinical-record/attachments`
   description: "",
 });
 await fetch(ORIGIN + r.body.upload.url, { method: "PUT", headers: r.body.upload.headers, body: pdf });
-await ricardo("POST", `${B}/clinical-attachments/${r.body.attachment.id}/complete`);
-r = await admin("GET", `${B}/clinical-attachments/${r.body.attachment.id}/url`);
+const attachmentId: string = r.body.attachment.id;
+await ricardo("POST", `${B}/clinical-attachments/${attachmentId}/complete`);
+r = await admin("GET", `${B}/clinical-attachments/${attachmentId}/url`);
 ok(r.status === 200 && r.body.url, "el super admin descarga un archivo de la historia", r.body);
+r = await ricardo("GET", `${B}/clinical-attachments/${attachmentId}/url`);
+ok(r.status === 200 && r.body.url, "el propietario también lo abre", r.body);
 const opened = (await ricardo("GET", `${B}/audit-logs?action=clinical_record.attachment_opened&entityId=${ajeno.id}`)).body.entries;
-ok(opened.length === 1 && /\(Super admin\)/.test(opened[0].actorName) && /Informe\.pdf/.test(opened[0].summary), "la descarga también queda registrada", opened);
+ok(
+  opened.length === 1 && !/\(Super admin\)/.test(opened[0].actorName) && /Informe\.pdf/.test(opened[0].summary),
+  "queda la descarga del propietario; la del super admin, no",
+  opened,
+);
 
 await db.end();
 console.log(failures === 0 ? "\nTodo bien." : `\n${failures} fallos.`);

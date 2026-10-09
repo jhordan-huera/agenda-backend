@@ -99,7 +99,7 @@ Publica primero la API y después agenda-front si el cambio toca a los dos.
    npm run db:create-admin -- tu@email.com --nombre Nombre --apellido Apellido
    ```
 
-   La contraseña (12 caracteres como mínimo) se pide después en la terminal, sin mostrarla: como
+   La contraseña (8 caracteres como mínimo) se pide después en la terminal, sin mostrarla: como
    argumento quedaría en el historial de la shell. Sin terminal, se lee de `ADMIN_PASSWORD`. Al entrar
    por primera vez con datos reales tendrá que activar la verificación en dos pasos (obligatoria).
 
@@ -129,7 +129,7 @@ Publica primero la API y después agenda-front si el cambio toca a los dos.
 | `npm test` | Pruebas de integración contra un PostgreSQL desechable (ver "Pruebas") |
 | `npm run db:migrate` | Aplica las migraciones pendientes de `db/migrations` |
 | `npm run db:seed` | Carga los datos demo (no hace nada si ya hay datos; `-- --reset` lo **borra todo** antes) |
-| `npm run db:create-admin -- <email> [--nombre X] [--apellido Y]` | Crea el super admin (pide la contraseña sin mostrarla; mínimo 12 caracteres) |
+| `npm run db:create-admin -- <email> [--nombre X] [--apellido Y]` | Crea el super admin (pide la contraseña sin mostrarla; mínimo 8 caracteres) |
 | `npm run db:move-images` | Pasa al bucket `imagenes` los logos y fotos antiguos guardados dentro de la base (data URL); se puede repetir |
 | `npm run sync:shared` | Copia de agenda-front el código compartido (ver abajo) |
 | `npm run lambda:package` | Prepara `dist/lambda.zip` para AWS Lambda (ver "Backend en AWS Lambda") |
@@ -173,35 +173,28 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
 
 | Grupo | Rutas |
 | --- | --- |
-| Sesión | `GET /auth/session` · `POST /auth/login` · `register` · `logout` · `change-password` (cualquier usuario) · `POST /auth/password-link/check` y `POST /auth/password-link` (enlace para definir la contraseña, sin sesión) |
+| Sesión | `GET /auth/session` · `POST /auth/login` · `register` · `logout` · `change-password` (sólo super admin) |
 | Perfil | `GET/PUT /users/:userId` |
 | Negocio | `POST /businesses` (onboarding) · `GET /businesses/slug-availability` · `GET/PATCH /businesses/:id` · `GET …/professional` |
 | Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status`) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
 | Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) |
-| Super admin | `/admin/stats` · `/admin/businesses` (+ `status`, `plan`, `members`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `POST …/password-link`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` |
+| Super admin | `/admin/stats` · `/admin/businesses` (+ `status`, `plan`, `members`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` |
 | Estado | `GET /health` |
 
 ## Contraseñas, modo soporte e historia clínica
 
-- **Nadie elige ni ve la contraseña de otro** (migración 028): al agregar el propietario de un
-  negocio, un miembro de un equipo o un super admin, la cuenta se crea sin contraseña conocida y
-  recibe por email un **enlace de un solo uso** (`/definir-contrasena?token=…`) para definirla. El
-  token son 32 bytes aleatorios; en la base sólo queda su hash SHA-256 (`password_setup_tokens`),
-  caduca a los 60 minutos, se marca como usado y pedir otro anula el anterior. Al definirla
-  (`POST /auth/password-link`, mínimo 10 caracteres) se cierran todas las sesiones de la cuenta.
-  Si alguien la olvida, el super admin pulsa "Enviar enlace para definir contraseña"
-  (`POST /admin/users/:id/password-link`): la API lo envía por email y lo devuelve para copiarlo
-  (p. ej. por WhatsApp) si el email no llega. En el registro de emails el token va oculto
-  (`••••••••`, el mailer pone el real al enviarlo). A una cuenta existente sin negocio que pasa a ser
-  propietaria se le anula la contraseña y se cierran sus sesiones: el negocio sólo lo recibe quien
-  lea el email (el registro público no verifica el email).
-- **Cada usuario cambia su contraseña** desde su perfil (`POST /auth/change-password`: la actual y
-  la nueva, mínimo 10 caracteres); se cierran sus demás sesiones. **Cambiar el email** de la cuenta
-  (`PUT /users/:id` con `currentPassword`) pide la contraseña actual. Ambos quedan en los eventos de
-  sesión. Quien se registra por `/register` elige la suya; se puede cerrar el registro en
-  Configuración de la plataforma. Riesgo conocido: el registro responde "Ya existe una cuenta con
-  ese email" (revela qué emails están registrados); se deja así hasta tener verificación por email.
+- **Las contraseñas las pone el super admin**: al agregar el propietario de un negocio, al agregar un
+  miembro a un equipo, al agregar otro super admin y al cambiársela a un usuario (mínimo 8
+  caracteres). Se envían por email. Los usuarios no pueden cambiarla ni hay recuperación por enlace
+  ("¿Olvidaste tu contraseña?" indica el email de soporte). Sólo el super admin cambia la suya. Una
+  cuenta existente sin negocio que pasa a ser propietaria recibe la contraseña que elige el super
+  admin y se cierran sus sesiones abiertas. Quien se registra por `/register` elige la suya (mínimo 8
+  caracteres); se puede cerrar el registro en Configuración de la plataforma. Riesgo conocido: el
+  registro responde "Ya existe una cuenta con ese email" (revela qué emails están registrados); se
+  deja así hasta tener verificación por email.
+- **Cambiar el email** de la cuenta (`PUT /users/:id` con `currentPassword`) pide la contraseña
+  actual y queda en los eventos de sesión.
 - **Categorías de negocio en la base de datos** (tabla `business_categories`): el super admin las
   crea, edita, ordena y desactiva en `/admin/categories` (nombre, ícono, si es de salud y servicio
   sugerido). Una categoría en uso no se borra: se desactiva y los negocios que la tienen la conservan.
@@ -235,8 +228,7 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   /admin/businesses` crea el negocio con descripción, servicios (`services`: nombre, minutos y
   precio; precio 0 = oculto) y horario (`schedules`), sin cuenta; `POST /admin/businesses/:id/owner`
   agrega después al propietario (cuenta nueva o existente sin negocio; email `business_created`
-  con el enlace para definir su contraseña; si hay una sola agenda sin usuario, se le vincula y toma
-  su nombre).
+  con su acceso; si hay una sola agenda sin usuario, se le vincula y toma su nombre).
 - **Modalidades y precio "Gratis"** (migración 023): `services.modes` (`business`, `home`, `virtual`;
   al menos una) reemplaza a `location` (la API aún acepta `location` de un panel anterior).
   `appointments.is_virtual` (no puede ser a la vez a domicilio) y `professionals.meeting_url` (sala
@@ -276,12 +268,12 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   el mensaje invita a escribir a soporte.
 - **Modo soporte**: el super admin opera en cualquier negocio (también suspendido) con permisos de
   propietario desde "Gestionar negocio" (con la verificación en dos pasos activada); lo que crea o
-  cambia y las historias clínicas que abre (consultas y descargas de archivos) quedan en la auditoría
-  del negocio como "Nombre (Super admin)", a la vista del propietario. El resto de consultas, no.
+  cambia queda en la auditoría como "Nombre (Super admin)", lo que sólo consulta no (tampoco las
+  historias clínicas ni sus archivos).
 - **Historia clínica** (datos de salud, para uso del profesional): el propietario, los miembros que
   él autoriza y el super admin en modo soporte. Las evoluciones no se editan ni se borran (se añaden
-  aclaraciones), cada consulta queda en la auditoría y un paciente con historia no se puede
-  eliminar. En la actividad del negocio, los eventos de la historia clínica (`clinical_record`) sólo
+  aclaraciones), cada consulta de las personas del negocio queda en la auditoría y un paciente con
+  historia no se puede eliminar. En la actividad del negocio, los eventos de la historia clínica (`clinical_record`) sólo
   los ve quien tiene acceso clínico (un administrador sin él, no).
 - **Formatos propios, por servicio y archivos** (migración 010): en los planes Pro y Business el
   propietario crea y edita sus formatos (`/clinical-templates`, cada cambio es una versión nueva; un
@@ -411,8 +403,9 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   (y como mucho 24 desde que se inició; la cookie se borra al cerrar el navegador); con
   "Recordarme", a los 14 días sin usarla: cada uso la renueva otros 14 días, también la cookie. El
   último uso (`sessions.last_seen_at`) se anota como mucho cada 5 minutos. Las sesiones abiertas
-  antes de la migración siguen valiendo con esos límites. Al definir o cambiar la contraseña, al
-  activar la verificación en dos pasos o al desactivar una cuenta, se cierran sus (demás) sesiones.
+  antes de la migración siguen valiendo con esos límites. Cuando el super admin cambia una
+  contraseña (la de otro o la suya), al activar la verificación en dos pasos o al desactivar una
+  cuenta, se cierran sus (demás) sesiones.
 - **Contraseñas** con bcrypt. El login tarda lo mismo exista o no el email.
 - **Bloqueo por intentos fallidos:** se frena a la conexión que falla, no a la cuenta (el email del
   dueño es público: cualquiera podría dejarlo fuera a propósito). En 15 minutos y desde el último
@@ -433,9 +426,9 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   hash). 5 códigos incorrectos anulan el paso; cuentan para el bloqueo de la cuenta. Desactivarla
   pide la contraseña y un código (`src/services/two-factor.ts`, `src/services/totp.ts`).
   **Emergencia** (celular y códigos perdidos): `npm run db:reset-2fa -- <email>` desde tu ordenador.
-- **Enlaces fuera del registro de emails:** los emails con el enlace para definir la contraseña se
-  guardan con el token oculto (`••••••••`); éste va aparte (`notifications.secret`) sólo hasta que
-  el email se envía o se descarta. Ningún email lleva contraseñas.
+- **Contraseñas fuera del registro de emails:** los emails con datos de acceso se guardan con la
+  contraseña oculta (`••••••••`); ésta va aparte (`notifications.secret`) sólo hasta que el email
+  se envía o se descarta.
 - **CAPTCHA** (Cloudflare Turnstile) en las reservas de la página pública y en el registro
   (`/auth/register`, que envía la bienvenida a la dirección escrita), con `TURNSTILE_SITE_KEY` y
   `TURNSTILE_SECRET_KEY` (`src/http/captcha.ts`). Sin ellas no se pide: en producción alojada se

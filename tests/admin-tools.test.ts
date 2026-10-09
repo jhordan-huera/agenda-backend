@@ -1,4 +1,4 @@
-// Herramientas locales: db:create-admin (contraseña fuera de los argumentos, 12 caracteres como
+// Herramientas locales: db:create-admin (contraseña fuera de los argumentos, 8 caracteres como
 // mínimo) y db:migrate (schema_migrations con RLS).
 import { spawnSync } from "node:child_process";
 import pg from "pg";
@@ -22,8 +22,8 @@ const createAdmin = (args: string[], password?: string) =>
 
 try {
   console.log("db:create-admin");
-  let r = createAdmin(["operador@example.com", "--nombre", "Olga", "--apellido", "Ortiz"], "corta-123");
-  ok(r.status === 1 && /al menos 12 caracteres/.test(r.stderr), "exige 12 caracteres", r.stderr);
+  let r = createAdmin(["operador@example.com", "--nombre", "Olga", "--apellido", "Ortiz"], "corta1");
+  ok(r.status === 1 && /al menos 8 caracteres/.test(r.stderr), "exige 8 caracteres", r.stderr);
   r = createAdmin(["operador@example.com", "Contraseña-larga-2026"]);
   ok(r.status === 1 && /ya no se pasa como argumento/.test(r.stderr), "la contraseña como argumento se rechaza (quedaría en el historial)", r.stderr);
   r = createAdmin(["operador@example.com"]);

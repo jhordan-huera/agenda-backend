@@ -46,7 +46,6 @@ import { requireAssignableCategory } from "./category-service.ts";
 import { authorize, parseInput, requireUser, type RequestContext } from "./context.ts";
 import { assertRoleAllowed, countUsers, getPlanUsage } from "./plan-limits.ts";
 import { appOrigin, queueEmail } from "./notifications.ts";
-import { revokePasswordLinks } from "./password-links.ts";
 import { listProfessionals } from "./professional-service.ts";
 import { logSessionEvent, type ClientConnection } from "./session-security.ts";
 
@@ -100,8 +99,8 @@ export const userService = {
   },
 
   /**
-   * El propio perfil. Cambiar el email (con el que se inicia sesión y al que llegan los enlaces para
-   * definir la contraseña) pide la contraseña actual: con sólo una sesión abierta no basta.
+   * El propio perfil. Cambiar el email (con el que se inicia sesión) pide la contraseña actual: con
+   * sólo una sesión abierta no basta.
    */
   async update(ctx: RequestContext, userId: string, input: unknown, connection: ClientConnection): Promise<User> {
     const me = requireUser(ctx);
@@ -138,8 +137,6 @@ export const userService = {
         user.avatarUrl,
       ]);
       if (emailChanged) {
-        // Un enlace para definir la contraseña enviado al email anterior deja de servir.
-        await revokePasswordLinks(db, userId);
         await logSessionEvent(
           user,
           { action: "session.email_changed", summary: `Cambió el email de su cuenta (antes: ${me.email})` },

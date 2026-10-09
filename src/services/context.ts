@@ -36,7 +36,7 @@ export interface AuditActor {
 
 export interface Actor extends AuditActor {
   role: BusinessRole;
-  /** Super admin en modo soporte: se registran sus cambios y sus lecturas de historias clínicas (no el resto de consultas). */
+  /** Super admin en modo soporte: sus cambios se registran, sus consultas no. */
   support?: true;
 }
 
@@ -51,7 +51,7 @@ export function requireUser(ctx: RequestContext): User {
  * (aislamiento multi-tenant), que el negocio no esté suspendido y, opcionalmente, un
  * permiso del rol. El super admin ("Gestionar negocio" en el panel /admin) actúa en
  * cualquier negocio, aunque esté suspendido, con los permisos del propietario y queda
- * identificado en la auditoría (lo que crea o cambia y las historias clínicas que abre). Necesita la
+ * identificado en la auditoría (sólo lo que crea o cambia, no lo que consulta). Necesita la
  * verificación en dos pasos activada (ver superAdminNeedsTwoFactor). Con `lock` bloquea la fila del
  * negocio hasta el fin de la transacción: así dos escrituras simultáneas del mismo negocio (p. ej. dos
  * reservas a la misma hora, o el último cupo del plan) se ejecutan una detrás de otra.

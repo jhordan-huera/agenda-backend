@@ -27,8 +27,7 @@ export const paymentUrl = (token: string) => `${appOrigin()}/pago/${token}`;
 /**
  * Pone el email en cola. Devuelve false si no va a salir: ya existía (recordatorio duplicado) o lo
  * frenó un tope diario (ver email-limits.ts: queda en el historial como fallido, con el motivo).
- * `secret`: el dato de acceso (token del enlace para definir la contraseña) que el mailer pone en lugar
- * de PASSWORD_MASK al enviarlo (ver mailer.ts).
+ * `secret`: la contraseña que el mailer pone en lugar de PASSWORD_MASK al enviarlo (ver mailer.ts).
  * `hold`: motivo para no enviarlo, si quien lo pone en cola ya lo sabe.
  */
 export async function queueEmail(

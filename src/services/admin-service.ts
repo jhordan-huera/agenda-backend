@@ -26,10 +26,9 @@ import {
   planRejectionSchema,
   platformAdminSchema,
   platformSettingsSchema,
+  userPasswordSchema,
 } from "../shared/lib/validations/admin.ts";
 import type {
-  AddedPlatformAdmin,
-  AddedTeamMember,
   AdminAuditLog,
   AdminBusinessDetail,
   AdminBusinessSummary,
@@ -41,16 +40,16 @@ import type {
   BusinessRole,
   BusinessStatus,
   EmailNotification,
-  PasswordLink,
   PlanChangeRequest,
   PlanId,
   PlatformAdmin,
   PlatformSettings,
   PlatformStats,
   Subscription,
+  TeamMember,
   User,
 } from "../shared/types/index.ts";
-import { createUserAccount, isEmailRegistered, unusablePasswordHash } from "./accounts.ts";
+import { createUserAccount, hashPassword, isEmailRegistered } from "./accounts.ts";
 import { ADMIN_AUDIT_QUERY, parseAuditFilters, queryAuditLogs } from "./activity-service.ts";
 import { findTeamMember, listTeamMembers } from "./account-service.ts";
 import { logAudit } from "./audit.ts";
@@ -59,8 +58,7 @@ import { authorizeSuperAdmin, parseInput, requireUser, type RequestContext } fro
 import { fileStorage, imageStorage, receiptStorage, removeFolder } from "./file-storage.ts";
 import { releaseImages } from "./image-service.ts";
 import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
-import { appOrigin, queueEmail } from "./notifications.ts";
-import { deliverPasswordLink } from "./password-links.ts";
+import { appOrigin, PASSWORD_MASK, queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
 import { assertRoleAllowed, assertUserLimit } from "./plan-limits.ts";
 import { applyPlanChange } from "./subscriptions.ts";
@@ -182,9 +180,8 @@ export const platformService = {
 };
 
 /**
- * Cuentas de super admin: sólo el principal desactiva a los demás o les envía el enlace para definir
- * la contraseña; nadie toca la del principal ni la suya propia desde aquí (la propia se cambia en su
- * configuración). `action`: "desactivar", "enviar el enlace de contraseña"…
+ * Cuentas de super admin: sólo el principal desactiva o cambia la contraseña de los demás; nadie
+ * toca la del principal ni la suya propia desde aquí (la propia se cambia en su configuración).
  */
 function assertCanManageAccount(ctx: RequestContext, target: User, action: string): void {
   if (!target.platformRole) return;
@@ -192,9 +189,9 @@ function assertCanManageAccount(ctx: RequestContext, target: User, action: strin
   if (target.id === me.id) {
     throw new AppError("forbidden", "Tu propia cuenta se gestiona desde tu configuración.");
   }
-  if (target.platformOwner) throw new AppError("forbidden", `No se puede ${action} al super admin principal.`);
+  if (target.platformOwner) throw new AppError("forbidden", "No se puede " + action + " el super admin principal.");
   if (!me.platformOwner) {
-    throw new AppError("forbidden", `Sólo el super admin principal puede ${action} a otro super admin.`);
+    throw new AppError("forbidden", "Sólo el super admin principal puede " + action + " otro super admin.");
   }
 }
 
@@ -318,11 +315,11 @@ export const adminService = {
   },
 
   /**
-   * Propietario de un negocio creado sin él: cuenta nueva (o una existente sin negocio). Nadie elige
-   * su contraseña: se le envía por email un enlace de un solo uso para que la defina, junto con su
-   * página de reservas. Si el negocio tiene una sola agenda sin usuario (la del alta), pasa a ser la suya.
+   * Propietario de un negocio creado sin él: cuenta nueva (o una existente sin negocio) con la
+   * contraseña que elige el super admin; se le envía por email junto con su página de reservas.
+   * Si el negocio tiene una sola agenda sin usuario (la del alta), pasa a ser la suya.
    */
-  async assignBusinessOwner(ctx: RequestContext, businessId: string, input: unknown): Promise<AddedTeamMember> {
+  async assignBusinessOwner(ctx: RequestContext, businessId: string, input: unknown): Promise<TeamMember> {
     const actor = authorizeSuperAdmin(ctx);
     const data = parseInput(businessOwnerSchema, input);
     return transaction(async (db) => {
@@ -341,11 +338,10 @@ export const adminService = {
       }
       await assertUserLimit(db, businessId);
       if (existing) {
-        // Una cuenta existente (p. ej. del registro público, que no verifica el email) pierde su
-        // contraseña y sus sesiones: el negocio sólo lo recibe quien lea el email con el enlace.
-        await db.query("update users set password_hash = $2 where id = $1", [existing.id, await unusablePasswordHash()]);
+        // También a una cuenta existente se le pone la contraseña elegida (el super admin la conoce)
+        // y se cierran sus sesiones abiertas, como al cambiarla desde Usuarios.
+        await db.query("update users set password_hash = $2 where id = $1", [existing.id, await hashPassword(data.password)]);
         await db.query("delete from sessions where user_id = $1", [existing.id]);
-        await db.query("delete from login_challenges where user_id = $1", [existing.id]);
       }
       const owner = existing ?? (await createUserAccount(db, data));
 
@@ -375,18 +371,19 @@ export const adminService = {
         );
       }
 
-      const passwordLink = await deliverPasswordLink(db, owner, {
+      await queueEmail(db, {
         businessId,
         type: "business_created",
-        compose: (setPasswordUrl, linkMinutes) =>
-          emailTemplates.businessCreated({
-            firstName: owner.firstName,
-            businessName: business.name,
-            email: owner.email,
-            setPasswordUrl,
-            linkMinutes,
-            bookingUrl: `${appOrigin()}/book/${business.slug}`,
-          }),
+        to: owner.email,
+        secret: data.password,
+        ...emailTemplates.businessCreated({
+          firstName: owner.firstName,
+          businessName: business.name,
+          email: owner.email,
+          password: PASSWORD_MASK,
+          loginUrl: `${appOrigin()}/login`,
+          bookingUrl: `${appOrigin()}/book/${business.slug}`,
+        }),
       });
       await logAudit(db, {
         businessId,
@@ -394,9 +391,9 @@ export const adminService = {
         action: "platform.owner_assigned",
         entityType: "team",
         entityId: owner.id,
-        summary: `Agregó a ${getFullName(owner)} como propietario${existing ? " (cuenta que ya existía)" : ""} y le envió el enlace para definir su contraseña`,
+        summary: `Agregó a ${getFullName(owner)} como propietario${existing ? " (cuenta que ya existía)" : ""}`,
       });
-      return { member: (await findTeamMember(db, businessId, owner.id))!, passwordLink };
+      return (await findTeamMember(db, businessId, owner.id))!;
     });
   },
 
@@ -700,35 +697,30 @@ export const adminService = {
     });
   },
 
-  /**
-   * "Enviar enlace para definir contraseña" (p. ej. si la olvidó): un enlace de un solo uso por email,
-   * que también se devuelve para copiarlo si el email no llega. El super admin nunca elige ni ve la
-   * contraseña; la actual sigue sirviendo hasta que el usuario defina la nueva (entonces se cierran
-   * sus sesiones).
-   */
-  async sendPasswordLink(ctx: RequestContext, userId: string): Promise<PasswordLink> {
+  /** Pone la contraseña que elige el super admin, se la envía por email y cierra sus sesiones abiertas. */
+  async setUserPassword(ctx: RequestContext, userId: string, input: unknown): Promise<void> {
     const actor = authorizeSuperAdmin(ctx);
-    return transaction(async (db) => {
+    const { password } = parseInput(userPasswordSchema, input);
+    await transaction(async (db) => {
       const user = await findUser(db, userId, true);
-      assertCanManageAccount(ctx, user, "enviar el enlace de contraseña");
-      if (!user.isActive) {
-        throw new AppError("conflict", "Esta cuenta está desactivada. Reactívala antes de enviarle el enlace.");
-      }
-      const link = await deliverPasswordLink(db, user, {
+      assertCanManageAccount(ctx, user, "cambiar la contraseña de");
+      await db.query("update users set password_hash = $2 where id = $1", [userId, await hashPassword(password)]);
+      await db.query("delete from sessions where user_id = $1", [userId]);
+      await queueEmail(db, {
         businessId: null,
         type: "password_reset",
-        compose: (setPasswordUrl, linkMinutes) =>
-          emailTemplates.passwordSetupLink({ firstName: user.firstName, email: user.email, setPasswordUrl, linkMinutes }),
+        to: user.email,
+        secret: password,
+        ...emailTemplates.passwordChanged(user.firstName, user.email, PASSWORD_MASK, `${appOrigin()}/login`),
       });
       await logAudit(db, {
         businessId: null,
         actor,
-        action: "platform.user_password_link",
+        action: "platform.user_password_changed",
         entityType: "user",
         entityId: userId,
-        summary: `Envió a ${getFullName(user)} (${user.email}) un enlace para definir su contraseña`,
+        summary: `Cambió la contraseña de ${getFullName(user)} (${user.email})`,
       });
-      return link;
     });
   },
 
@@ -750,9 +742,8 @@ export const adminService = {
   /**
    * Agrega otro super admin para ayudar con el soporte (sólo el principal). Tiene los mismos
    * permisos de plataforma salvo gestionar a otros super admins; sus acciones quedan con su nombre.
-   * Recibe un enlace para definir su contraseña y, al entrar, tendrá que activar la verificación en dos pasos.
    */
-  async addPlatformAdmin(ctx: RequestContext, input: unknown): Promise<AddedPlatformAdmin> {
+  async addPlatformAdmin(ctx: RequestContext, input: unknown): Promise<PlatformAdmin> {
     const actor = authorizeSuperAdmin(ctx);
     if (!requireUser(ctx).platformOwner) {
       throw new AppError("forbidden", "Sólo el super admin principal puede agregar a otros super admins.");
@@ -766,17 +757,18 @@ export const adminService = {
         `update users set platform_role = 'super_admin' where id = $1 returning ${userColumns()}`,
         [created.id],
       ))!;
-      const passwordLink = await deliverPasswordLink(db, user, {
+      await queueEmail(db, {
         businessId: null,
         type: "platform_admin_added",
-        compose: (setPasswordUrl, linkMinutes) =>
-          emailTemplates.platformAdminAdded({
-            firstName: user.firstName,
-            addedBy: getFullName(requireUser(ctx)),
-            email: user.email,
-            setPasswordUrl,
-            linkMinutes,
-          }),
+        to: user.email,
+        secret: data.password,
+        ...emailTemplates.platformAdminAdded({
+          firstName: user.firstName,
+          addedBy: getFullName(requireUser(ctx)),
+          email: user.email,
+          password: PASSWORD_MASK,
+          loginUrl: `${appOrigin()}/login`,
+        }),
       });
       await logAudit(db, {
         businessId: null,
@@ -786,12 +778,12 @@ export const adminService = {
         entityId: user.id,
         summary: `Agregó a ${getFullName(user)} (${user.email}) como super admin`,
       });
-      return { admin: { user, twoFactorEnabled: false, lastSignInAt: null }, passwordLink };
+      return { user, twoFactorEnabled: false, lastSignInAt: null };
     });
   },
 
-  /** Crea un miembro del equipo de un negocio: recibe por email un enlace para definir su contraseña. */
-  async addBusinessMember(ctx: RequestContext, businessId: string, input: unknown): Promise<AddedTeamMember> {
+  /** Crea un miembro del equipo de un negocio con la contraseña que elige el super admin. */
+  async addBusinessMember(ctx: RequestContext, businessId: string, input: unknown): Promise<TeamMember> {
     const actor = authorizeSuperAdmin(ctx);
     const data = parseInput(adminMemberSchema, input);
     return transaction(async (db) => {
@@ -805,18 +797,19 @@ export const adminService = {
         user.id,
         data.role,
       ]);
-      const passwordLink = await deliverPasswordLink(db, user, {
+      await queueEmail(db, {
         businessId,
         type: "team_invite",
-        compose: (setPasswordUrl, linkMinutes) =>
-          emailTemplates.teamInvite({
-            firstName: user.firstName,
-            businessName: business.name,
-            roleLabel: ROLE_LABELS[data.role],
-            email: user.email,
-            setPasswordUrl,
-            linkMinutes,
-          }),
+        to: user.email,
+        secret: data.password,
+        ...emailTemplates.teamInvite({
+          firstName: user.firstName,
+          businessName: business.name,
+          roleLabel: ROLE_LABELS[data.role],
+          email: user.email,
+          password: PASSWORD_MASK,
+          loginUrl: `${appOrigin()}/login`,
+        }),
       });
       await logAudit(db, {
         businessId,
@@ -826,7 +819,7 @@ export const adminService = {
         entityId: user.id,
         summary: `Añadió a ${getFullName(user)} al equipo como ${ROLE_LABELS[data.role]}`,
       });
-      return { member: (await findTeamMember(db, businessId, user.id))!, passwordLink };
+      return (await findTeamMember(db, businessId, user.id))!;
     });
   },
 

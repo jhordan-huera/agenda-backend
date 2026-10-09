@@ -30,8 +30,8 @@ export interface User {
   /** "super_admin" para el operador de la plataforma; null para el resto de usuarios. */
   platformRole: PlatformRole | null;
   /**
-   * Super admin principal: el único que agrega, desactiva o envía el enlace para definir la contraseña
-   * a los demás super admins (el equipo de soporte). Nadie puede tocar su cuenta.
+   * Super admin principal: el único que agrega, desactiva o cambia la contraseña de los demás
+   * super admins (el equipo de soporte). Nadie puede tocar su cuenta.
    */
   platformOwner: boolean;
   /** false = el super admin desactivó el acceso de esta cuenta. */
@@ -826,37 +826,6 @@ export interface PlatformAdmin {
   twoFactorEnabled: boolean;
   /** Último inicio de sesión (null si nunca entró). */
   lastSignInAt: ISODateTime | null;
-}
-
-/**
- * Enlace de un solo uso para que un usuario defina su contraseña (el super admin nunca la ve ni la
- * elige). Se envía por email; el super admin puede copiarlo (p. ej. para pasarlo por WhatsApp).
- */
-export interface PasswordLink {
-  url: string;
-  /** Caduca a los 60 minutos. */
-  expiresAt: ISODateTime;
-  /** A quién se le envió por email. */
-  email: string;
-}
-
-/** Cuenta que agrega el super admin a un negocio, con el enlace para que defina su contraseña. */
-export interface AddedTeamMember {
-  member: TeamMember;
-  passwordLink: PasswordLink;
-}
-
-/** Super admin nuevo, con el enlace para que defina su contraseña. */
-export interface AddedPlatformAdmin {
-  admin: PlatformAdmin;
-  passwordLink: PasswordLink;
-}
-
-/** Lo que muestra la página /definir-contrasena antes de pedir la contraseña. */
-export interface PasswordLinkInfo {
-  firstName: string;
-  email: string;
-  expiresAt: ISODateTime;
 }
 
 export interface AdminUserSummary {

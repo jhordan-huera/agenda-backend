@@ -23,8 +23,7 @@ import { isQuietTime, minutesUntilQuietEnds, minutesUntilStart, reminderKeySql }
 
 /**
  * Lo que se guarda en lugar de la contraseña en los emails con datos de acceso: la plantilla
- * se compone con esto y el dato de acceso (el enlace para definir la contraseña) va aparte (columna
- * `secret`) sólo hasta que se envía.
+ * se compone con esto y la contraseña va aparte (columna `secret`) sólo hasta que se envía.
  */
 export const PASSWORD_MASK = "••••••••";
 
@@ -68,7 +67,7 @@ interface QueuedEmail {
   body: string;
   /** Versión con diseño (null en los emails anteriores a la migración 012). */
   html: string | null;
-  /** Dato de acceso (el token del enlace para definir la contraseña): oculto (PASSWORD_MASK) y va aquí. */
+  /** Contraseña de los emails con datos de acceso: se guarda oculta (PASSWORD_MASK) y va aquí. */
   secret: string | null;
   /** Intentos, contando éste. */
   attempts: number;

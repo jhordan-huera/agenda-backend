@@ -1,6 +1,5 @@
 -- Seguridad de cuentas, roles y sesiones:
 --   · historias clínicas: una reserva online no da acceso al paciente a un profesional con «sólo sus pacientes»;
---   · enlaces de un solo uso para que cada usuario defina su contraseña (ya no se envían contraseñas);
 --   · sesiones con caducidad por inactividad.
 
 -- -------------------------------------------- Reservas online y «sólo sus pacientes» ----
@@ -41,23 +40,6 @@ create trigger appointments_booking_client_access before insert on appointments
   for each row when (new.source = 'booking_page') execute function appointments_booking_client_access();
 
 create index appointments_client_access_pending_idx on appointments (professional_id, client_id) where client_access_pending;
-
--- --------------------------------------------- Enlaces para definir la contraseña ----
--- El super admin ya no elige ni ve contraseñas: al crear una cuenta (o cuando alguien la olvida)
--- se envía un enlace de un solo uso para que la persona la defina. Aquí sólo el hash SHA-256 del
--- token (32 bytes aleatorios); caduca a los 60 minutos y queda marcado al usarse.
-create table password_setup_tokens (
-  id         uuid primary key default gen_random_uuid(),
-  user_id    uuid not null references users (id) on delete cascade,
-  token_hash text not null unique,
-  expires_at timestamptz not null,
-  used_at    timestamptz,
-  created_at timestamptz not null default now()
-);
-create index password_setup_tokens_user_idx on password_setup_tokens (user_id);
-
--- Como el resto: la API REST de Supabase (clave anónima) no puede leerla.
-alter table password_setup_tokens enable row level security;
 
 -- ----------------------------------------------------------------- Sesiones ----
 -- Caducidad por inactividad: sin «Recordarme», 12 horas sin uso (y como mucho 24 desde que se

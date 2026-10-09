@@ -1,4 +1,4 @@
-import { addMemberWithPassword, createBusinessWithOwner } from "./helpers/business.mjs";
+import { createBusinessWithOwner } from "./helpers/business.mjs";
 import { cedulaFor } from "./helpers/cedula.mjs";
 // Pruebas de extremo a extremo contra la API de prueba.
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
@@ -161,13 +161,13 @@ const lauraBusinessId = r.body.businessId;
 const supportAdmin = agent();
 await supportAdmin("POST", "/auth/login", { email: "admin@demo.com", password: "demo1234", remember: true });
 const member = { firstName: "Nuevo", lastName: "Miembro", email: "nuevo@example.com", role: "staff", password: "NuevoClave1" };
-r = await addMemberWithPassword(supportAdmin, lauraBusinessId, member);
+r = await supportAdmin("POST", `/admin/businesses/${lauraBusinessId}/members`, member);
 ok(r.status === 402 && r.body.error.code === "plan_limit", "Free: 1 usuario → plan_limit", r.body);
 r = await supportAdmin("PUT", `/admin/businesses/${lauraBusinessId}/plan`, { plan: "pro" });
 ok(r.body?.plan === "pro" && r.body.currentPeriodEnd, "el super admin cambia a Pro", r.body);
-r = await addMemberWithPassword(supportAdmin, lauraBusinessId, member);
-ok(r.status === 200 && r.body.member.role === "staff", "el super admin agrega un miembro con Pro (define su contraseña con el enlace)", r.body);
-const newMemberId = r.body.member.userId;
+r = await supportAdmin("POST", `/admin/businesses/${lauraBusinessId}/members`, member);
+ok(r.status === 200 && r.body.role === "staff", "el super admin agrega un miembro con Pro", r.body);
+const newMemberId = r.body.userId;
 r = await supportAdmin("PUT", `/admin/businesses/${lauraBusinessId}/plan`, { plan: "free" });
 ok(r.status === 409, "volver a Free con 2 usuarios → 409", r.body);
 r = await laura("DELETE", `${LB}/team/${newMemberId}`);
@@ -226,7 +226,7 @@ ok(r.status === 200 && r.body.business.slug === "negocio-admin", "crear negocio 
 const newBusinessId = r.body.business?.id;
 const newOwner = agent();
 r = await newOwner("POST", "/auth/login", { email: "dueno@example.com", password: "DuenoClave1", remember: true });
-ok(r.body?.role === "owner" && r.body.businessId === newBusinessId, "el nuevo propietario entra con la contraseña que definió", r.body);
+ok(r.body?.role === "owner" && r.body.businessId === newBusinessId, "el nuevo propietario entra con la contraseña elegida", r.body);
 r = await admin("PATCH", `/admin/businesses/${newBusinessId}/status`, { status: "suspended" });
 ok(r.body?.status === "suspended", "suspender negocio", r.body);
 r = await newOwner("GET", `/businesses/${newBusinessId}/clients`);
@@ -243,8 +243,8 @@ ok(r.body?.isActive === false, "desactivar usuario", r.body);
 const p = agent();
 r = await p("POST", "/auth/login", { email: "pedro@demo.com", password: "demo1234", remember: true });
 ok(r.status === 403 && /desactivada/.test(r.body.error.message), "usuario desactivado no entra", r.body);
-r = await admin("POST", `/admin/users/${pedro.user.id}/password-link`);
-ok(r.status === 409 && /desactivada/.test(r.body.error.message), "a una cuenta desactivada no se le envía el enlace de contraseña", r.body);
+r = await admin("PUT", `/admin/users/${pedro.user.id}/password`, { password: "PedroNueva1" });
+ok(r.status === 204, "poner contraseña a un usuario", r.body);
 r = await admin("GET", "/admin/audit-logs?scope=admin");
 ok(r.body.entries.length > 0 && r.body.entries.every((l) => l.action.startsWith("platform.")), "auditoría de plataforma", r.body?.entries?.[0]);
 r = await admin("GET", "/admin/emails");
@@ -253,7 +253,7 @@ r = await admin("PUT", "/admin/settings", { allowPublicSignup: false, supportEma
 ok(r.body?.allowPublicSignup === false && r.body.supportPhone === "099 406 0669", "cerrar registro y poner el teléfono de soporte", r.body);
 r = await admin("PUT", "/admin/settings", { allowPublicSignup: false, supportEmail: "ayuda@example.com", supportPhone: "llámame" });
 ok(r.status === 400, "teléfono de soporte no válido → 400", r.body);
-r = await p("POST", "/auth/login", { email: "pedro@demo.com", password: "demo1234", remember: true });
+r = await p("POST", "/auth/login", { email: "pedro@demo.com", password: "PedroNueva1", remember: true });
 ok(r.status === 403 && r.body.error.message.includes("ayuda@example.com o al WhatsApp 099 406 0669"), "el aviso de cuenta desactivada incluye el teléfono", r.body);
 
 console.log("Registro y onboarding");
@@ -291,9 +291,7 @@ ok(r.body?.displayName === "Ana Editada", "el profesional se actualiza con el pe
 
 console.log("Contraseñas y sesiones");
 r = await ana("POST", "/auth/change-password", { currentPassword: "Clave12345", newPassword: "OtraClave123", confirmPassword: "OtraClave123" });
-ok(r.status === 204, "un usuario normal cambia su propia contraseña", r.body);
-r = await agent()("POST", "/auth/login", { email: "ana@example.com", password: "OtraClave123", remember: false });
-ok(r.status === 200, "y entra con la nueva", r.body);
+ok(r.status === 403, "un usuario normal no cambia su contraseña", r.body);
 r = await ana("POST", "/auth/forgot-password", { email: "ana@example.com" });
 ok(r.status === 404, "sin recuperación por enlace");
 r = await ana("POST", "/auth/logout");

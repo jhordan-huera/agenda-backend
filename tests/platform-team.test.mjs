@@ -1,6 +1,5 @@
 // Equipo de la plataforma: el super admin principal agrega a otros super admins para el soporte.
 import { execFileSync } from "node:child_process";
-import { setPasswordWithLink, tokenOf } from "./helpers/business.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
@@ -47,30 +46,17 @@ console.log("Agregar");
 let r = await owner("GET", "/admin/platform-admins");
 ok(r.status === 200 && r.body.length === 1 && r.body[0].user.platformOwner && r.body[0].twoFactorEnabled === false, "lista del equipo (el principal primero)", r.body);
 const helper = { firstName: "Sofía", lastName: "Soporte", email: "sofia.soporte@example.com", password: "Soporte-2026" };
-const { password: _password, ...helperInput } = helper;
-r = await owner("POST", "/admin/platform-admins", helperInput);
-ok(
-  r.status === 200 && r.body.admin.user.platformRole === "super_admin" && r.body.admin.user.platformOwner === false && r.body.passwordLink,
-  "el principal agrega un super admin (sin elegir su contraseña: recibe un enlace)",
-  r.body,
-);
-const helperId = r.body.admin.user.id;
-const helperLink = r.body.passwordLink;
-r = await owner("POST", "/admin/platform-admins", helperInput);
+r = await owner("POST", "/admin/platform-admins", helper);
+ok(r.status === 200 && r.body.user.platformRole === "super_admin" && r.body.user.platformOwner === false, "el principal agrega un super admin", r.body);
+const helperId = r.body.user.id;
+r = await owner("POST", "/admin/platform-admins", helper);
 ok(r.status === 409, "con un email que ya existe → 409", r.body);
-r = await owner("POST", "/admin/platform-admins", { ...helperInput, email: "no-es-email" });
-ok(r.status === 400, "email inválido → 400", r.body);
+r = await owner("POST", "/admin/platform-admins", { ...helper, email: "otro@example.com", password: "corta" });
+ok(r.status === 400, "contraseña débil → 400", r.body);
 const mail = sql(`select type || '|' || body || '|' || coalesce(secret, '') from notifications where to_email = '${helper.email}' order by created_at desc limit 1`);
-ok(
-  /^platform_admin_added\|/.test(mail) && mail.includes("token=••••••••") && mail.split("|")[2] === tokenOf(helperLink) && /verificación en dos pasos/.test(mail),
-  "le llega un email con su enlace (el token no queda en el registro) y el aviso de la verificación en dos pasos",
-  mail.slice(0, 160),
-);
+ok(/^platform_admin_added\|/.test(mail) && mail.includes("••••••••") && !mail.split("|")[1].includes(helper.password), "le llega un email con sus datos (la contraseña no queda en el registro)", mail.slice(0, 120));
 
 console.log("El nuevo super admin");
-ok((await login(helper.email, helper.password)).status === 401, "no entra hasta definir su contraseña");
-r = await setPasswordWithLink(agent(), helperLink, helper.password);
-ok(r.status === 204, "la define con el enlace", r.body);
 const { a: sofia, session: sofiaSession } = await login(helper.email, helper.password);
 ok(sofiaSession.platformRole === "super_admin" && sofiaSession.platformOwner === false, "entra como super admin (no principal)", sofiaSession);
 r = await sofia("GET", "/admin/stats");
@@ -81,13 +67,10 @@ r = await sofia("POST", "/admin/platform-admins", { ...helper, email: "tercero@e
 ok(r.status === 403 && /principal/.test(r.body.error.message), "no puede agregar a otros super admins", r.body);
 r = await sofia("PATCH", `/admin/users/${ownerSession.userId}/active`, { isActive: false });
 ok(r.status === 403, "no puede desactivar al principal", r.body);
-r = await sofia("POST", `/admin/users/${ownerSession.userId}/password-link`);
-ok(r.status === 403, "ni enviarle un enlace de contraseña", r.body);
-r = await owner("POST", "/admin/platform-admins", { ...helperInput, firstName: "Tomás", email: "tomas.soporte@example.com" });
-const tomasId = r.body.admin.user.id;
-await setPasswordWithLink(agent(), r.body.passwordLink, helper.password);
-r = await sofia("POST", `/admin/users/${tomasId}/password-link`);
-ok(r.status === 403 && /principal/.test(r.body.error.message), "ni a otro super admin", r.body);
+r = await sofia("PUT", `/admin/users/${ownerSession.userId}/password`, { password: "Hackeo-2026" });
+ok(r.status === 403, "ni cambiarle la contraseña", r.body);
+r = await owner("POST", "/admin/platform-admins", { ...helper, firstName: "Tomás", email: "tomas.soporte@example.com" });
+const tomasId = r.body.user.id;
 r = await sofia("PATCH", `/admin/users/${tomasId}/active`, { isActive: false });
 ok(r.status === 403 && /principal/.test(r.body.error.message), "ni desactivar a otro super admin", r.body);
 const business = (await sofia("GET", "/admin/businesses")).body.find((row) => row.subscription?.plan === "free");
@@ -96,11 +79,8 @@ ok(r.status === 200 && r.body.plan === "pro", "sí gestiona negocios (p. ej. cam
 await owner("PUT", `/admin/businesses/${business.business.id}/plan`, { plan: "free" });
 
 console.log("El principal gestiona el equipo");
-r = await owner("POST", `/admin/users/${helperId}/password-link`);
-ok(r.status === 200 && r.body.email === helper.email, "envía a un super admin el enlace para definir su contraseña", r.body);
-ok((await sofia("GET", "/admin/stats")).status === 200, "hasta que la defina, su sesión sigue");
-r = await setPasswordWithLink(agent(), r.body, "Nueva-Clave-2026");
-ok(r.status === 204, "la define", r.body);
+r = await owner("PUT", `/admin/users/${helperId}/password`, { password: "Nueva-Clave-2026" });
+ok(r.status === 204, "cambia la contraseña de un super admin", r.body);
 ok((await login(helper.email, helper.password)).status === 401 && (await sofia("GET", "/admin/stats")).status === 401, "la anterior deja de servir y se cierran sus sesiones");
 const { a: sofia2 } = await login(helper.email, "Nueva-Clave-2026");
 r = await owner("PATCH", `/admin/users/${tomasId}/active`, { isActive: false });

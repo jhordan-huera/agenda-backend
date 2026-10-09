@@ -1,7 +1,7 @@
 // Copia de agenda-front/src/lib/validations/admin.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
 import { businessCategorySchema, slugSchema, timezoneField } from "./business.ts";
-import { emailField, moneyField, optionalEmailField, optionalText, phoneField, requiredText } from "./fields.ts";
+import { emailField, moneyField, optionalEmailField, optionalText, passwordField, phoneField, requiredText } from "./fields.ts";
 import { weeklyScheduleSchema } from "./schedule.ts";
 import { teamInviteSchema } from "./team.ts";
 
@@ -40,14 +40,13 @@ export const adminBusinessSchema = z.object({
     .refine((days) => days.some((day) => day.isActive), "Activa al menos un día de atención"),
 });
 
-/**
- * Propietario de un negocio que aún no lo tiene. Nadie elige su contraseña: se le envía un enlace de un
- * solo uso para que la defina él (también si ya tenía una cuenta sin negocio).
- */
+/** Propietario de un negocio que aún no lo tiene, con la contraseña que elige el super admin. */
 export const businessOwnerSchema = z.object({
   firstName: requiredText("El nombre"),
   lastName: requiredText("El apellido"),
   email: emailField,
+  /** Se le envía por email (también si ya tenía una cuenta sin negocio). */
+  password: passwordField,
 });
 
 /** Categoría de negocio (panel del super admin). */
@@ -69,10 +68,13 @@ export const businessCategoryInputSchema = z.object({
 /** Rechazo de una solicitud de cambio de plan (el motivo se envía al propietario). */
 export const planRejectionSchema = z.object({ reason: optionalText(300) });
 
-/** Miembro del equipo de un negocio, creado por el super admin: recibe un enlace para definir su contraseña. */
-export const adminMemberSchema = teamInviteSchema;
+/** Contraseña que el super admin pone a un usuario; se le envía por email. */
+export const userPasswordSchema = z.object({ password: passwordField });
 
-/** Otro super admin para el equipo de soporte (lo agrega el principal): también recibe el enlace. */
+/** Miembro del equipo de un negocio, creado por el super admin con la contraseña que elige. */
+export const adminMemberSchema = teamInviteSchema.extend({ password: passwordField });
+
+/** Otro super admin para el equipo de soporte, con la contraseña que elige el principal. */
 export const platformAdminSchema = adminMemberSchema.omit({ role: true });
 
 /** Eliminar un negocio: hay que escribir su nombre para confirmar. */
@@ -92,6 +94,7 @@ export type AdminBusinessInput = z.infer<typeof adminBusinessSchema>;
 export type InitialServiceInput = z.infer<typeof initialServiceSchema>;
 export type BusinessOwnerInput = z.infer<typeof businessOwnerSchema>;
 export type PlatformSettingsInput = z.infer<typeof platformSettingsSchema>;
+export type UserPasswordInput = z.infer<typeof userPasswordSchema>;
 export type PlanRejectionInput = z.infer<typeof planRejectionSchema>;
 export type BusinessCategoryInput = z.infer<typeof businessCategoryInputSchema>;
 export type AdminMemberInput = z.infer<typeof adminMemberSchema>;

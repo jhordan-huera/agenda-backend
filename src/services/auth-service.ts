@@ -5,26 +5,11 @@ import { one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
 import { formatSupportContact } from "../shared/lib/format.ts";
-import {
-  changePasswordSchema,
-  loginSchema,
-  passwordLinkSchema,
-  registerSchema,
-  setPasswordSchema,
-  twoFactorLoginSchema,
-} from "../shared/lib/validations/auth.ts";
-import type {
-  BusinessRole,
-  BusinessStatus,
-  PasswordLinkInfo,
-  PlatformRole,
-  TwoFactorChallenge,
-  User,
-} from "../shared/types/index.ts";
+import { changePasswordSchema, loginSchema, registerSchema, twoFactorLoginSchema } from "../shared/lib/validations/auth.ts";
+import type { BusinessRole, BusinessStatus, PlatformRole, TwoFactorChallenge, User } from "../shared/types/index.ts";
 import { hashPassword, verifyPassword } from "./accounts.ts";
 import { parseInput, requireUser, type RequestContext } from "./context.ts";
 import { queueEmail } from "./notifications.ts";
-import { findPasswordLink, revokePasswordLinks } from "./password-links.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
 import { isLockedOut, lockedOutError, logSessionEvent, type ClientConnection } from "./session-security.ts";
 import {
@@ -327,64 +312,21 @@ export const authService = {
   },
 
   /**
-   * Cualquier usuario cambia su propia contraseña desde su perfil (con la actual). Se cierran sus
-   * demás sesiones y deja de servir cualquier enlace para definirla que tuviera pendiente.
+   * Cambia la propia contraseña y cierra las demás sesiones. Sólo el super admin: las
+   * contraseñas de los usuarios las pone él (para poder entrar en su cuenta si le piden ayuda).
    */
-  async changePassword(ctx: RequestContext, input: unknown, connection: ClientConnection): Promise<void> {
+  async changePassword(ctx: RequestContext, input: unknown): Promise<void> {
     const user = requireUser(ctx);
+    if (user.platformRole !== "super_admin") {
+      throw new AppError("forbidden", "Tu contraseña la gestiona el soporte de la plataforma. Escríbele si necesitas cambiarla.");
+    }
     const data = parseInput(changePasswordSchema, input);
     if (!(await isCurrentPassword(user.id, data.currentPassword))) {
       throw new AppError("validation", "La contraseña actual no es correcta.");
     }
-    const passwordHash = await hashPassword(data.newPassword);
     await transaction(async (db) => {
-      await db.query("update users set password_hash = $2 where id = $1", [user.id, passwordHash]);
-      await db.query("delete from sessions where user_id = $1 and id is distinct from $2", [user.id, ctx.sessionId]);
-      await revokePasswordLinks(db, user.id);
-      await logSessionEvent(user, { action: "session.password_changed", summary: "Cambió su contraseña" }, connection, db);
-    });
-  },
-
-  /** Página /definir-contrasena: a quién es el enlace (si sigue valiendo) antes de pedir la contraseña. */
-  async checkPasswordLink(input: unknown): Promise<PasswordLinkInfo> {
-    const { token } = parseInput(passwordLinkSchema, input);
-    const link = await findPasswordLink(pool, token);
-    const user = link
-      ? await one<{ firstName: string; email: string; isActive: boolean }>(
-          pool,
-          'select first_name as "firstName", email, is_active as "isActive" from users where id = $1',
-          [link.userId],
-        )
-      : null;
-    if (!link || !user) throw invalidPasswordLink();
-    if (!user.isActive) throw await inactiveAccountError();
-    return { firstName: user.firstName, email: user.email, expiresAt: link.expiresAt };
-  },
-
-  /**
-   * Define la contraseña con el enlace de un solo uso (cuenta nueva o contraseña olvidada). Se cierran
-   * todas las sesiones de la cuenta; para entrar, inicia sesión con la contraseña nueva (y el código,
-   * si tiene la verificación en dos pasos).
-   */
-  async setPasswordWithLink(input: unknown, connection: ClientConnection): Promise<void> {
-    const { token, password } = parseInput(setPasswordSchema, input);
-    const passwordHash = await hashPassword(password);
-    await transaction(async (db) => {
-      const link = await findPasswordLink(db, token, true);
-      if (!link) throw invalidPasswordLink();
-      const user = (await one<User>(db, `select ${userColumns()} from users where id = $1 for update`, [link.userId]))!;
-      if (!user.isActive) throw await inactiveAccountError();
-      await db.query("update users set password_hash = $2 where id = $1", [user.id, passwordHash]);
-      await db.query("update password_setup_tokens set used_at = now() where id = $1", [link.id]);
-      await revokePasswordLinks(db, user.id);
-      await db.query("delete from sessions where user_id = $1", [user.id]);
-      await db.query("delete from login_challenges where user_id = $1", [user.id]);
-      await logSessionEvent(
-        user,
-        { action: "session.password_set", summary: "Definió su contraseña con el enlace de un solo uso" },
-        connection,
-        db,
-      );
+      await db.query("update users set password_hash = $2 where id = $1", [user.id, await hashPassword(data.newPassword)]);
+      await db.query("delete from sessions where user_id = $1 and id <> $2", [user.id, ctx.sessionId]);
     });
   },
 };
@@ -395,17 +337,8 @@ export async function isCurrentPassword(userId: string, password: string): Promi
   return Boolean(row && (await verifyPassword(password, row.passwordHash)));
 }
 
-const invalidPasswordLink = () =>
-  new AppError("not_found", "Este enlace ya no sirve: caducó, ya se usó o se pidió otro. Pide uno nuevo al soporte.");
-
-async function inactiveAccountError(): Promise<AppError> {
-  const supportContact = formatSupportContact(await getPlatformSettings(pool));
-  return new AppError("forbidden", `Tu cuenta está desactivada. Escribe a ${supportContact} para recuperar el acceso.`);
-}
-
-/** Limpieza periódica de las sesiones caducadas (y de los enlaces para definir la contraseña de hace más de un día). */
+/** Limpieza periódica de las sesiones caducadas. */
 export async function deleteExpiredSessions(): Promise<void> {
   await pool.query("delete from sessions where expires_at <= now()");
   await pool.query("delete from login_challenges where expires_at <= now()");
-  await pool.query("delete from password_setup_tokens where expires_at <= now() - interval '1 day'");
 }

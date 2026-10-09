@@ -91,16 +91,10 @@ export const requiredPhoneField = z
   .min(1, "El teléfono es obligatorio")
   .regex(/^[+\d][\d\s()-]{6,19}$/, "Ingresa un teléfono válido");
 
-/** Mínimo de caracteres de una contraseña nueva (al cambiarla o al definirla con el enlace). */
-export const NEW_PASSWORD_MIN_LENGTH = 10;
-
-/**
- * Contraseña nueva de una cuenta: al registrarse, al cambiarla desde el perfil o al definirla con el
- * enlace (bcrypt sólo usa los primeros 72 bytes).
- */
-export const newPasswordField = z
+/** Contraseña de una cuenta (bcrypt sólo usa los primeros 72 bytes). */
+export const passwordField = z
   .string({ error: "Escribe una contraseña" })
-  .min(NEW_PASSWORD_MIN_LENGTH, `La contraseña debe tener al menos ${NEW_PASSWORD_MIN_LENGTH} caracteres`)
+  .min(8, "La contraseña debe tener al menos 8 caracteres")
   .max(72, "La contraseña es demasiado larga");
 
 /** Dirección de una cita a domicilio (las coordenadas vienen del mapa). */
