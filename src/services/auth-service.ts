@@ -1,14 +1,30 @@
 import { createHash, randomBytes } from "node:crypto";
+import { config } from "../config.ts";
 import { userColumns } from "../db/columns.ts";
 import { one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
 import { formatSupportContact } from "../shared/lib/format.ts";
-import { changePasswordSchema, loginSchema, registerSchema, twoFactorLoginSchema } from "../shared/lib/validations/auth.ts";
-import type { BusinessRole, BusinessStatus, PlatformRole, TwoFactorChallenge, User } from "../shared/types/index.ts";
+import {
+  changePasswordSchema,
+  loginSchema,
+  passwordLinkSchema,
+  registerSchema,
+  setPasswordSchema,
+  twoFactorLoginSchema,
+} from "../shared/lib/validations/auth.ts";
+import type {
+  BusinessRole,
+  BusinessStatus,
+  PasswordLinkInfo,
+  PlatformRole,
+  TwoFactorChallenge,
+  User,
+} from "../shared/types/index.ts";
 import { hashPassword, verifyPassword } from "./accounts.ts";
 import { parseInput, requireUser, type RequestContext } from "./context.ts";
 import { queueEmail } from "./notifications.ts";
+import { findPasswordLink, revokePasswordLinks } from "./password-links.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
 import { isLockedOut, lockedOutError, logSessionEvent, type ClientConnection } from "./session-security.ts";
 import {
@@ -33,6 +49,11 @@ export interface Session {
   clinicalAccess: boolean;
   /** Su agenda activa en el negocio, si atiende citas. */
   professionalId: string | null;
+  /**
+   * Super admin sin la verificación en dos pasos (obligatoria): hasta activarla, el panel /admin y el
+   * modo soporte responden `two_factor_required` y el frontend le muestra la pantalla para activarla.
+   */
+  twoFactorSetupRequired: boolean;
 }
 
 /** Token de sesión recién emitido: la ruta lo guarda en una cookie httpOnly. */
@@ -43,8 +64,15 @@ export interface IssuedSession {
   persistent: boolean;
 }
 
-const REMEMBER_DAYS = 30;
-const SESSION_HOURS = 24;
+/**
+ * Caducidad de las sesiones. Con «Recordarme», REMEMBER_DAYS sin usarla (se renueva con el uso). Sin
+ * él, IDLE_HOURS sin usarla y, como mucho, MAX_SESSION_HOURS desde que se inició (la cookie, además,
+ * se borra al cerrar el navegador). El último uso se anota como mucho cada RENEW_EVERY_MINUTES.
+ */
+const REMEMBER_DAYS = 14;
+const IDLE_HOURS = 12;
+const MAX_SESSION_HOURS = 24;
+const RENEW_EVERY_MINUTES = 5;
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
@@ -73,31 +101,57 @@ async function blockInactive(user: User, connection: ClientConnection): Promise<
 
 async function createSession(db: Db, userId: string, remember: boolean): Promise<IssuedSession> {
   const token = randomBytes(32).toString("base64url");
-  const expiresAt = new Date(Date.now() + (remember ? REMEMBER_DAYS * 86_400_000 : SESSION_HOURS * 3_600_000));
-  await db.query("insert into sessions (user_id, token_hash, expires_at) values ($1, $2, $3)", [
+  const expiresAt = new Date(Date.now() + (remember ? REMEMBER_DAYS * 86_400_000 : IDLE_HOURS * 3_600_000));
+  await db.query("insert into sessions (user_id, token_hash, expires_at, remember) values ($1, $2, $3, $4)", [
     userId,
     sha256(token),
     expiresAt,
+    remember,
   ]);
   return { token, expiresAt, persistent: remember };
 }
 
-/** Busca la sesión de la cookie. Devuelve null si no existe o caducó. */
-export async function findSessionByToken(token: string): Promise<RequestContext | null> {
-  const row = await one<User & { sessionId: string }>(
-    pool,
-    `select s.id as "sessionId", ${userColumns("u")}
-       from sessions s
-       join users u on u.id = s.user_id
-      where s.token_hash = $1 and s.expires_at > now()`,
-    [sha256(token)],
-  );
-  if (!row) return null;
-  const { sessionId, ...user } = row;
-  return { user, sessionId };
+/** Sesión de la cookie y, si se acaba de renovar una con «Recordarme», su caducidad nueva (para la cookie). */
+export interface FoundSession extends RequestContext {
+  renewedUntil: Date | null;
 }
 
-async function resolveSession(db: Db, user: User): Promise<Session | null> {
+/**
+ * Busca la sesión de la cookie (null si no existe, caducó o pasó demasiado tiempo sin usarse) y
+ * anota su uso: la caducidad se corre IDLE_HOURS (o REMEMBER_DAYS con «Recordarme») desde ahora.
+ * Una sola consulta: se lee y, si hace falta, se renueva.
+ */
+export async function findSessionByToken(token: string): Promise<FoundSession | null> {
+  const row = await one<
+    User & { sessionId: string; remember: boolean; stale: boolean; twoFactorEnabled: boolean; renewedUntil: string | null }
+  >(
+    pool,
+    `with found as (
+       select s.id as "sessionId", s.remember, s.last_seen_at < now() - make_interval(mins => $2) as stale,
+              u.two_factor_secret is not null as "twoFactorEnabled", ${userColumns("u")}
+         from sessions s
+         join users u on u.id = s.user_id
+        where s.token_hash = $1 and s.expires_at > now()
+     ), renewed as (
+       update sessions s
+          set last_seen_at = now(),
+              expires_at = case
+                when s.remember then now() + make_interval(days => $3)
+                else least(s.created_at + make_interval(hours => $4), now() + make_interval(hours => $5))
+              end
+         from found f
+        where s.id = f."sessionId" and f.stale
+       returning s.expires_at
+     )
+     select f.*, (select r.expires_at from renewed r) as "renewedUntil" from found f`,
+    [sha256(token), RENEW_EVERY_MINUTES, REMEMBER_DAYS, MAX_SESSION_HOURS, IDLE_HOURS],
+  );
+  if (!row) return null;
+  const { sessionId, remember, twoFactorEnabled, renewedUntil, stale: _stale, ...user } = row;
+  return { user, sessionId, twoFactorEnabled, renewedUntil: remember && renewedUntil ? new Date(renewedUntil) : null };
+}
+
+async function resolveSession(db: Db, user: User, twoFactorEnabled: boolean): Promise<Session | null> {
   if (!user.isActive) return null;
   const membership = await one<{
     businessId: string;
@@ -126,12 +180,13 @@ async function resolveSession(db: Db, user: User): Promise<Session | null> {
     platformOwner: user.platformOwner,
     clinicalAccess: membership ? membership.role === "owner" || membership.clinicalAccess : false,
     professionalId: membership?.professionalId ?? null,
+    twoFactorSetupRequired: user.platformRole === "super_admin" && config.superAdminTwoFactorRequired && !twoFactorEnabled,
   };
 }
 
 export const authService = {
   async getSession(ctx: RequestContext): Promise<Session | null> {
-    return ctx.user ? resolveSession(pool, ctx.user) : null;
+    return ctx.user ? resolveSession(pool, ctx.user, Boolean(ctx.twoFactorEnabled)) : null;
   },
 
   async signIn(input: unknown, connection: ClientConnection): Promise<SignInResult> {
@@ -174,7 +229,7 @@ export const authService = {
     }
     const issued = await createSession(pool, user.id, remember);
     await logSessionEvent(user, { action: "session.login", summary: "Inició sesión" }, connection);
-    return { session: (await resolveSession(pool, user))!, issued };
+    return { session: (await resolveSession(pool, user, false))!, issued };
   },
 
   /**
@@ -231,9 +286,14 @@ export const authService = {
       },
       connection,
     );
-    return { session: (await resolveSession(pool, user))!, issued };
+    return { session: (await resolveSession(pool, user, true))!, issued };
   },
 
+  /**
+   * Registro público. Riesgo conocido: «Ya existe una cuenta con ese email» revela qué emails están
+   * registrados. Mientras no haya verificación por email (un enlace para confirmar la cuenta) se deja
+   * así; lo frenan el límite de intentos y el CAPTCHA de la ruta.
+   */
   async signUp(input: unknown): Promise<{ session: Session; issued: IssuedSession }> {
     const { firstName, lastName, email, password } = parseInput(registerSchema, input);
     return transaction(async (db) => {
@@ -256,7 +316,7 @@ export const authService = {
       ))!;
       await queueEmail(db, { businessId: null, type: "welcome", to: email, ...emailTemplates.welcome(firstName) });
       const issued = await createSession(db, user.id, true);
-      return { session: (await resolveSession(db, user))!, issued };
+      return { session: (await resolveSession(db, user, false))!, issued };
     });
   },
 
@@ -267,30 +327,85 @@ export const authService = {
   },
 
   /**
-   * Cambia la propia contraseña y cierra las demás sesiones. Sólo el super admin: las
-   * contraseñas de los usuarios las pone él (para poder entrar en su cuenta si le piden ayuda).
+   * Cualquier usuario cambia su propia contraseña desde su perfil (con la actual). Se cierran sus
+   * demás sesiones y deja de servir cualquier enlace para definirla que tuviera pendiente.
    */
-  async changePassword(ctx: RequestContext, input: unknown): Promise<void> {
+  async changePassword(ctx: RequestContext, input: unknown, connection: ClientConnection): Promise<void> {
     const user = requireUser(ctx);
-    if (user.platformRole !== "super_admin") {
-      throw new AppError("forbidden", "Tu contraseña la gestiona el soporte de la plataforma. Escríbele si necesitas cambiarla.");
-    }
     const data = parseInput(changePasswordSchema, input);
-    const row = await one<{ passwordHash: string }>(pool, 'select password_hash as "passwordHash" from users where id = $1', [
-      user.id,
-    ]);
-    if (!row || !(await verifyPassword(data.currentPassword, row.passwordHash))) {
+    if (!(await isCurrentPassword(user.id, data.currentPassword))) {
       throw new AppError("validation", "La contraseña actual no es correcta.");
     }
+    const passwordHash = await hashPassword(data.newPassword);
     await transaction(async (db) => {
-      await db.query("update users set password_hash = $2 where id = $1", [user.id, await hashPassword(data.newPassword)]);
-      await db.query("delete from sessions where user_id = $1 and id <> $2", [user.id, ctx.sessionId]);
+      await db.query("update users set password_hash = $2 where id = $1", [user.id, passwordHash]);
+      await db.query("delete from sessions where user_id = $1 and id is distinct from $2", [user.id, ctx.sessionId]);
+      await revokePasswordLinks(db, user.id);
+      await logSessionEvent(user, { action: "session.password_changed", summary: "Cambió su contraseña" }, connection, db);
+    });
+  },
+
+  /** Página /definir-contrasena: a quién es el enlace (si sigue valiendo) antes de pedir la contraseña. */
+  async checkPasswordLink(input: unknown): Promise<PasswordLinkInfo> {
+    const { token } = parseInput(passwordLinkSchema, input);
+    const link = await findPasswordLink(pool, token);
+    const user = link
+      ? await one<{ firstName: string; email: string; isActive: boolean }>(
+          pool,
+          'select first_name as "firstName", email, is_active as "isActive" from users where id = $1',
+          [link.userId],
+        )
+      : null;
+    if (!link || !user) throw invalidPasswordLink();
+    if (!user.isActive) throw await inactiveAccountError();
+    return { firstName: user.firstName, email: user.email, expiresAt: link.expiresAt };
+  },
+
+  /**
+   * Define la contraseña con el enlace de un solo uso (cuenta nueva o contraseña olvidada). Se cierran
+   * todas las sesiones de la cuenta; para entrar, inicia sesión con la contraseña nueva (y el código,
+   * si tiene la verificación en dos pasos).
+   */
+  async setPasswordWithLink(input: unknown, connection: ClientConnection): Promise<void> {
+    const { token, password } = parseInput(setPasswordSchema, input);
+    const passwordHash = await hashPassword(password);
+    await transaction(async (db) => {
+      const link = await findPasswordLink(db, token, true);
+      if (!link) throw invalidPasswordLink();
+      const user = (await one<User>(db, `select ${userColumns()} from users where id = $1 for update`, [link.userId]))!;
+      if (!user.isActive) throw await inactiveAccountError();
+      await db.query("update users set password_hash = $2 where id = $1", [user.id, passwordHash]);
+      await db.query("update password_setup_tokens set used_at = now() where id = $1", [link.id]);
+      await revokePasswordLinks(db, user.id);
+      await db.query("delete from sessions where user_id = $1", [user.id]);
+      await db.query("delete from login_challenges where user_id = $1", [user.id]);
+      await logSessionEvent(
+        user,
+        { action: "session.password_set", summary: "Definió su contraseña con el enlace de un solo uso" },
+        connection,
+        db,
+      );
     });
   },
 };
 
-/** Limpieza periódica de las sesiones caducadas. */
+/** ¿Es la contraseña actual de la cuenta? (para cambiarla o para cambiar el email). */
+export async function isCurrentPassword(userId: string, password: string): Promise<boolean> {
+  const row = await one<{ passwordHash: string }>(pool, 'select password_hash as "passwordHash" from users where id = $1', [userId]);
+  return Boolean(row && (await verifyPassword(password, row.passwordHash)));
+}
+
+const invalidPasswordLink = () =>
+  new AppError("not_found", "Este enlace ya no sirve: caducó, ya se usó o se pidió otro. Pide uno nuevo al soporte.");
+
+async function inactiveAccountError(): Promise<AppError> {
+  const supportContact = formatSupportContact(await getPlatformSettings(pool));
+  return new AppError("forbidden", `Tu cuenta está desactivada. Escribe a ${supportContact} para recuperar el acceso.`);
+}
+
+/** Limpieza periódica de las sesiones caducadas (y de los enlaces para definir la contraseña de hace más de un día). */
 export async function deleteExpiredSessions(): Promise<void> {
   await pool.query("delete from sessions where expires_at <= now()");
   await pool.query("delete from login_challenges where expires_at <= now()");
+  await pool.query("delete from password_setup_tokens where expires_at <= now() - interval '1 day'");
 }

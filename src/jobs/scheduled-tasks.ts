@@ -1,6 +1,8 @@
 import { many, one, pool, transaction, type Db } from "../db/pool.ts";
+import { deleteExpiredRateLimits } from "../http/rate-limit-store.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
 import { deleteStalePendingAttachments } from "../services/clinical-attachment-service.ts";
+import { deleteUnusedImageUploads } from "../services/image-service.ts";
 import { deleteStalePendingReceipts, purgeOldReceipts } from "../services/payment-service.ts";
 import { processEmailQueue, scrubEmails, type EmailQueueReport } from "../services/mailer.ts";
 import { runDailyAgendaJob, runReminderJob } from "../services/notifications.ts";
@@ -85,6 +87,10 @@ export interface ScheduledTasksReport {
   emailContentPurged: number;
   /** Comprobantes de pago borrados por antigüedad (null: sin almacenamiento configurado). */
   receiptsPurged: number | null;
+  /** Logos y fotos subidos hace más de 24 h que nadie usa, borrados (null: sin almacenamiento). */
+  unusedImagesDeleted: number | null;
+  /** Cuentas caducadas de los límites de intentos, borradas. */
+  rateLimitsPurged: number;
   durationMs: number;
 }
 
@@ -96,20 +102,12 @@ export interface SentEmail {
   type: EmailType;
   to: string;
   businessName: string | null;
-  /** Cliente de la cita (emails de citas). */
-  clientName: string | null;
   date: string | null;
   startTime: string | null;
 }
 
 /** Emails detallados en el aviso; del resto sólo se dice cuántos son. */
 const MAX_SENT_DETAILS = 40;
-
-/** "María López Vera" → "María L." */
-export function shortName(name: string): string {
-  const [first = "", second = ""] = name.trim().split(/\s+/);
-  return second ? `${first} ${second[0].toUpperCase()}.` : first;
-}
 
 /** Una cuenta (email enmascarado: el aviso sale por ntfy) con muchos intentos fallidos. */
 export interface LoginAlert {
@@ -188,6 +186,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const purged = await one<{ deleted: number }>(pool, "select purge_audit_logs() as deleted");
   const emailContentPurged = await purgeOldEmailContent();
   const receiptsPurged = await purgeOldReceipts();
+  const unusedImagesDeleted = await deleteUnusedImageUploads();
+  const rateLimitsPurged = await deleteExpiredRateLimits();
   // Corte en "ahora": lo enviado hasta aquí cuenta en esta ejecución y no en la siguiente.
   const totals = await one<{ at: string; pending: number; sent: number }>(
     pool,
@@ -200,12 +200,11 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   );
   const sent = await many<SentEmail>(
     pool,
-    `select n.type, n.to_email as "to", b.name as "businessName", c.name as "clientName",
+    `select n.type, n.to_email as "to", b.name as "businessName",
             to_char(a.date, 'YYYY-MM-DD') as date, to_char(a.start_time, 'HH24:MI') as "startTime"
        from notifications n
        left join businesses b on b.id = n.business_id
        left join appointments a on a.id = n.appointment_id
-       left join clients c on c.id = a.client_id
       where n.status = 'sent' and n.sent_at > coalesce($1::timestamptz, now() - interval '1 day') and n.sent_at <= $2
       order by n.sent_at
       limit $3`,
@@ -219,7 +218,6 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     sentEmails: sent.map((email) => ({
       ...email,
       to: maskEmail(email.to),
-      clientName: email.clientName ? shortName(email.clientName) : null,
     })),
     since: previous?.ranAt ?? null,
     pending: totals?.pending ?? 0,
@@ -227,6 +225,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     auditPurged: purged?.deleted ?? 0,
     emailContentPurged,
     receiptsPurged,
+    unusedImagesDeleted,
+    rateLimitsPurged,
     durationMs: Date.now() - started,
   };
   await pool.query("insert into cron_runs (ran_at, report) values (coalesce($1::timestamptz, now()), $2)", [

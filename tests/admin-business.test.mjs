@@ -1,7 +1,7 @@
 // Alta de un negocio por el super admin: datos, descripción, servicios y horario, sin propietario; el
 // propietario se agrega después.
 import { execFileSync } from "node:child_process";
-import { businessInput } from "./helpers/business.mjs";
+import { businessInput, setPasswordWithLink } from "./helpers/business.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
@@ -97,23 +97,26 @@ r = await admin("POST", "/admin/businesses", { ...input, name: "Otro" });
 ok(r.status === 409 && /enlace/.test(r.body.error.message), "enlace repetido → 409", r.body);
 
 console.log("Agregar el propietario después");
-const ownerInput = { firstName: "Nicole", lastName: "Andrade", email: "nicole@example.com", password: "NicoleClave2026" };
+const ownerInput = { firstName: "Nicole", lastName: "Andrade", email: "nicole@example.com" };
 r = await owner("POST", `/admin/businesses/${business.id}/owner`, ownerInput);
 ok(r.status === 403, "sólo el super admin", r.status);
-r = await admin("POST", `/admin/businesses/${business.id}/owner`, { ...ownerInput, password: "corta" });
-ok(r.status === 400 && /8 caracteres/.test(r.body.error.message), "contraseña corta → 400", r.body);
+r = await admin("POST", `/admin/businesses/${business.id}/owner`, { ...ownerInput, email: "no-es-un-email" });
+ok(r.status === 400 && /email/.test(r.body.error.message), "email inválido → 400", r.body);
 r = await admin("POST", `/admin/businesses/${business.id}/owner`, { ...ownerInput, email: "jhordan@demo.com" });
 ok(r.status === 409 && /otro negocio/.test(r.body.error.message), "un email de otro negocio → 409", r.body);
 r = await admin("POST", `/admin/businesses/${business.id}/owner`, ownerInput);
-ok(r.status === 200 && r.body.role === "owner" && r.body.email === "nicole@example.com", "se agrega como propietario", r.body);
+ok(r.status === 200 && r.body.member.role === "owner" && r.body.member.email === "nicole@example.com" && r.body.passwordLink, "se agrega como propietario (con su enlace para definir la contraseña)", r.body);
+const ownerMember = r.body.member;
+r = await setPasswordWithLink(agent(), r.body.passwordLink, "NicoleClave2026");
+ok(r.status === 204, "define su contraseña con el enlace", r.body);
 const nicole = await login("nicole@example.com", "NicoleClave2026");
-ok(nicole.status === 200 && nicole.session.businessId === business.id && nicole.session.role === "owner", "entra a su negocio con la contraseña elegida", nicole.session);
+ok(nicole.status === 200 && nicole.session.businessId === business.id && nicole.session.role === "owner", "entra a su negocio con la contraseña que definió", nicole.session);
 const [linked] = (await nicole.a("GET", `${B}/professionals`)).body;
-ok(linked.id === agenda.id && linked.userId === r.body.userId && linked.displayName === "Nicole Andrade", "la agenda del alta pasa a ser la suya, con su nombre", linked);
+ok(linked.id === agenda.id && linked.userId === ownerMember.userId && linked.displayName === "Nicole Andrade", "la agenda del alta pasa a ser la suya, con su nombre", linked);
 const after = (await admin("GET", `/admin/businesses/${business.id}`)).body;
 ok(after.owner?.email === "nicole@example.com" && after.business.email === "nicole@example.com", "el negocio tiene propietario y su email para los avisos", after.business.email);
 const welcome = sql(`select type || '|' || to_email || '|' || subject from notifications where business_id = '${business.id}' order by created_at desc limit 1`);
-ok(/^business_created\|nicole@example.com\|/.test(welcome), "le llega el email de bienvenida con su acceso", welcome);
+ok(/^business_created\|nicole@example.com\|/.test(welcome), "le llega el email de bienvenida con el enlace para definir su contraseña", welcome);
 ok(/Agregó a Nicole Andrade como propietario/.test(sql(`select summary from audit_logs where action = 'platform.owner_assigned' and business_id = '${business.id}'`)), "queda en la auditoría");
 r = await admin("POST", `/admin/businesses/${business.id}/owner`, { ...ownerInput, email: "otra@example.com" });
 ok(r.status === 409 && /ya tiene propietario/.test(r.body.error.message), "un segundo propietario → 409", r.body);
@@ -127,7 +130,7 @@ r = await admin("POST", `/businesses/${multi.id}/professionals`, {
   allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, isActive: true,
 });
 ok(r.status === 200, "el super admin agrega otra agenda antes del propietario", r.body);
-r = await admin("POST", `/admin/businesses/${multi.id}/owner`, { firstName: "Laura", lastName: "Centro", email: "laura.centro@example.com", password: "LauraClave2026" });
+r = await admin("POST", `/admin/businesses/${multi.id}/owner`, { firstName: "Laura", lastName: "Centro", email: "laura.centro@example.com" });
 ok(r.status === 200, "propietario agregado", r.body);
 const agendas = (await admin("GET", `/businesses/${multi.id}/professionals`)).body;
 ok(agendas.every((p) => p.userId === null) && agendas.some((p) => p.id === firstAgenda.id && p.displayName === "Centro Varias"), "las agendas siguen sin usuario (se vinculan en Profesionales)", agendas);

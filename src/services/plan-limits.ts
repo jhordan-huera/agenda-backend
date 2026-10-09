@@ -38,8 +38,21 @@ async function activeAppointmentsInMonth(db: Db, businessId: string, month: stri
   return row?.count ?? 0;
 }
 
+/**
+ * Clientes que cuentan para el plan. No cuentan los que creó la página de reservas y nunca tuvieron
+ * una cita sin cancelar: una ráfaga de reservas falsas (que el negocio cancela) no le gasta el cupo.
+ */
 async function countClients(db: Db, businessId: string) {
-  return (await one<{ count: number }>(db, "select count(*) from clients where business_id = $1", [businessId]))?.count ?? 0;
+  return (
+    await one<{ count: number }>(
+      db,
+      `select count(*) from clients c
+        where c.business_id = $1
+          and (c.source <> 'booking_page'
+               or exists (select 1 from appointments a where a.client_id = c.id and a.status <> 'cancelled'))`,
+      [businessId],
+    )
+  )?.count ?? 0;
 }
 
 export async function countUsers(db: Db, businessId: string) {

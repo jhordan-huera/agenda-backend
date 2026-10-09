@@ -30,8 +30,8 @@ export interface User {
   /** "super_admin" para el operador de la plataforma; null para el resto de usuarios. */
   platformRole: PlatformRole | null;
   /**
-   * Super admin principal: el único que agrega, desactiva o cambia la contraseña de los demás
-   * super admins (el equipo de soporte). Nadie puede tocar su cuenta.
+   * Super admin principal: el único que agrega, desactiva o envía el enlace para definir la contraseña
+   * a los demás super admins (el equipo de soporte). Nadie puede tocar su cuenta.
    */
   platformOwner: boolean;
   /** false = el super admin desactivó el acceso de esta cuenta. */
@@ -301,6 +301,12 @@ export interface Client {
   notes: string;
   isActive: boolean;
   createdAt: ISODateTime;
+  /**
+   * Sólo para un Profesional con «sólo sus pacientes»: paciente de una reserva online en su agenda que el
+   * negocio aún no confirmó. Llega sólo con el nombre (sin contacto ni notas) para mostrar la cita; su
+   * ficha y su historia no se abren hasta que recepción, un administrador o el propietario la gestione.
+   */
+  restricted?: true;
 }
 
 /** Modalidades de un servicio: en el local, en casa del cliente o por videollamada. */
@@ -822,6 +828,37 @@ export interface PlatformAdmin {
   lastSignInAt: ISODateTime | null;
 }
 
+/**
+ * Enlace de un solo uso para que un usuario defina su contraseña (el super admin nunca la ve ni la
+ * elige). Se envía por email; el super admin puede copiarlo (p. ej. para pasarlo por WhatsApp).
+ */
+export interface PasswordLink {
+  url: string;
+  /** Caduca a los 60 minutos. */
+  expiresAt: ISODateTime;
+  /** A quién se le envió por email. */
+  email: string;
+}
+
+/** Cuenta que agrega el super admin a un negocio, con el enlace para que defina su contraseña. */
+export interface AddedTeamMember {
+  member: TeamMember;
+  passwordLink: PasswordLink;
+}
+
+/** Super admin nuevo, con el enlace para que defina su contraseña. */
+export interface AddedPlatformAdmin {
+  admin: PlatformAdmin;
+  passwordLink: PasswordLink;
+}
+
+/** Lo que muestra la página /definir-contrasena antes de pedir la contraseña. */
+export interface PasswordLinkInfo {
+  firstName: string;
+  email: string;
+  expiresAt: ISODateTime;
+}
+
 export interface AdminUserSummary {
   user: User;
   memberships: { businessId: string; businessName: string; role: BusinessRole }[];
@@ -846,6 +883,8 @@ export interface TwoFactorStatus {
   enabledAt: ISODateTime | null;
   /** Códigos de recuperación sin usar. */
   recoveryCodesLeft: number;
+  /** Obligatoria (con datos reales, siempre): sin ella no se usa el panel /admin ni el modo soporte. */
+  required: boolean;
 }
 
 /** Clave para la app de autenticación: el QR lleva `otpauthUrl`; `secret`, para escribirla a mano. */
@@ -893,9 +932,13 @@ export interface PublicBusinessProfile {
  * Resultado de buscar una cédula en la página pública de reservas. Nunca incluye datos de
  * contacto: sólo el nombre y la inicial del apellido para saludar ("María L.").
  */
+/**
+ * Respuesta de la búsqueda por cédula de las versiones anteriores de la página pública: siempre la
+ * misma, para no revelar si alguien es paciente del negocio.
+ */
 export interface PublicClientLookup {
-  found: boolean;
-  greetingName: string | null;
+  found: false;
+  greetingName: null;
 }
 
 export interface BookingConfirmation {
@@ -915,11 +958,17 @@ export interface BookingConfirmation {
   isVirtual: boolean;
   /** Enlace de la videollamada (citas virtuales, si el profesional lo configuró). */
   meetingUrl: string | null;
+  /** A dónde se envió la confirmación; "" si no es el email que escribió el paciente (va al de su ficha). */
   clientEmail: string;
   /** true si se envió el email de confirmación al cliente. */
   emailSent: boolean;
   /** Pago por transferencia: la agenda tiene datos bancarios y la cita tiene precio. */
   payment: BookingPayment | null;
+  /**
+   * La misma reserva otra vez (se perdió la respuesta y el paciente volvió a confirmar): la cita se
+   * paga por transferencia, pero los datos y el enlace de pago no van en la respuesta (le llegaron por email).
+   */
+  paymentByEmail: boolean;
 }
 
 export interface BookingPayment {

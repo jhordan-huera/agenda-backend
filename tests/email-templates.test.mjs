@@ -34,9 +34,10 @@ const appointment = {
 console.log("Todas las plantillas");
 const all = [
   emailTemplates.welcome("Ana"),
-  emailTemplates.businessCreated({ firstName: "Ana", businessName: "Estudio", email: "ana@example.com", password: "Clave2026!", loginUrl: "https://agenda.example/login", bookingUrl: "https://agenda.example/book/estudio" }),
-  emailTemplates.teamInvite({ firstName: "Luis", businessName: "Estudio", roleLabel: "Staff", email: "luis@example.com", password: "Clave2026!", loginUrl: "https://agenda.example/login" }),
-  emailTemplates.passwordChanged("Ana", "ana@example.com", "Nueva2026!", "https://agenda.example/login"),
+  emailTemplates.businessCreated({ firstName: "Ana", businessName: "Estudio", email: "ana@example.com", setPasswordUrl: "https://agenda.example/definir-contrasena?token=abc", linkMinutes: 60, bookingUrl: "https://agenda.example/book/estudio" }),
+  emailTemplates.teamInvite({ firstName: "Luis", businessName: "Estudio", roleLabel: "Staff", email: "luis@example.com", setPasswordUrl: "https://agenda.example/definir-contrasena?token=abc", linkMinutes: 60 }),
+  emailTemplates.passwordSetupLink({ firstName: "Ana", email: "ana@example.com", setPasswordUrl: "https://agenda.example/definir-contrasena?token=xyz", linkMinutes: 60 }),
+  emailTemplates.platformAdminAdded({ firstName: "Sofía", addedBy: "Admin", email: "sofia@example.com", setPasswordUrl: "https://agenda.example/definir-contrasena?token=def", linkMinutes: 60 }),
   emailTemplates.businessSuspended("Ana", "Estudio", "soporte@example.com"),
   emailTemplates.businessReactivated("Ana", "Estudio", "https://agenda.example/login"),
   emailTemplates.planChangeRequested({ businessName: "Estudio", requestedByName: "Ana", requestedByEmail: "ana@example.com", currentPlanName: "Free", requestedPlanName: "Pro", reviewUrl: "https://agenda.example/admin" }),
@@ -61,8 +62,14 @@ ok(confirmed.html.includes("Clínica &amp; Co"), "también el nombre del negocio
 ok(!/Precio/.test(confirmed.body) && !/Precio/.test(confirmed.html), "sin precio cuando el servicio lo oculta");
 ok(/Precio: \$35/.test(emailTemplates.bookingReceived(appointment).body), "el negocio sí ve el precio");
 const created = all[1];
-ok(/Contraseña: Clave2026!/.test(created.body) && /Iniciar sesión: https:\/\/agenda\.example\/login/.test(created.body), "texto: datos de acceso y enlace del botón", created.body);
-ok(/href="https:\/\/agenda\.example\/login"/.test(created.html) && /Si el botón no funciona/.test(created.html), "HTML: botón con enlace y alternativa en texto");
+ok(
+  /Definir mi contraseña: https:\/\/agenda\.example\/definir-contrasena\?token=abc/.test(created.body) && /60 minutos/.test(created.body) && !/Contraseña:/.test(created.body),
+  "texto: enlace para definir la contraseña (sin contraseña) y cuánto dura",
+  created.body,
+);
+ok(/href="https:\/\/agenda\.example\/definir-contrasena\?token=abc"/.test(created.html) && /Si el botón no funciona/.test(created.html), "HTML: botón con el enlace y alternativa en texto");
+ok(all.slice(1, 5).every((email) => !/Contraseña: /.test(email.body) && /Definir mi contraseña: https:/.test(email.body)), "ningún email de cuenta lleva una contraseña: todos, el enlace");
+ok(/Email de acceso: ana@example\.com/.test(all[3].body) && /token=xyz/.test(all[3].html), "enlace de soporte: email de acceso y botón", all[3].body);
 const malicious = emailTemplates.appointmentCancelled({ ...appointment, bookingUrl: "javascript:alert(1)" });
 ok(!malicious.html.includes("javascript:"), "un enlace que no es http(s) no llega al HTML");
 

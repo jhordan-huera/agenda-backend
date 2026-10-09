@@ -100,7 +100,11 @@ ok(r.status === 403, "al retirar el permiso deja de verla", r.status);
 console.log("Auditoría");
 const logs = (await ricardo("GET", `${B}/audit-logs?entityType=clinical_record&entityId=${patient.id}`)).body.entries;
 const views = logs.filter((l) => l.action === "clinical_record.viewed");
-ok(views.length === 2 && !views.some((l) => /\(Super admin\)/.test(l.actorName)), "cada persona del negocio queda registrada una vez al consultar (Ricardo y Elena); el super admin en modo soporte, no", views.map((l) => l.actorName));
+ok(
+  views.length === 3 && views.filter((l) => /\(Super admin\)/.test(l.actorName)).length === 1,
+  "cada persona queda registrada una vez al consultar (Ricardo, Elena y el super admin en modo soporte)",
+  views.map((l) => l.actorName),
+);
 const teamLogs = (await ricardo("GET", `${B}/audit-logs?entityType=team`)).body.entries;
 ok(teamLogs.some((l) => l.action === "team.clinical_access_granted" && /\(Super admin\)/.test(l.actorName)), "lo que el super admin cambia sí queda registrado", teamLogs.map((l) => `${l.actorName}: ${l.action}`));
 ok(["clinical_record.profile_updated", "clinical_record.note_added", "clinical_record.addendum_added"].every((a) => logs.some((l) => l.action === a)), "cambios registrados", logs.map((l) => l.action));

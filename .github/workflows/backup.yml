@@ -48,9 +48,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
-      # Base vacía y desechable donde se comprueba que la copia se restaura entera.
+      # Base vacía y desechable donde se comprueba que la copia se restaura entera. Fijada por su
+      # digest (la etiqueta 17 puede cambiar de contenido); Dependabot no la actualiza: ver README.
       postgres:
-        image: postgres:17
+        image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
         env:
           POSTGRES_PASSWORD: comprobacion
         ports:
@@ -61,11 +62,11 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
           cache: npm
@@ -101,6 +102,8 @@ jobs:
           GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
           GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
           GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+          # smtp (por defecto) o api: la API de Gmail, con un token que sólo puede enviar (ver README).
+          GMAIL_TRANSPORT: ${{ vars.GMAIL_TRANSPORT }}
           APP_URL: ${{ vars.APP_URL }}
           NTFY_SERVER: ${{ vars.NTFY_SERVER }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}

@@ -1,6 +1,6 @@
 // Copia de agenda-front/src/lib/validations/auth.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
-import { emailField, passwordField, requiredText } from "./fields.ts";
+import { emailField, newPasswordField, requiredText } from "./fields.ts";
 
 export const loginSchema = z.object({
   email: emailField,
@@ -13,7 +13,7 @@ export const registerSchema = z
     firstName: requiredText("El nombre"),
     lastName: requiredText("El apellido"),
     email: emailField,
-    password: passwordField,
+    password: newPasswordField,
     confirmPassword: z.string(),
   })
   .refine((data) => data.password === data.confirmPassword, {
@@ -22,11 +22,11 @@ export const registerSchema = z
   });
 
 
-/** Cambio de la propia contraseña: sólo el super admin (las de los usuarios las pone él). */
+/** Cambio de la propia contraseña (cualquier usuario, desde su perfil): cierra sus demás sesiones. */
 export const changePasswordSchema = z
   .object({
-    currentPassword: z.string().min(1, "Ingresa tu contraseña actual"),
-    newPassword: passwordField,
+    currentPassword: z.string().min(1, "Ingresa tu contraseña actual").max(200),
+    newPassword: newPasswordField,
     confirmPassword: z.string(),
   })
   .refine((data) => data.newPassword === data.confirmPassword, {
@@ -64,8 +64,35 @@ export const twoFactorDisableSchema = z.object({
   code: twoFactorCode,
 });
 
+/** Token del enlace para definir la contraseña (/definir-contrasena?token=…): 32 bytes en base64url. */
+const passwordLinkToken = z
+  .string({ error: "El enlace no es válido" })
+  .trim()
+  .min(20, "El enlace no es válido")
+  .max(200, "El enlace no es válido");
+
+export const passwordLinkSchema = z.object({ token: passwordLinkToken });
+
+/** Definir la contraseña con el enlace de un solo uso (cuenta nueva o contraseña olvidada). */
+export const setPasswordSchema = z
+  .object({
+    token: passwordLinkToken,
+    password: newPasswordField,
+    confirmPassword: z.string(),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "Las contraseñas no coinciden",
+  });
+
+/** Para cambiar el email de la cuenta hace falta la contraseña actual. */
+export const currentPasswordSchema = z.object({
+  currentPassword: z.string({ error: "Escribe tu contraseña actual" }).min(1, "Escribe tu contraseña actual").max(200),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type TwoFactorLoginInput = z.infer<typeof twoFactorLoginSchema>;
 export type TwoFactorDisableInput = z.infer<typeof twoFactorDisableSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+export type SetPasswordInput = z.infer<typeof setPasswordSchema>;

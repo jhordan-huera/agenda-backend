@@ -1,6 +1,7 @@
 import { attachDatabasePool } from "@vercel/functions";
 import pg from "pg";
 import { config } from "../config.ts";
+import { databaseTls } from "./tls.ts";
 
 /*
  * Conversión de tipos de PostgreSQL a los del dominio (src/shared/types):
@@ -16,8 +17,8 @@ types.setTypeParser(types.builtins.TIMESTAMPTZ, (value) => (parseTimestamptz(val
 
 export const pool = new pg.Pool({
   connectionString: config.databaseUrl,
-  // Supabase firma sus certificados con su propia CA: se cifra la conexión sin validar la cadena.
-  ssl: config.databaseSsl ? { rejectUnauthorized: false } : undefined,
+  // Cifrada y comprobando el certificado: el de Supabase, con su CA raíz (ver tls.ts).
+  ssl: databaseTls(config.databaseUrl, config.databaseSsl),
   max: config.databasePoolMax,
 });
 

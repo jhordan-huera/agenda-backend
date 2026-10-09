@@ -1,13 +1,14 @@
-// Endurecimiento: contraseñas fuera del registro de emails, bloqueo por intentos fallidos,
+// Endurecimiento: enlaces para definir la contraseña fuera del registro de emails, bloqueo por intentos fallidos,
 // CAPTCHA de la página de reservas, perfil público sin datos internos y seed sólo en local.
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import pg from "pg";
 import { outgoingContent } from "../src/services/mailer.ts";
-import { createBusinessWithOwner } from "./helpers/business.mjs";
-import { emailTemplates } from "../src/shared/lib/email/templates.ts";
+import { createBusinessWithOwner, setPasswordWithLink, tokenOf } from "./helpers/business.mjs";
+import { composeEmail } from "../src/shared/lib/email/layout.ts";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 const db = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -44,63 +45,109 @@ const nextIp = () => `203.0.113.${ipCounter++}`;
 const admin = agent();
 await login(admin, "admin@demo.com", "demo1234", nextIp());
 
-console.log("Contraseñas fuera del registro de emails");
+console.log("Enlaces para definir la contraseña fuera del registro de emails");
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 const ownerPassword = "ClaveSecreta-2026";
 let r = await createBusinessWithOwner(
   admin,
   { plan: "pro", name: "Salón Seguro", slug: "salon-seguro" },
-  { firstName: "Sara", lastName: "Segura", email: "sara@example.com", password: ownerPassword },
+  { firstName: "Sara", lastName: "Segura", email: "sara@example.com" },
 );
-ok(r.status === 200, "crear negocio", r.body);
+ok(r.status === 200 && r.body.passwordLink?.email === "sara@example.com", "crear negocio: el super admin recibe el enlace (para copiarlo)", r.body);
 const businessId = r.body.business.id;
+const ownerToken = tokenOf(r.body.passwordLink)!;
+ok(/^[\w-]{43}$/.test(ownerToken), "el token es de 32 bytes aleatorios (base64url)", ownerToken);
 const emails = (await admin("GET", "/admin/emails")).body;
 const created = emails.find((e: any) => e.type === "business_created" && e.to === "sara@example.com");
-ok(created && created.body.includes("Contraseña: ••••••••"), "el email guardado muestra la contraseña oculta", created?.body);
-ok(!JSON.stringify(emails).includes(ownerPassword), "el super admin no ve la contraseña en el registro de emails");
-let row = (await db.query("select body, html, secret from notifications where id = $1", [created.id])).rows[0];
-ok(row.secret === ownerPassword, "la contraseña queda aparte hasta que se envía el email");
-ok(!row.body.includes(ownerPassword) && !row.html.includes(ownerPassword), "ni el texto ni el HTML guardados la llevan");
-const tricky = "A$&b<c>'d";
-const outgoing = outgoingContent({ ...row, secret: tricky });
 ok(
-  outgoing.text.includes(`Contraseña: ${tricky}`) && !outgoing.text.includes("••••••••"),
-  "el email que sale lleva la contraseña real",
+  created && created.body.includes("/definir-contrasena?token=••••••••") && !/Contraseña:/.test(created.body),
+  "el email guardado lleva el enlace con el token oculto, sin contraseña",
+  created?.body,
+);
+ok(!JSON.stringify(emails).includes(ownerToken), "el registro de emails no tiene el token");
+let row = (await db.query("select body, html, secret from notifications where id = $1", [created.id])).rows[0];
+ok(row.secret === ownerToken, "el token queda aparte hasta que se envía el email");
+ok(!row.body.includes(ownerToken) && !row.html.includes(ownerToken), "ni el texto ni el HTML guardados lo llevan");
+let outgoing = outgoingContent(row);
+ok(
+  outgoing.text.includes(`/definir-contrasena?token=${ownerToken}`) && !outgoing.text.includes("••••••••"),
+  "el email que sale lleva el enlace real",
   outgoing.text,
 );
-ok(outgoing.html!.includes("A$&amp;b&lt;c&gt;&#39;d") && !outgoing.html!.includes("••••••••"), "también en el HTML, escapada");
+ok(outgoing.html!.split(`token=${ownerToken}`).length >= 3 && !outgoing.html!.includes("••••••••"), "también en el HTML (botón y enlace alternativo)");
+const tricky = "A$&b<c>'d";
+outgoing = outgoingContent({ ...row, secret: tricky });
+ok(outgoing.html!.includes("A$&amp;b&lt;c&gt;&#39;d"), "lo que reemplaza al token va escapado en el HTML");
+const stored = await db.query("select token_hash, expires_at - created_at as ttl, used_at from password_setup_tokens where token_hash = $1", [sha256(ownerToken)]);
+ok(stored.rowCount === 1 && stored.rows[0].used_at === null, "en la base sólo queda el hash SHA-256 del token");
+ok(stored.rows[0].ttl.hours === 1 || stored.rows[0].ttl.minutes === 60, "caduca a los 60 minutos", stored.rows[0].ttl);
+ok((await db.query("select 1 from password_setup_tokens where token_hash = $1", [ownerToken])).rowCount === 0, "nunca el token en claro");
 
-const memberPassword = "ClaveDelEquipo-77";
+r = await agent()("POST", "/auth/password-link/check", { token: ownerToken });
+ok(r.status === 200 && r.body.email === "sara@example.com" && r.body.firstName === "Sara", "la página del enlace sabe a quién es (sin sesión)", r.body);
+r = await agent()("POST", "/auth/password-link", { token: ownerToken, password: "corta", confirmPassword: "corta" });
+ok(r.status === 400 && /10 caracteres/.test(r.body.error.message), "mínimo 10 caracteres", r.body);
+r = await agent()("POST", "/auth/password-link", { token: ownerToken, password: ownerPassword, confirmPassword: ownerPassword });
+ok(r.status === 204, "el propietario define su contraseña con el enlace", r.body);
+r = await agent()("POST", "/auth/password-link", { token: ownerToken, password: "OtraClaveMas-1", confirmPassword: "OtraClaveMas-1" });
+ok(r.status === 404, "el enlace sirve una sola vez", r.body);
+ok((await db.query("select used_at from password_setup_tokens where token_hash = $1", [sha256(ownerToken)])).rows[0]?.used_at, "y queda marcado como usado");
+
 r = await admin("POST", `/admin/businesses/${businessId}/members`, {
   firstName: "Tito",
   lastName: "Equipo",
   email: "tito@example.com",
-  password: memberPassword,
   role: "staff",
+  password: "ClaveDelEquipo-77",
 });
-ok(r.status === 200, "añadir miembro", r.body);
+ok(r.status === 200 && r.body.member.email === "tito@example.com" && r.body.passwordLink, "añadir miembro (la contraseña que mande el super admin se ignora)", r.body);
+const titoToken = tokenOf(r.body.passwordLink)!;
+r = await login(agent(), "tito@example.com", "ClaveDelEquipo-77", nextIp());
+ok(r.status === 401, "nadie puede entrar con una contraseña elegida por el super admin", r.body);
 const sara = agent();
 await login(sara, "sara@example.com", ownerPassword, nextIp());
 r = await sara("GET", `/businesses/${businessId}/notifications`);
 const invite = r.body.find((e: any) => e.type === "team_invite");
-ok(invite && invite.body.includes("••••••••"), "el propietario ve la invitación del equipo con la contraseña oculta", invite?.body);
-ok(!JSON.stringify(r.body).includes(memberPassword), "el propietario no puede leer la contraseña de su equipo");
+ok(invite && invite.body.includes("token=••••••••"), "el propietario ve la invitación del equipo con el enlace oculto", invite?.body);
+ok(!JSON.stringify(r.body).includes(titoToken), "el propietario no puede usar el enlace de su equipo");
 
 const users = (await admin("GET", "/admin/users")).body;
 const tito = users.find((u: any) => u.user.email === "tito@example.com").user;
-const resetPassword = "OtraClaveNueva-55";
-r = await admin("PUT", `/admin/users/${tito.id}/password`, { password: resetPassword });
-ok(r.status === 204, "cambiar la contraseña de un usuario", r.body);
+r = await admin("POST", `/admin/users/${tito.id}/password-link`);
+ok(r.status === 200 && r.body.email === "tito@example.com" && r.body.url.includes("/definir-contrasena?token="), "enviar enlace para definir contraseña", r.body);
+const resetToken = tokenOf(r.body)!;
 row = (await db.query("select body, secret from notifications where type = 'password_reset' and to_email = 'tito@example.com'")).rows[0];
-ok(row.body.includes("••••••••") && !row.body.includes(resetPassword) && row.secret === resetPassword, "el email de contraseña cambiada también");
+ok(row.body.includes("token=••••••••") && !row.body.includes(resetToken) && row.secret === resetToken, "el email del enlace también lo oculta");
+r = await agent()("POST", "/auth/password-link", { token: titoToken, password: "TitoClave-2026", confirmPassword: "TitoClave-2026" });
+ok(r.status === 404, "pedir otro enlace anula el anterior", r.body);
+const titoSession = agent();
+r = await agent()("POST", "/auth/password-link", { token: resetToken, password: "TitoClave-2026", confirmPassword: "TitoClave-2026" });
+ok(r.status === 204, "con el nuevo sí", r.body);
+r = await login(titoSession, "tito@example.com", "TitoClave-2026", nextIp());
+ok(r.status === 200 && r.body.role === "staff", "el miembro entra con la contraseña que definió", r.body);
+const audit = (await admin("GET", "/admin/audit-logs?scope=admin")).body.entries.map((l: any) => l.action);
+ok(audit.includes("platform.user_password_link"), "el envío del enlace queda en la auditoría de la plataforma", audit.slice(0, 6));
+const security = (await admin("GET", "/admin/audit-logs?scope=security")).body.entries;
+ok(security.some((l: any) => l.action === "session.password_set" && l.ip), "y cuándo y desde dónde se definió la contraseña", security.slice(0, 3));
 
 // La migración 015 ocultó las contraseñas de los emails anteriores: se aplica su UPDATE a uno con la contraseña a la vista.
-const legacy = emailTemplates.teamInvite({
-  firstName: "Ana",
-  businessName: "Estudio",
-  roleLabel: "Staff",
-  email: "ana@example.com",
-  password: "Vieja<&>Clave'1",
-  loginUrl: "https://agenda.example/login",
+const legacy = composeEmail({
+  subject: "Te invitaron a Estudio",
+  preheader: "",
+  brand: { name: "Agenda360" },
+  title: "Te invitaron a Estudio",
+  blocks: [
+    {
+      kind: "details",
+      title: "Tus datos de acceso",
+      rows: [
+        { label: "Email", value: "ana@example.com" },
+        { label: "Contraseña", value: "Vieja<&>Clave'1", mono: true },
+      ],
+    },
+  ],
+  signature: ["El equipo de Agenda360"],
+  footer: "",
 });
 const inserted = await db.query(
   "insert into notifications (business_id, type, to_email, subject, body, html, status) values (null, 'team_invite', 'ana@example.com', $1, $2, $3, 'sent') returning id",
@@ -123,10 +170,17 @@ ok(r.status === 200, "pedro inicia sesión");
 r = await createBusinessWithOwner(
   admin,
   { name: "Taller Pedro", slug: "taller-pedro" },
-  { firstName: "Pedro", lastName: "Sánchez", email: "pedro@demo.com", password: "PedroNueva-2026" },
+  { firstName: "Pedro", lastName: "Sánchez", email: "pedro@demo.com" },
 );
-ok(r.status === 200 && r.body.owner.email === "pedro@demo.com", "negocio para la cuenta existente", r.body);
+ok(r.status === 200 && r.body.owner.email === "pedro@demo.com" && r.body.passwordLink, "negocio para la cuenta existente, con su enlace", r.body);
+const pedroLink = r.body.passwordLink;
 ok((await pedro("GET", "/auth/session")).body === null, "se cierran las sesiones abiertas de esa cuenta");
+r = await login(agent(), "pedro@demo.com", "demo1234", nextIp());
+ok(r.status === 401, "y su contraseña anterior deja de servir: el negocio sólo lo recibe quien lea el email", r.body);
+r = await setPasswordWithLink(agent(), pedroLink, "PedroNueva-2026");
+ok(r.status === 204, "define la nueva con el enlace", r.body);
+r = await login(agent(), "pedro@demo.com", "PedroNueva-2026", nextIp());
+ok(r.status === 200 && r.body.role === "owner", "y entra como propietario", r.body);
 
 console.log("Bloqueo por intentos fallidos (compartido entre servidores: se cuenta en la base)");
 const miguel = "miguel@demo.com";
@@ -220,7 +274,9 @@ const cloudflare: Server = createServer((req, res) => {
       return;
     }
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(body.response === "token-bueno" ? { success: true } : { success: false, "error-codes": ["invalid-input-response"] }));
+    // Cloudflare dice en qué dominio se resolvió: el del frontend (FRONTEND_URL) o el de otra web.
+    const valid = { "token-bueno": { success: true, hostname: "localhost" }, "token-otra-web": { success: true, hostname: "copia-maliciosa.com" } };
+    res.end(JSON.stringify(valid[body.response as keyof typeof valid] ?? { success: false, "error-codes": ["invalid-input-response"] }));
   });
 });
 await new Promise<void>((resolve) => cloudflare.listen(0, "127.0.0.1", resolve));
@@ -260,7 +316,9 @@ try {
   r = await visitor("POST", bookings, { captchaToken: "token-bueno" });
   ok(r.status === 400, "con un token válido pasa a validar la reserva", r.body);
   r = await visitor("POST", bookings, { captchaToken: "token-caido" });
-  ok(r.status === 400, "si Cloudflare no responde, la reserva no se bloquea", r.body);
+  ok(r.status === 503 && /inténtalo de nuevo/.test(r.body.error.message), "si Cloudflare falla, se rechaza (no se deja pasar a nadie)", r.body);
+  r = await visitor("POST", bookings, { captchaToken: "token-otra-web" });
+  ok(r.status === 403, "un token resuelto en otro dominio → 403", r.body);
 } finally {
   captchaApi.kill("SIGTERM");
   cloudflare.close();

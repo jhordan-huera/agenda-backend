@@ -1,6 +1,8 @@
 import { Router } from "express";
+import { config } from "../config.ts";
 import { requireCaptcha } from "../http/captcha.ts";
 import { handle, limitRequests } from "../http/handlers.ts";
+import { requireSuperAdminTwoFactor } from "../http/session.ts";
 import { adminService, platformService } from "../services/admin-service.ts";
 import { categoryService } from "../services/category-service.ts";
 import { paymentService } from "../services/payment-service.ts";
@@ -11,6 +13,7 @@ import { publicBookingService } from "../services/public-booking-service.ts";
 export const publicRoutes = Router();
 
 const bookingLimit = limitRequests({
+  name: "reservas",
   windowMinutes: 15,
   max: 20,
   message: "Demasiadas reservas desde esta conexión. Espera unos minutos o contacta al negocio.",
@@ -36,6 +39,14 @@ publicRoutes.get(
     return categories;
   }),
 );
+// Site Key del CAPTCHA para las páginas sin negocio (el registro). null: no se pide.
+publicRoutes.get(
+  "/captcha",
+  handle(async (_req, res) => {
+    res.set("Cache-Control", shortCache);
+    return { siteKey: config.turnstile?.siteKey ?? null };
+  }),
+);
 publicRoutes.get(
   "/businesses/:slug",
   handle(async (req, res) => {
@@ -47,7 +58,9 @@ publicRoutes.get(
     return profile;
   }),
 );
+// Búsqueda por cédula de las versiones anteriores de la página: ya no dice si es cliente (ver lookupClient).
 const lookupLimit = limitRequests({
+  name: "busqueda-cedula",
   windowMinutes: 15,
   max: 30,
   message: "Demasiadas búsquedas desde esta conexión. Espera unos minutos o contacta al negocio.",
@@ -69,11 +82,13 @@ publicRoutes.post(
 // Enlace de pago de una cita (/pago/:token): el token es la autorización. Sin caché: el paciente
 // tiene que ver enseguida el comprobante que acaba de subir.
 const paymentLimit = limitRequests({
+  name: "pagos",
   windowMinutes: 15,
   max: 60,
   message: "Demasiadas solicitudes desde esta conexión. Espera unos minutos.",
 });
 const receiptLimit = limitRequests({
+  name: "comprobantes",
   windowMinutes: 15,
   max: 20,
   message: "Demasiados comprobantes desde esta conexión. Espera unos minutos o envíalo por WhatsApp.",
@@ -101,6 +116,9 @@ publicRoutes.post(
 /* --------------------------------------- /api/admin (super admin) ----------- */
 
 export const adminRoutes = Router();
+
+// El super admin sin la verificación en dos pasos (obligatoria) no pasa de aquí: `two_factor_required`.
+adminRoutes.use(requireSuperAdminTwoFactor);
 
 adminRoutes.get(
   "/stats",
@@ -178,9 +196,10 @@ adminRoutes.patch(
   "/users/:userId/active",
   handle((req) => adminService.setUserActive(req.ctx, req.params.userId, req.body?.isActive)),
 );
-adminRoutes.put(
-  "/users/:userId/password",
-  handle((req) => adminService.setUserPassword(req.ctx, req.params.userId, req.body)),
+// Enlace de un solo uso para que el usuario defina su contraseña (el super admin no la elige ni la ve).
+adminRoutes.post(
+  "/users/:userId/password-link",
+  handle((req) => adminService.sendPasswordLink(req.ctx, req.params.userId)),
 );
 adminRoutes.get(
   "/platform-admins",

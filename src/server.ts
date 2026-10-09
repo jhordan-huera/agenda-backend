@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { app } from "./app.ts";
 import { config } from "./config.ts";
 import { pool } from "./db/pool.ts";
@@ -22,8 +23,21 @@ async function checkDatabase(): Promise<void> {
   }
 }
 
-const server = app.listen(config.port, () => {
-  console.info(`API de Agenda360 en http://localhost:${config.port}/api (frontend: ${config.frontendUrl})`);
+/**
+ * En la nube (Lambda) escucha en todas las interfaces, como siempre. En un equipo propio, sólo en
+ * 127.0.0.1: nadie de la misma red (la Wi-Fi) llega a la API; el frontend de desarrollo entra por el
+ * proxy de Vite, que corre en este mismo equipo.
+ */
+const host = config.hosted ? undefined : "127.0.0.1";
+const server = createServer(app);
+server.on("error", (error) => {
+  console.error(`✗ La API no pudo escuchar en el puerto ${config.port}: ${error.message}`);
+  process.exit(1);
+});
+server.listen(config.port, host, () => {
+  console.info(
+    `API de Agenda360 en http://localhost:${config.port}/api${host ? " (sólo desde este equipo)" : ""} (frontend: ${config.frontendUrl})`,
+  );
   if (config.productionDbFromHere) {
     console.warn(
       [

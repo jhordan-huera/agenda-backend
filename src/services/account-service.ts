@@ -13,6 +13,7 @@ import { emailTemplates } from "../shared/lib/email/templates.ts";
 import { getFullName } from "../shared/lib/format.ts";
 import { ROLE_LABELS } from "../shared/lib/permissions.ts";
 import { planIdSchema } from "../shared/lib/validations/admin.ts";
+import { currentPasswordSchema } from "../shared/lib/validations/auth.ts";
 import {
   bookingSettingsSchema,
   brandColorsSchema,
@@ -38,13 +39,16 @@ import type {
 } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
 import { businessChanges, type BusinessForAudit } from "./audit-changes.ts";
-import { assertStoredImage, releaseImages } from "./image-service.ts";
+import { isCurrentPassword } from "./auth-service.ts";
+import { assertStoredImage, imageFolder, releaseImages } from "./image-service.ts";
 import { insertBusiness, isSlugTaken, uniqueSlug } from "./business-factory.ts";
 import { requireAssignableCategory } from "./category-service.ts";
 import { authorize, parseInput, requireUser, type RequestContext } from "./context.ts";
 import { assertRoleAllowed, countUsers, getPlanUsage } from "./plan-limits.ts";
 import { appOrigin, queueEmail } from "./notifications.ts";
+import { revokePasswordLinks } from "./password-links.ts";
 import { listProfessionals } from "./professional-service.ts";
+import { logSessionEvent, type ClientConnection } from "./session-security.ts";
 
 const ROLE_ORDER: Record<BusinessRole, number> = { owner: 0, admin: 1, professional: 2, staff: 3 };
 
@@ -95,17 +99,30 @@ export const userService = {
     return one<User>(pool, `select ${userColumns()} from users where id = $1`, [userId]);
   },
 
-  async update(ctx: RequestContext, userId: string, input: unknown): Promise<User> {
+  /**
+   * El propio perfil. Cambiar el email (con el que se inicia sesión y al que llegan los enlaces para
+   * definir la contraseña) pide la contraseña actual: con sólo una sesión abierta no basta.
+   */
+  async update(ctx: RequestContext, userId: string, input: unknown, connection: ClientConnection): Promise<User> {
     const me = requireUser(ctx);
     if (me.id !== userId) throw new AppError("forbidden", "Sólo puedes editar tu propio perfil.");
     const data = parseInput(profileSchema, input);
+    const emailChanged = data.email !== me.email;
+    if (emailChanged) {
+      const { currentPassword } = parseInput(currentPasswordSchema, {
+        currentPassword: (input as { currentPassword?: unknown } | null)?.currentPassword ?? "",
+      });
+      if (!(await isCurrentPassword(me.id, currentPassword))) {
+        throw new AppError("validation", "La contraseña actual no es correcta. Para cambiar el email hace falta tu contraseña.");
+      }
+    }
     // Las fotos que deja de usar (la suya y la de su agenda) se borran del almacenamiento después.
     const replaced: (string | null)[] = [];
     const updated = await transaction(async (db) => {
       if (await one(db, "select 1 from users where email = $1 and id <> $2", [data.email, userId])) {
         throw new AppError("conflict", "Ese email ya está registrado en otra cuenta.");
       }
-      assertStoredImage(data.avatarUrl, me.avatarUrl, "La foto");
+      assertStoredImage(data.avatarUrl, me.avatarUrl, "La foto", [imageFolder.avatar(userId)]);
       const agendas = await many<{ avatarUrl: string | null }>(db, 'select avatar_url as "avatarUrl" from professionals where user_id = $1', [userId]);
       replaced.push(me.avatarUrl, ...agendas.map((agenda) => agenda.avatarUrl));
       const user = (await one<User>(
@@ -120,6 +137,16 @@ export const userService = {
         getFullName(user),
         user.avatarUrl,
       ]);
+      if (emailChanged) {
+        // Un enlace para definir la contraseña enviado al email anterior deja de servir.
+        await revokePasswordLinks(db, userId);
+        await logSessionEvent(
+          user,
+          { action: "session.email_changed", summary: `Cambió el email de su cuenta (antes: ${me.email})` },
+          connection,
+          db,
+        );
+      }
       return user;
     });
     await releaseImages(replaced);
@@ -223,7 +250,7 @@ export const businessService = {
     const updated = await transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "business.manage", { lock: true });
       const previous = await one<Business>(db, `select ${businessColumns()} from businesses where id = $1`, [businessId]);
-      assertStoredImage(profileData.logoUrl, previous?.logoUrl ?? null, "El logo");
+      assertStoredImage(profileData.logoUrl, previous?.logoUrl ?? null, "El logo", [imageFolder.logo(businessId)]);
       if (profileData.category) {
         const current = await one<{ category: string }>(db, "select category from businesses where id = $1", [businessId]);
         // La categoría sólo la cambia el super admin (desde /admin o en modo soporte).

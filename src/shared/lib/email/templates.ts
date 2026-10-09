@@ -76,14 +76,18 @@ function zoneSuffix(data: AppointmentEmailData): string {
 /** La hora de inicio, con la zona en las citas virtuales: "10:00 (hora de Ecuador, GMT-5)". */
 const startAt = (data: AppointmentEmailData) => `${data.startTime}${zoneSuffix(data)}`;
 
-const credentials = (email: string, password: string): EmailBlock => ({
-  kind: "details",
-  title: "Tus datos de acceso",
-  rows: [
-    { label: "Email", value: email },
-    { label: "Contraseña", value: password, mono: true },
-  ],
-});
+/**
+ * Enlace para que la persona defina su contraseña (nadie más la conoce). `url`: en el registro de
+ * emails el token va oculto; el email que sale lleva el real (ver mailer.ts en la API).
+ */
+const setPasswordBlocks = (email: string, url: string, linkMinutes: number): EmailBlock[] => [
+  { kind: "details", title: "Tu cuenta", rows: [{ label: "Email de acceso", value: email }] },
+  { kind: "button", label: "Definir mi contraseña", url },
+  {
+    kind: "note",
+    text: `El enlace sirve una sola vez y caduca en ${linkMinutes} minutos. Si caduca, pide otro al soporte. Después entrarás con tu email y esa contraseña.`,
+  },
+];
 
 /** Datos de la cita: servicio, profesional, fecha, hora, precio y lugar (con enlace al mapa). */
 function appointmentDetails(data: AppointmentEmailData, title = "Tu cita"): EmailBlock {
@@ -158,23 +162,27 @@ export const emailTemplates = {
     businessName: string;
     roleLabel: string;
     email: string;
-    password: string;
-    loginUrl: string;
+    setPasswordUrl: string;
+    linkMinutes: number;
   }): EmailContent =>
     platformEmail({
       subject: `Te invitaron a ${data.businessName} en ${APP_NAME}`,
-      preheader: `Ya formas parte del equipo de ${data.businessName}.`,
+      preheader: `Ya formas parte del equipo de ${data.businessName}. Define tu contraseña para entrar.`,
       title: `Te invitaron a ${data.businessName}`,
       greeting: `Hola ${data.firstName}:`,
       blocks: [
-        { kind: "text", text: `Te añadieron al equipo de ${data.businessName} con el rol ${data.roleLabel}.` },
-        credentials(data.email, data.password),
-        { kind: "button", label: "Iniciar sesión", url: data.loginUrl },
-        { kind: "note", text: "Guarda este email: si necesitas otra contraseña, pídesela al soporte." },
+        { kind: "text", text: `Te añadieron al equipo de ${data.businessName} con el rol ${data.roleLabel}. Para entrar, define tu contraseña.` },
+        ...setPasswordBlocks(data.email, data.setPasswordUrl, data.linkMinutes),
       ],
     }),
 
-  platformAdminAdded: (data: { firstName: string; addedBy: string; email: string; password: string; loginUrl: string }): EmailContent =>
+  platformAdminAdded: (data: {
+    firstName: string;
+    addedBy: string;
+    email: string;
+    setPasswordUrl: string;
+    linkMinutes: number;
+  }): EmailContent =>
     platformEmail({
       subject: `Ahora eres super admin de ${APP_NAME}`,
       preheader: "Ya puedes entrar al panel de plataforma para dar soporte.",
@@ -185,11 +193,10 @@ export const emailTemplates = {
           kind: "text",
           text: `${data.addedBy} te agregó como super admin de ${APP_NAME}: podrás ver los negocios, gestionarlos en modo soporte y ayudar a sus usuarios. Todo lo que hagas queda registrado con tu nombre.`,
         },
-        credentials(data.email, data.password),
-        { kind: "button", label: "Entrar al panel", url: data.loginUrl },
+        ...setPasswordBlocks(data.email, data.setPasswordUrl, data.linkMinutes),
         {
           kind: "note",
-          text: "Por seguridad, activa la verificación en dos pasos en Configuración apenas entres. Guarda este email: si necesitas otra contraseña, pídesela a quien te agregó.",
+          text: "Al entrar por primera vez tendrás que activar la verificación en dos pasos (con una app de autenticación en tu celular): es obligatoria para los super admins.",
         },
       ],
     }),
@@ -198,25 +205,26 @@ export const emailTemplates = {
     firstName: string;
     businessName: string;
     email: string;
-    password: string;
-    loginUrl: string;
+    setPasswordUrl: string;
+    linkMinutes: number;
     bookingUrl: string;
   }): EmailContent =>
     platformEmail({
       subject: `Tu negocio ${data.businessName} ya está en ${APP_NAME}`,
-      preheader: "Tus datos de acceso y tu página de reservas.",
+      preheader: "Define tu contraseña para entrar y comparte tu página de reservas.",
       title: `${data.businessName} ya está en ${APP_NAME}`,
       greeting: `Hola ${data.firstName}:`,
       blocks: [
-        { kind: "text", text: `Creamos la cuenta de ${data.businessName}. Ya puedes gestionar tu agenda, tus clientes y tus servicios.` },
-        credentials(data.email, data.password),
-        { kind: "button", label: "Iniciar sesión", url: data.loginUrl },
+        {
+          kind: "text",
+          text: `Creamos la cuenta de ${data.businessName}. Define tu contraseña para gestionar tu agenda, tus clientes y tus servicios.`,
+        },
+        ...setPasswordBlocks(data.email, data.setPasswordUrl, data.linkMinutes),
         {
           kind: "details",
           title: "Tu página de reservas",
           rows: [{ label: "Compártela con tus clientes", value: data.bookingUrl.replace(/^https?:\/\//, ""), href: data.bookingUrl }],
         },
-        { kind: "note", text: "Guarda este email: si necesitas otra contraseña, pídesela al soporte." },
       ],
     }),
 
@@ -249,17 +257,20 @@ export const emailTemplates = {
       ],
     }),
 
-  passwordChanged: (firstName: string, email: string, password: string, loginUrl: string): EmailContent =>
+  /** El soporte envía un enlace para definir una contraseña nueva (p. ej. si la olvidó). */
+  passwordSetupLink: (data: { firstName: string; email: string; setPasswordUrl: string; linkMinutes: number }): EmailContent =>
     platformEmail({
-      subject: "Tu nueva contraseña",
-      preheader: "El soporte cambió tu contraseña.",
-      title: "Tu nueva contraseña",
-      greeting: `Hola ${firstName}:`,
+      subject: "Define tu contraseña",
+      preheader: `Un enlace para elegir tu contraseña de ${APP_NAME}.`,
+      title: "Define tu contraseña",
+      greeting: `Hola ${data.firstName}:`,
       blocks: [
-        { kind: "text", text: `El equipo de soporte de ${APP_NAME} cambió tu contraseña.` },
-        credentials(email, password),
-        { kind: "button", label: "Iniciar sesión", url: loginUrl },
-        { kind: "note", text: "Si no pediste este cambio, responde a este email." },
+        {
+          kind: "text",
+          text: `El equipo de soporte de ${APP_NAME} te envió un enlace para que elijas una contraseña nueva. Hasta que la definas, la anterior sigue sirviendo.`,
+        },
+        ...setPasswordBlocks(data.email, data.setPasswordUrl, data.linkMinutes),
+        { kind: "note", text: "Si no lo pediste, no abras el enlace y responde a este email." },
       ],
     }),
 

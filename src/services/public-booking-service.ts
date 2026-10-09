@@ -3,11 +3,11 @@ import { config } from "../config.ts";
 import { many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { isSlotAvailable, offersService, scopeToProfessional } from "../shared/lib/availability.ts";
-import { DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY } from "../shared/lib/constants/business.ts";
+import { DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY, getTimezoneInfo } from "../shared/lib/constants/business.ts";
 import { isPriceVisible } from "../shared/lib/format.ts";
 import { addMinutesToTime, getZonedNow } from "../shared/lib/time.ts";
 import { documentIdError } from "../shared/lib/identity.ts";
-import { clientLookupSchema, newClientContactSchema, publicBookingSchema } from "../shared/lib/validations/booking.ts";
+import { clientLookupSchema, publicBookingSchema } from "../shared/lib/validations/booking.ts";
 import type {
   Appointment,
   BlockedTime,
@@ -30,13 +30,30 @@ import { lockBusiness, parseInput } from "./context.ts";
 import { listSchedules } from "./business-data-service.ts";
 import { receiptStorage } from "./file-storage.ts";
 import { notifyAppointmentChange } from "./notifications.ts";
-import { assertAppointmentLimit, assertClientLimit } from "./plan-limits.ts";
+import { assertAppointmentLimit, assertClientLimit, planOf } from "./plan-limits.ts";
 import { findProfessional, listProfessionals } from "./professional-service.ts";
 
 /**
  * Página pública de reservas (/book/:slug), sin sesión. Sólo expone lo necesario:
  * las citas ocupadas se devuelven como franjas horarias, sin datos de otros clientes.
+ *
+ * Nada de la página dice si una cédula es de un paciente del negocio (la cédula es casi pública: de
+ * un psicólogo, eso ya es un dato sensible). El paciente escribe siempre todos sus datos y la reserva
+ * sólo se une a una ficha existente si coinciden su email o su teléfono.
  */
+
+/**
+ * Reservas online que recibe un negocio como mucho en 24 h, y clientes nuevos que la página le crea:
+ * con cédulas inventadas (el algoritmo es público) un robot podía llenar la agenda o agotar el cupo
+ * del plan. Lo normal está muy por debajo; quien llegue al tope reserva por WhatsApp.
+ */
+export const ONLINE_BOOKINGS_PER_DAY = 30;
+export const ONLINE_NEW_CLIENTS_PER_DAY = 15;
+
+const ONLINE_DAILY_LIMIT_MESSAGE =
+  "Este negocio no puede recibir más reservas online por hoy. Escríbele por WhatsApp para agendar tu cita.";
+/** La cédula es de una ficha cuyo email y teléfono no coinciden: no se dice nada más (ni que existe la ficha). */
+const UNCONFIRMED_IDENTITY_MESSAGE = "No pudimos confirmar tus datos. Revisa tu email y teléfono o escríbenos por WhatsApp.";
 
 /**
  * Un negocio suspendido no se distingue de uno inexistente (no se expone su estado). Sólo cuentan
@@ -129,6 +146,68 @@ export function normalizePersonName(name: string): string {
   return name.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+/**
+ * Teléfono comparable: el número internacional sólo con dígitos. "+593 99 123 4567", "099 123 4567"
+ * y "+593 099…" son el mismo número en un negocio de Ecuador (los que no traen prefijo toman el de su país).
+ */
+export function comparablePhone(phone: string, timezone: string): string {
+  const trimmed = phone.trim();
+  let digits = trimmed.replace(/\D/g, "");
+  const code = getTimezoneInfo(timezone).callingCode;
+  if (!trimmed.startsWith("+")) {
+    if (digits.startsWith("00")) digits = digits.slice(2);
+    else if (!digits.startsWith(code)) digits = code + digits.replace(/^0+/, "");
+  }
+  // El 0 de la marcación nacional sobra después del prefijo del país.
+  return digits.startsWith(code) ? code + digits.slice(code.length).replace(/^0+/, "") : digits;
+}
+
+/**
+ * ¿Es la persona de la ficha? Basta con que coincida el email o el teléfono guardados (sin
+ * mayúsculas, espacios ni formato). Una ficha sin email ni teléfono no se puede confirmar.
+ */
+function sameContact(stored: { email: string; phone: string }, typed: { email: string; phone: string }, timezone: string): boolean {
+  const email = stored.email.trim().toLowerCase();
+  if (email !== "" && email === typed.email.trim().toLowerCase()) return true;
+  const phone = comparablePhone(stored.phone, timezone);
+  // Al menos 7 dígitos además del prefijo: un teléfono vacío nunca coincide.
+  return phone.length >= getTimezoneInfo(timezone).callingCode.length + 7 && phone === comparablePhone(typed.phone, timezone);
+}
+
+/** El email de la ficha sólo vuelve en la confirmación si es el que acaba de escribir el paciente. */
+const shownEmail = (stored: string, typed: string) => (stored.trim().toLowerCase() === typed.trim().toLowerCase() ? stored : "");
+
+/**
+ * Tope de reservas online del negocio en 24 h (las de cualquier estado, también las canceladas). En
+ * un plan con cupo mensual de citas, como mucho una cuarta parte del cupo al día (Free: 5): un robot
+ * no lo agota en una tarde.
+ */
+async function assertOnlineBookingLimit(db: Db, businessId: string): Promise<void> {
+  const { limits } = await planOf(db, businessId);
+  const limit =
+    limits.appointmentsPerMonth === null
+      ? ONLINE_BOOKINGS_PER_DAY
+      : Math.min(ONLINE_BOOKINGS_PER_DAY, Math.max(1, Math.ceil(limits.appointmentsPerMonth / 4)));
+  const row = await one<{ count: number }>(
+    db,
+    `select count(*)::int as count from appointments
+      where business_id = $1 and source = 'booking_page' and created_at between now() - interval '24 hours' and now()`,
+    [businessId],
+  );
+  if ((row?.count ?? 0) >= limit) throw new AppError("rate_limited", ONLINE_DAILY_LIMIT_MESSAGE);
+}
+
+/** Tope de clientes nuevos que la página de reservas crea en un negocio en 24 h. */
+async function assertOnlineNewClientLimit(db: Db, businessId: string): Promise<void> {
+  const row = await one<{ count: number }>(
+    db,
+    `select count(*)::int as count from clients
+      where business_id = $1 and source = 'booking_page' and created_at between now() - interval '24 hours' and now()`,
+    [businessId],
+  );
+  if ((row?.count ?? 0) >= ONLINE_NEW_CLIENTS_PER_DAY) throw new AppError("rate_limited", ONLINE_DAILY_LIMIT_MESSAGE);
+}
+
 /** Cuánto después de una reserva se reconoce su reintento (ver findRepeatedBooking). */
 const REPEATED_BOOKING_MINUTES = 30;
 
@@ -136,18 +215,18 @@ const REPEATED_BOOKING_MINUTES = 30;
  * La misma reserva otra vez: se perdió la respuesta (mala conexión) y el paciente volvió a
  * confirmar. Su propia cita ocupa esa hora, así que se busca una cita activa reservada online hace
  * poco con su cédula y el mismo servicio, fecha, hora y modalidad (y el mismo profesional, si lo
- * eligió). Sólo las recientes: la confirmación trae el enlace de pago y el de la videollamada.
+ * eligió). Sólo las recientes, y sólo si coinciden el email o el teléfono (ver book).
  */
 async function findRepeatedBooking(
   db: Db,
   business: Business,
   serviceId: string,
   data: { documentId: string; date: string; startTime: string; isVirtual: boolean; homeVisit: unknown; professionalId: string | null },
-): Promise<(Appointment & { clientEmail: string }) | null> {
+): Promise<(Appointment & { clientEmail: string; clientPhone: string }) | null> {
   const chosen = business.bookingSettings.chooseProfessional !== false ? data.professionalId : null;
-  return one<Appointment & { clientEmail: string }>(
+  return one<Appointment & { clientEmail: string; clientPhone: string }>(
     db,
-    `select ${appointmentColumns("a")}, c.email as "clientEmail"
+    `select ${appointmentColumns("a")}, c.email as "clientEmail", c.phone as "clientPhone"
        from appointments a join clients c on c.id = a.client_id
       where a.business_id = $1 and c.document_id = $2 and c.document_id <> ''
         and a.service_id = $3 and a.date = $4 and a.start_time = $5
@@ -161,12 +240,16 @@ async function findRepeatedBooking(
   );
 }
 
-/** Lo que ve el paciente al reservar (y otra vez si repite la misma reserva). */
+/**
+ * Lo que ve el paciente al reservar (y otra vez si repite la misma reserva). En un reintento
+ * (`repeated`) no van los datos ni el enlace de pago: los recibió por email con la confirmación.
+ */
 function toConfirmation(
   appointment: Appointment,
-  context: { business: Business; service: Service; professional: Professional; clientEmail: string; emailSent: boolean },
+  context: { business: Business; service: Service; professional: Professional; clientEmail: string; emailSent: boolean; repeated: boolean },
 ): BookingConfirmation {
   const { business, service, professional } = context;
+  const paysByTransfer = Boolean(professional.bankAccount) && appointment.price > 0;
   return {
     appointmentId: appointment.id,
     serviceName: service.name,
@@ -186,9 +269,10 @@ function toConfirmation(
     emailSent: context.emailSent,
     // Pago por transferencia: los datos de la agenda y el enlace para subir el comprobante.
     payment:
-      professional.bankAccount && appointment.price > 0
-        ? { bankAccount: professional.bankAccount, token: appointment.paymentToken, receiptsEnabled: Boolean(receiptStorage) }
+      paysByTransfer && !context.repeated
+        ? { bankAccount: professional.bankAccount!, token: appointment.paymentToken, receiptsEnabled: Boolean(receiptStorage) }
         : null,
+    paymentByEmail: paysByTransfer && context.repeated,
   };
 }
 
@@ -227,12 +311,6 @@ export function greetingName(name: string): string {
   return second ? `${first} ${second[0].toUpperCase()}.` : first;
 }
 
-/** "maria.lopez@gmail.com" → "ma***@gmail.com" */
-function maskEmail(email: string): string {
-  const [user = "", domain = ""] = email.split("@");
-  return domain ? `${user.slice(0, 2)}***@${domain}` : "";
-}
-
 /** Al cliente final no se le habla de "planes": se le pide contactar al negocio. */
 async function withPublicLimitMessage(check: () => Promise<void>) {
   try {
@@ -250,8 +328,8 @@ async function withPublicLimitMessage(check: () => Promise<void>) {
 
 export const publicBookingService = {
   /**
-   * ¿La cédula ya es de un cliente del negocio? Sólo devuelve un nombre para saludar: nunca
-   * email, teléfono ni dirección (la ruta tiene además límite de intentos).
+   * Búsqueda por cédula de las versiones anteriores de la página: sólo comprueba el formato y
+   * responde siempre lo mismo, sea o no cliente (antes devolvía su nombre para saludarlo).
    */
   async lookupClient(slug: string, input: unknown): Promise<PublicClientLookup> {
     const { documentId } = parseInput(clientLookupSchema, input);
@@ -259,8 +337,7 @@ export const publicBookingService = {
     if (!found) throw new AppError("not_found", "Esta página de reservas no está disponible.");
     const documentError = documentIdError(documentId, found.business.timezone);
     if (documentError) throw new AppError("validation", documentError);
-    const client = await findClientByDocument(pool, found.business.id, documentId);
-    return { found: Boolean(client), greetingName: client ? greetingName(client.name) : null };
+    return { found: false, greetingName: null };
   },
 
   /** Sólo los profesionales activos y los servicios que alguno de ellos atiende. */
@@ -292,7 +369,10 @@ export const publicBookingService = {
     };
   },
 
-  /** Revalida la disponibilidad y el plan, crea o reutiliza el cliente (por email), crea la cita y envía emails. */
+  /**
+   * Revalida la disponibilidad, los topes del día y el plan, reutiliza el cliente de la cédula (si
+   * coinciden su email o su teléfono) o lo crea, crea la cita y envía los emails.
+   */
   async book(slug: string, input: unknown): Promise<BookingConfirmation> {
     const data = parseInput(publicBookingSchema, input);
     return transaction(async (db) => {
@@ -324,12 +404,13 @@ export const publicBookingService = {
       }
 
       // Reintento de una reserva que ya se hizo: la misma confirmación, sin otra cita ni más emails.
+      // Con otro email y otro teléfono no es su reserva: sigue como una nueva (y esa hora está ocupada).
       const repeated = await findRepeatedBooking(db, business, service.id, data);
-      if (repeated) {
-        const { clientEmail, ...appointment } = repeated;
+      if (repeated && sameContact({ email: repeated.clientEmail, phone: repeated.clientPhone }, data, business.timezone)) {
+        const { clientEmail, clientPhone: _phone, ...appointment } = repeated;
         const emailSent = await one(
           db,
-          "select 1 from notifications where appointment_id = $1 and type in ('booking_created', 'appointment_confirmed')",
+          "select 1 from notifications where appointment_id = $1 and type in ('booking_created', 'appointment_confirmed') and status <> 'failed'",
           [appointment.id],
         );
         return toConfirmation(appointment, {
@@ -338,11 +419,12 @@ export const publicBookingService = {
           professional:
             professionals.find((option) => option.id === appointment.professionalId) ??
             (await findProfessional(db, business.id, appointment.professionalId)),
-          // Su email completo sólo si lo acaba de escribir él mismo.
-          clientEmail: data.email && data.email === clientEmail ? clientEmail : maskEmail(clientEmail),
+          clientEmail: shownEmail(clientEmail, data.email),
           emailSent: Boolean(emailSent),
+          repeated: true,
         });
       }
+      await assertOnlineBookingLimit(db, business.id);
 
       // Con quién: el que eligió el paciente (si el negocio lo permite) o el primero libre a esa hora.
       const candidates = professionals.filter((professional) => offersService(professional, service.id));
@@ -368,24 +450,26 @@ export const publicBookingService = {
       if (!professional) throw new AppError("conflict", "Esa hora acaba de ocuparse. Por favor elige otra.");
       await withPublicLimitMessage(() => assertAppointmentLimit(db, business.id, data.date));
 
-      // El cliente se identifica con su cédula: si ya existe en el negocio se reutiliza (sin tocar
-      // sus datos de contacto); si no, se crea con los datos del formulario.
+      // El cliente se identifica con su cédula. Si ya existe en el negocio, sólo se reutiliza (sin
+      // tocar sus datos de contacto) si coinciden su email o su teléfono: con la cédula de otra
+      // persona no se reserva a su nombre ni se sabe nada de ella. Si no existe, se crea.
       const documentError = documentIdError(data.documentId, business.timezone);
       if (documentError) throw new AppError("validation", documentError);
       let client = await findClientByDocument(db, business.id, data.documentId);
-      const knownClient = Boolean(client);
+      if (client && !sameContact(client, data, business.timezone)) {
+        throw new AppError("forbidden", UNCONFIRMED_IDENTITY_MESSAGE);
+      }
       if (!client) {
-        const contact = parseInput(newClientContactSchema, data);
         // Cliente antiguo sin cédula con el mismo email y el mismo nombre: se le añade la cédula en lugar
         // de duplicarlo. Con otro nombre es otra persona (una madre y su hijo con un solo email): se crea
         // aparte, para no mezclar sus citas ni sus historias clínicas.
         const legacy = (
           await many<Client>(
             db,
-            `select ${clientColumns()} from clients where business_id = $1 and email = $2 and document_id = ''`,
-            [business.id, contact.email],
+            `select ${clientColumns()} from clients where business_id = $1 and lower(email) = $2 and document_id = ''`,
+            [business.id, data.email],
           )
-        ).filter((candidate) => normalizePersonName(candidate.name) === normalizePersonName(contact.name));
+        ).filter((candidate) => normalizePersonName(candidate.name) === normalizePersonName(data.name));
         if (legacy.length === 1) {
           client = (await one<Client>(
             db,
@@ -393,13 +477,14 @@ export const publicBookingService = {
             [legacy[0].id, data.documentId],
           ))!;
         } else {
+          await assertOnlineNewClientLimit(db, business.id);
           await withPublicLimitMessage(() => assertClientLimit(db, business.id));
           client = (await one<Client>(
             db,
-            `insert into clients (business_id, name, document_id, email, phone, address)
-             values ($1, $2, $3, $4, $5, $6)
+            `insert into clients (business_id, name, document_id, email, phone, address, source)
+             values ($1, $2, $3, $4, $5, $6, 'booking_page')
              returning ${clientColumns()}`,
-            [business.id, contact.name, data.documentId, contact.email, contact.phone, data.homeVisit?.address ?? ""],
+            [business.id, data.name, data.documentId, data.email, data.phone, data.homeVisit?.address ?? ""],
           ))!;
         }
       }
@@ -445,9 +530,9 @@ export const publicBookingService = {
         business,
         service,
         professional,
-        // A quien reservó con la cédula de un cliente existente no se le muestra su email completo.
-        clientEmail: knownClient ? maskEmail(client.email) : client.email,
+        clientEmail: shownEmail(client.email, data.email),
         emailSent,
+        repeated: false,
       });
     });
   },

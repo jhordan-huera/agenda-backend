@@ -1,16 +1,17 @@
 import { waitUntil } from "@vercel/functions";
-import nodemailer from "nodemailer";
 import { config } from "../config.ts";
 import { many, pool } from "../db/pool.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { escapeHtml } from "../shared/lib/email/layout.ts";
 import { getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
+import { createGmailSender } from "./gmail-transport.ts";
 import { isQuietTime, minutesUntilQuietEnds, minutesUntilStart, reminderKeySql } from "./reminder-rules.ts";
 
 /**
- * Envío de emails con Gmail (OAuth2). Los servicios sólo guardan el email "en cola" en la
- * tabla notifications (dentro de su transacción); aquí se envían en segundo plano, así
- * que un fallo de Gmail nunca hace fallar una cita o un registro. Si el envío falla, se
+ * Envío de emails con Gmail (OAuth2, por SMTP o por su API: ver gmail-transport.ts). Los
+ * servicios sólo guardan el email "en cola" en la tabla notifications (dentro de su
+ * transacción); aquí se envían en segundo plano, así que un fallo de Gmail nunca hace
+ * fallar una cita o un registro. Si el envío falla, se
  * reintenta con una espera que se duplica cada vez (5 min, 10, 20…): tras MAX_ATTEMPTS
  * intentos, unas 10 horas después, queda como fallido.
  *
@@ -22,7 +23,8 @@ import { isQuietTime, minutesUntilQuietEnds, minutesUntilStart, reminderKeySql }
 
 /**
  * Lo que se guarda en lugar de la contraseña en los emails con datos de acceso: la plantilla
- * se compone con esto y la contraseña va aparte (columna `secret`) sólo hasta que se envía.
+ * se compone con esto y el dato de acceso (el enlace para definir la contraseña) va aparte (columna
+ * `secret`) sólo hasta que se envía.
  */
 export const PASSWORD_MASK = "••••••••";
 
@@ -55,22 +57,8 @@ function isUndeliverable(address: string): boolean {
 }
 
 const gmail = config.gmail;
-const transporter = gmail
-  ? nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        type: "OAuth2",
-        user: gmail.user,
-        clientId: gmail.clientId,
-        clientSecret: gmail.clientSecret,
-        refreshToken: gmail.refreshToken,
-      },
-      // Sin límites, una conexión colgada con Gmail retendría el lote (y la función) indefinidamente.
-      connectionTimeout: 8_000,
-      greetingTimeout: 8_000,
-      socketTimeout: 12_000,
-    })
-  : null;
+/** Envío por SMTP o por la API de Gmail (GMAIL_TRANSPORT), con límites de tiempo (ver gmail-transport.ts). */
+const transporter = gmail ? createGmailSender(gmail) : null;
 
 interface QueuedEmail {
   id: string;
@@ -80,7 +68,7 @@ interface QueuedEmail {
   body: string;
   /** Versión con diseño (null en los emails anteriores a la migración 012). */
   html: string | null;
-  /** Contraseña de los emails con datos de acceso: se guarda oculta (PASSWORD_MASK) y va aquí. */
+  /** Dato de acceso (el token del enlace para definir la contraseña): oculto (PASSWORD_MASK) y va aquí. */
   secret: string | null;
   /** Intentos, contando éste. */
   attempts: number;
@@ -112,7 +100,7 @@ export interface OutgoingEmail {
 }
 
 async function sendWithGmail(email: OutgoingEmail): Promise<void> {
-  await transporter!.sendMail({
+  await transporter!.send({
     from: { name: gmail!.fromName, address: gmail!.user },
     to: email.to,
     subject: email.subject,
@@ -385,10 +373,11 @@ export function startEmailWorker(): () => void {
     console.warn("⚠ Emails desactivados: faltan las variables GMAIL_* en .env. Quedarán en cola sin enviarse.");
     return () => undefined;
   }
+  const transportName = transporter.kind === "api" ? "API de Gmail" : "SMTP";
   console.info(
     config.emailRedirectTo
-      ? `✓ Emails por Gmail (${gmail!.user}); en desarrollo todos se redirigen a ${config.emailRedirectTo}`
-      : `✓ Emails por Gmail (${gmail!.user})`,
+      ? `✓ Emails por Gmail (${gmail!.user}, ${transportName}); en desarrollo todos se redirigen a ${config.emailRedirectTo}`
+      : `✓ Emails por Gmail (${gmail!.user}, ${transportName})`,
   );
   void processEmailQueue();
   const interval = setInterval(() => void processEmailQueue(), POLL_INTERVAL_MS);

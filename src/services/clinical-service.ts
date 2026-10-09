@@ -30,7 +30,8 @@ import { authorize, parseInput, type Actor, type RequestContext } from "./contex
  * - El propietario, los miembros que él autoriza y el super admin desde "Gestionar negocio"
  *   (modo soporte, con los permisos del propietario).
  * - No hay borrado ni edición de evoluciones: se añaden aclaraciones con autor y fecha.
- * - Cada acceso queda en la auditoría.
+ * - Cada acceso queda en la auditoría del negocio, también los del super admin en modo soporte
+ *   (el propietario los ve en Actividad como "Nombre (Super admin)").
  */
 
 /** Como mucho un registro de "consultó la historia" por persona y paciente en este intervalo. */
@@ -156,22 +157,24 @@ export const clinicalService = {
     });
   },
 
-  /** Antecedentes y evoluciones del paciente. Registra el acceso en la auditoría (salvo en modo soporte). */
+  /**
+   * Antecedentes y evoluciones del paciente. Registra el acceso en la auditoría del negocio, también
+   * el del super admin en modo soporte: el propietario tiene que saber quién leyó cada historia.
+   */
   async get(ctx: RequestContext, businessId: string, clientId: string): Promise<ClinicalRecord> {
     return transaction(async (db) => {
       const actor = await authorizeClinical(db, ctx, businessId);
       const client = await findPatient(db, businessId, clientId, actor);
-      // El super admin en modo soporte no deja rastro de lo que sólo consulta.
-      const loggedRecently =
-        actor.support ||
-        (await one(
+      const loggedRecently = Boolean(
+        await one(
           db,
           `select 1 from audit_logs
             where business_id = $1 and action = 'clinical_record.viewed' and entity_id = $2 and actor_id = $3
               and created_at > now() - make_interval(mins => $4)
             limit 1`,
           [businessId, clientId, actor.userId, VIEW_LOG_INTERVAL_MINUTES],
-        ));
+        ),
+      );
       if (!loggedRecently) {
         await logAudit(db, {
           businessId,

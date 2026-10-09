@@ -39,14 +39,16 @@ const clients = (await owner("GET", `${B}/clients`)).body;
 const maria = clients.find((c) => c.name === "María López");
 ok(/^\d{10}$/.test(maria?.documentId ?? ""), "los clientes demo tienen cédula", maria?.documentId);
 
-console.log("Búsqueda pública por cédula");
+console.log("Búsqueda pública por cédula (versiones anteriores de la página): no revela nada");
 let r = await pub("POST", "/public/businesses/jhordan/clients/lookup", { documentId: maria.documentId });
-ok(r.status === 200 && r.body.found === true && r.body.greetingName === "María L.", "cliente encontrado: sólo saluda con nombre e inicial", r.body);
-ok(Object.keys(r.body).sort().join() === "found,greetingName", "la respuesta no incluye email, teléfono ni dirección", Object.keys(r.body));
+const notClient = await pub("POST", "/public/businesses/jhordan/clients/lookup", { documentId: cedulaFor("nadie-aqui") });
+ok(
+  r.status === 200 && JSON.stringify(r.body) === JSON.stringify({ found: false, greetingName: null }) && JSON.stringify(notClient.body) === JSON.stringify(r.body),
+  "la cédula de una paciente responde lo mismo que la de alguien que no lo es (ni nombre ni saludo)",
+  [r.body, notClient.body],
+);
 r = await pub("POST", "/public/businesses/jhordan/clients/lookup", { documentId: `${maria.documentId.slice(0, 4)}-${maria.documentId.slice(4)}` });
-ok(r.body?.found === true, "acepta la cédula con guiones (se normaliza)", r.body);
-r = await pub("POST", "/public/businesses/estudio-bella/clients/lookup", { documentId: maria.documentId });
-ok(r.body?.found === false, "sólo busca entre los clientes de ese profesional", r.body);
+ok(r.status === 200, "acepta la cédula con guiones (se normaliza)", r.body);
 const badCheck = maria.documentId.slice(0, 9) + ((Number(maria.documentId[9]) + 1) % 10);
 r = await pub("POST", "/public/businesses/jhordan/clients/lookup", { documentId: badCheck });
 ok(r.status === 400 && /no es válida/.test(r.body.error.message), "cédula ecuatoriana con dígito verificador erróneo → 400", r.body);
@@ -78,12 +80,28 @@ for (let d = 2; d < 60 && freeSlots.length < 6; d++) {
 const countClients = async () => (await owner("GET", `${B}/clients`)).body.length;
 const before = await countClients();
 const booking = (slot, extra) => ({ serviceId: service.id, ...slot, name: "", email: "", phone: "", notes: "", ...extra });
+const mariaFull = (await owner("GET", `${B}/clients/${maria.id}`)).body;
 
 r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[0], { documentId: maria.documentId }));
-ok(r.status === 200 && /^ma\*\*\*@example\.com$/.test(r.body.clientEmail), "cliente registrado reserva sólo con su cédula (email enmascarado)", r.body);
+ok(r.status === 400, "sólo con la cédula ya no se reserva: nombre, email y teléfono son obligatorios", r.body);
+r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[0], { documentId: maria.documentId, name: "Alguien Más", email: "otra.persona@correo.ec", phone: "+593 98 000 1111" }));
+ok(
+  r.status === 403 && r.body.error.message === "No pudimos confirmar tus datos. Revisa tu email y teléfono o escríbenos por WhatsApp.",
+  "con la cédula de María y otro email y otro teléfono → error genérico",
+  r.body,
+);
+ok(!JSON.stringify(r.body).includes("María") && !JSON.stringify(r.body).includes("@example.com"), "el error no dice nada de María", r.body);
+ok((await countClients()) === before, "ni se crea un duplicado con su cédula");
+ok(
+  Number(sql(`select count(*) from appointments where client_id = '${maria.id}' and date = '${freeSlots[0].date}'`)) === 0,
+  "ni una cita a su nombre",
+);
+r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[0], { documentId: maria.documentId, name: "María", email: ` ${mariaFull.email.toUpperCase()} `, phone: "+593 98 000 1111" }));
+ok(r.status === 200 && r.body.clientEmail === mariaFull.email, "María reserva con su cédula y su email (sin importar mayúsculas)", r.body);
 ok((await countClients()) === before, "no se crea otro cliente");
 const mariaAppts = (await owner("GET", `${B}/appointments?clientId=${maria.id}&from=${freeSlots[0].date}&to=${freeSlots[0].date}`)).body;
 ok(mariaAppts.some((a) => a.startTime === freeSlots[0].startTime && a.source === "booking_page"), "la cita queda en la ficha de María", mariaAppts);
+ok((await owner("GET", `${B}/clients/${maria.id}`)).body.name === "María López", "y su ficha no cambia (nombre, email ni teléfono)");
 
 const nuevo = cedulaFor("nuevo-paciente");
 r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[1], { documentId: nuevo }));
@@ -91,8 +109,10 @@ ok(r.status === 400, "cliente nuevo sin nombre, email ni teléfono → 400", r.b
 r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[1], { documentId: nuevo, name: "Pedro Nuevo", email: "pedro.nuevo@example.com", phone: "+593 99 555 0001" }));
 ok(r.status === 200 && r.body.clientEmail === "pedro.nuevo@example.com", "cliente nuevo con sus datos", r.body);
 ok((await countClients()) === before + 1, "se crea un cliente");
-r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[2], { documentId: nuevo, name: "Otro Nombre", email: "otro@example.com", phone: "+593 99 555 0002" }));
-ok(r.status === 200 && (await countClients()) === before + 1, "la segunda reserva con la misma cédula no duplica", r.body);
+ok(sql(`select source from clients where document_id = '${nuevo}'`) === "booking_page", "creado por la página de reservas");
+r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[2], { documentId: nuevo, name: "Otro Nombre", email: "otro@example.com", phone: "099 555 0001" }));
+ok(r.status === 200 && (await countClients()) === before + 1, "con su cédula y su teléfono escrito de otra forma (099… = +593 99…) no duplica", r.body);
+ok(r.body.clientEmail === "", "y como escribió otro email, la confirmación no muestra el de la ficha", r.body);
 const pedro = (await owner("GET", `${B}/clients`)).body.find((c) => c.documentId === nuevo);
 ok(pedro?.name === "Pedro Nuevo" && pedro.email === "pedro.nuevo@example.com", "y no cambia los datos del cliente", pedro);
 

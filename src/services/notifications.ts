@@ -4,6 +4,7 @@ import { many, one, type Db } from "../db/pool.ts";
 import { emailTemplates, type AppointmentEmailData, type EmailContent } from "../shared/lib/email/templates.ts";
 import { addDaysISO, getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
 import type { Appointment, BankAccount, Business, EmailType } from "../shared/types/index.ts";
+import { newPatientEmailHold, thirdPartyEmailHold } from "./email-limits.ts";
 import { PASSWORD_MASK, scheduleEmailDelivery } from "./mailer.ts";
 import { isQuietTime, minutesUntilStart, reminderKeySql } from "./reminder-rules.ts";
 
@@ -24,8 +25,11 @@ export function appOrigin(): string {
 export const paymentUrl = (token: string) => `${appOrigin()}/pago/${token}`;
 
 /**
- * Pone el email en cola. Devuelve false si ya existía (recordatorio duplicado). `secret`: la
- * contraseña que el mailer pone en lugar de PASSWORD_MASK al enviarlo (ver mailer.ts).
+ * Pone el email en cola. Devuelve false si no va a salir: ya existía (recordatorio duplicado) o lo
+ * frenó un tope diario (ver email-limits.ts: queda en el historial como fallido, con el motivo).
+ * `secret`: el dato de acceso (token del enlace para definir la contraseña) que el mailer pone en lugar
+ * de PASSWORD_MASK al enviarlo (ver mailer.ts).
+ * `hold`: motivo para no enviarlo, si quien lo pone en cola ya lo sabe.
  */
 export async function queueEmail(
   db: Db,
@@ -37,11 +41,15 @@ export async function queueEmail(
     secret?: string;
     /** Emails que se envían una sola vez (la agenda del día de un profesional, cada recordatorio). */
     dedupeKey?: string;
+    hold?: string | null;
   } & EmailContent,
 ): Promise<boolean> {
+  const hold = message.hold ?? (await thirdPartyEmailHold(db, message.type));
   const result = await db.query(
-    `insert into notifications (business_id, type, to_email, subject, body, html, appointment_id, status, secret, dedupe_key)
-     values ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9)
+    `insert into notifications
+       (business_id, type, to_email, subject, body, html, appointment_id, status, secret, dedupe_key, last_error)
+     values ($1, $2, $3, $4, $5, $6, $7, case when $10::text is null then 'queued' else 'failed' end,
+             case when $10::text is null then $8 end, $9, $10)
      on conflict do nothing`,
     [
       message.businessId,
@@ -53,11 +61,12 @@ export async function queueEmail(
       message.appointmentId ?? null,
       message.secret ?? null,
       message.dedupeKey ?? null,
+      hold,
     ],
   );
-  const inserted = (result.rowCount ?? 0) > 0;
-  if (inserted) scheduleEmailDelivery();
-  return inserted;
+  const queued = (result.rowCount ?? 0) > 0 && hold === null;
+  if (queued) scheduleEmailDelivery();
+  return queued;
 }
 
 interface AppointmentContext {
@@ -217,8 +226,9 @@ export async function notifyAppointmentChange(
 
   const toClient = async (type: EmailType, content: EmailContent) => {
     if (!context.clientEmail) return false;
-    await queueEmail(db, { businessId: business.id, type, to: context.clientEmail, appointmentId: after.id, ...content });
-    return true;
+    // La reserva online de un paciente nuevo: tope por negocio (además del general a terceros).
+    const hold = origin === "booking_page" ? await newPatientEmailHold(db, business.id, after.clientId) : null;
+    return queueEmail(db, { businessId: business.id, type, to: context.clientEmail, appointmentId: after.id, hold, ...content });
   };
 
   if (!before) {

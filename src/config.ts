@@ -39,13 +39,26 @@ const envSchema = z.object({
   SUPABASE_URL: z.url("SUPABASE_URL debe ser una URL (https://xxxx.supabase.co)").optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().trim().min(20).optional(),
   STORAGE_BUCKET: z.string().trim().regex(/^[a-z0-9-]{3,63}$/).default("historias-clinicas"),
-  // CAPTCHA de la página de reservas (Cloudflare Turnstile). Sin las dos claves no se pide.
+  // CAPTCHA de la página de reservas y del registro (Cloudflare Turnstile). Sin las dos claves no se pide.
   TURNSTILE_SITE_KEY: z.string().trim().optional(),
   TURNSTILE_SECRET_KEY: z.string().trim().optional(),
+  // Otros dominios desde los que se resuelve el CAPTCHA, además de los de FRONTEND_URL y APP_URL
+  // (separados por comas; p. ej. "example.com" con las claves de prueba de Cloudflare).
+  TURNSTILE_HOSTNAMES: z.string().trim().optional(),
   // Sólo para las pruebas: un servidor local que imita a Cloudflare.
   TURNSTILE_VERIFY_URL: z.url().default("https://challenges.cloudflare.com/turnstile/v0/siteverify"),
+  // Emails a personas de fuera de la plataforma (pacientes, bienvenidas) en 24 h, entre todos los
+  // negocios: frena el spam desde la cuenta de Gmail (que tiene su propio tope diario).
+  THIRD_PARTY_EMAILS_PER_DAY: z.coerce.number().int().min(1).default(400),
+  // Avisos al celular por ntfy desde la API (p. ej. al llegar al tope de emails). Sin NTFY_TOPIC,
+  // el aviso sólo queda en el registro.
+  NTFY_TOPIC: z.string().trim().optional(),
+  NTFY_SERVER: z.url().default("https://ntfy.sh"),
   /** Web publicada, para los enlaces de los emails si difiere de FRONTEND_URL (p. ej. desde este equipo). */
   APP_URL: z.url().optional(),
+  // Verificación en dos pasos del super admin. Siempre obligatoria con datos reales (producción, la
+  // nube o la base de producción desde este equipo); con una base local, sólo si vale "required".
+  SUPER_ADMIN_2FA: z.enum(["required", "optional"]).optional(),
 });
 
 // Una variable vacía cuenta como no puesta: en GitHub Actions, un secreto que no existe llega como "".
@@ -92,9 +105,28 @@ const gmail =
       }
     : null;
 
+const appUrl = (env.APP_URL ?? env.FRONTEND_URL[0]).replace(/\/+$/, "");
+
+/** Dominios desde los que se puede resolver el CAPTCHA: los del frontend y los de TURNSTILE_HOSTNAMES. */
+const captchaHostnames = [
+  ...new Set(
+    [
+      ...[...env.FRONTEND_URL, appUrl].map((url) => new URL(url).hostname),
+      ...(env.TURNSTILE_HOSTNAMES ?? "").split(","),
+    ]
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean),
+  ),
+];
+
 const turnstile =
   env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY
-    ? { siteKey: env.TURNSTILE_SITE_KEY, secretKey: env.TURNSTILE_SECRET_KEY, verifyUrl: env.TURNSTILE_VERIFY_URL }
+    ? {
+        siteKey: env.TURNSTILE_SITE_KEY,
+        secretKey: env.TURNSTILE_SECRET_KEY,
+        verifyUrl: env.TURNSTILE_VERIFY_URL,
+        hostnames: captchaHostnames,
+      }
     : null;
 
 export const config = {
@@ -118,14 +150,23 @@ export const config = {
   frontendUrls: env.FRONTEND_URL,
   frontendUrl: env.FRONTEND_URL[0],
   /** Base de los enlaces de los emails: APP_URL o, si no está, el primer FRONTEND_URL. */
-  appUrl: (env.APP_URL ?? env.FRONTEND_URL[0]).replace(/\/+$/, ""),
+  appUrl,
   cookieSameSite: env.COOKIE_SAME_SITE,
   trustProxy: env.TRUST_PROXY,
   reminderJobIntervalMinutes: env.REMINDER_JOB_INTERVAL_MINUTES,
   /** null si faltan las credenciales de Gmail. */
   gmail,
-  /** CAPTCHA de la búsqueda por cédula y de las reservas online. null: desactivado. */
+  /** CAPTCHA de las reservas online y del registro. null: desactivado. */
   turnstile,
+  /** Tope de emails a personas de fuera de la plataforma en 24 h (ver src/services/email-limits.ts). */
+  thirdPartyEmailsPerDay: env.THIRD_PARTY_EMAILS_PER_DAY,
+  /** Avisos por ntfy desde la API (null: sólo en el registro). */
+  ntfy: env.NTFY_TOPIC ? { topic: env.NTFY_TOPIC, server: env.NTFY_SERVER.replace(/\/+$/, "") } : null,
+  /**
+   * El super admin debe tener la verificación en dos pasos para usar /admin y el modo soporte. Con
+   * datos reales no se puede desactivar; con una base local (datos demo y pruebas) es opcional.
+   */
+  superAdminTwoFactorRequired: isProduction || hosted || productionDbFromHere || env.SUPER_ADMIN_2FA === "required",
   /**
    * Fuera de producción todos los emails van a esta dirección (por defecto, la propia cuenta
    * de Gmail) para no escribir a los clientes de los datos demo. "off" la desactiva. Con la base

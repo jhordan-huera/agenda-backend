@@ -10,9 +10,15 @@ import { pool } from "./pool.ts";
 const MIGRATIONS_DIR = new URL("../../db/migrations/", import.meta.url);
 
 async function migrate() {
-  await pool.query(
-    "create table if not exists schema_migrations (name text primary key, applied_at timestamptz not null default now())",
-  );
+  // En una base nueva, la tabla de control nace con RLS como las demás: la API REST automática de
+  // Supabase (clave anónima) no la puede leer. Las bases que ya la tienen no se tocan.
+  const { rows } = await pool.query("select to_regclass('schema_migrations') is null as missing");
+  if (rows[0].missing) {
+    await pool.query(
+      `create table if not exists schema_migrations (name text primary key, applied_at timestamptz not null default now());
+       alter table schema_migrations enable row level security;`,
+    );
+  }
   const applied = new Set((await pool.query("select name from schema_migrations")).rows.map((row) => row.name as string));
   const files = (await readdir(MIGRATIONS_DIR)).filter((file) => file.endsWith(".sql")).sort();
 

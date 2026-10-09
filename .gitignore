@@ -13,3 +13,10 @@ storage
 
 # Paquete de AWS Lambda (npm run lambda:package)
 dist/
+
+# Copias de seguridad (scripts/backup.ts): ni cifradas ni descifradas en el repositorio público.
+# Sin "*.sql" a secas: db/migrations son .sql.
+/agenda360-*.sql
+*.sql.gz.enc
+*.sql.gz
+/backups/

@@ -1,0 +1,23 @@
+# Actualizaciones automáticas (Dependabot abre un pull request por cada una; nada se publica solo).
+# Las acciones de los workflows van fijadas por SHA con la versión en un comentario: Dependabot
+# cambia los dos. La imagen postgres:17 de backup.yml (fijada por digest) se actualiza a mano.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    target-branch: dev
+    groups:
+      acciones:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    target-branch: dev
+    open-pull-requests-limit: 5
+    groups:
+      menores:
+        update-types: ["minor", "patch"]

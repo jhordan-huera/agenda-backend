@@ -1,4 +1,5 @@
 import { Router, type Request } from "express";
+import { requireCaptcha } from "../http/captcha.ts";
 import { clientIp } from "../http/client-ip.ts";
 import { handle, limitRequests } from "../http/handlers.ts";
 import { clearSessionCookie, setSessionCookie } from "../http/session.ts";
@@ -12,11 +13,13 @@ export const authRoutes = Router();
 const connectionOf = (req: Request) => ({ ip: clientIp(req), userAgent: req.get("user-agent") ?? null });
 
 const loginLimit = limitRequests({
+  name: "login",
   windowMinutes: 15,
   max: 30,
   message: "Demasiados intentos de inicio de sesión. Espera unos minutos e inténtalo de nuevo.",
 });
 const signupLimit = limitRequests({
+  name: "registro",
   windowMinutes: 60,
   max: 20,
   message: "Demasiados registros desde esta conexión. Inténtalo más tarde.",
@@ -44,7 +47,8 @@ authRoutes.post("/login/two-factor", loginLimit, async (req, res) => {
   res.json(session);
 });
 
-authRoutes.post("/register", signupLimit, async (req, res) => {
+// Con CAPTCHA: el registro envía un email de bienvenida a la dirección que se escriba.
+authRoutes.post("/register", signupLimit, requireCaptcha, async (req, res) => {
   const { session, issued } = await authService.signUp(req.body);
   setSessionCookie(res, issued);
   res.status(201).json(session);
@@ -59,7 +63,28 @@ authRoutes.post("/logout", async (req, res) => {
 authRoutes.post(
   "/change-password",
   loginLimit,
-  handle((req) => authService.changePassword(req.ctx, req.body)),
+  handle((req) => authService.changePassword(req.ctx, req.body, connectionOf(req))),
+);
+
+/*
+ * Enlace de un solo uso para definir la contraseña (/definir-contrasena?token=…), sin sesión. El token
+ * va en el cuerpo (no en la URL de la API) para que no quede en los registros del servidor.
+ */
+const passwordLinkLimit = limitRequests({
+  name: "definir-contrasena",
+  windowMinutes: 15,
+  max: 30,
+  message: "Demasiados intentos con enlaces de contraseña. Espera unos minutos e inténtalo de nuevo.",
+});
+authRoutes.post(
+  "/password-link/check",
+  passwordLinkLimit,
+  handle((req) => authService.checkPasswordLink(req.body)),
+);
+authRoutes.post(
+  "/password-link",
+  passwordLinkLimit,
+  handle((req) => authService.setPasswordWithLink(req.body, connectionOf(req))),
 );
 
 /* Verificación en dos pasos de la propia cuenta (hoy, sólo el super admin). */

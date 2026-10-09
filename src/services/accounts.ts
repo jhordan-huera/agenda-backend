@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { userColumns } from "../db/columns.ts";
 import { one, type Db } from "../db/pool.ts";
@@ -21,16 +22,21 @@ export async function findUserById(db: Db, userId: string): Promise<User | null>
   return one<User>(db, `select ${userColumns()} from users where id = $1`, [userId]);
 }
 
-/** Crea el usuario con la contraseña que eligió el super admin (se le envía por email). */
-export async function createUserAccount(
-  db: Db,
-  person: { firstName: string; lastName: string; email: string; password: string },
-): Promise<User> {
+/**
+ * Contraseña que nadie conoce (aleatoria): la cuenta no puede entrar hasta que su dueño defina la
+ * suya con el enlace de un solo uso (ver password-links.ts).
+ */
+export function unusablePasswordHash(): Promise<string> {
+  return hashPassword(randomBytes(32).toString("base64url"));
+}
+
+/** Crea el usuario sin contraseña conocida: se le envía un enlace para que la defina él. */
+export async function createUserAccount(db: Db, person: { firstName: string; lastName: string; email: string }): Promise<User> {
   return (await one<User>(
     db,
     `insert into users (first_name, last_name, email, password_hash)
      values ($1, $2, $3, $4)
      returning ${userColumns()}`,
-    [person.firstName, person.lastName, person.email, await hashPassword(person.password)],
+    [person.firstName, person.lastName, person.email, await unusablePasswordHash()],
   ))!;
 }

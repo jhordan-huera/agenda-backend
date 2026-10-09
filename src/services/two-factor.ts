@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { config } from "../config.ts";
 import { one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { twoFactorConfirmSchema, twoFactorDisableSchema, twoFactorEnableSchema } from "../shared/lib/validations/auth.ts";
@@ -9,9 +10,10 @@ import { logSessionEvent, type ClientConnection } from "./session-security.ts";
 import { findTotpStep, generateRecoveryCodes, generateSecret, hashRecoveryCode, normalizeTotpCode, otpauthUrl } from "./totp.ts";
 
 /**
- * Verificación en dos pasos (por ahora, sólo el super admin la activa). Con ella, después de la
- * contraseña se pide el código de 6 dígitos de la app de autenticación o un código de
- * recuperación. Si se pierde todo: `npm run db:reset-2fa -- <email>` (src/db/reset-two-factor.ts).
+ * Verificación en dos pasos (por ahora, sólo el super admin la activa; con datos reales es
+ * obligatoria: ver superAdminNeedsTwoFactor en context.ts). Con ella, después de la contraseña se
+ * pide el código de 6 dígitos de la app de autenticación o un código de recuperación. Si se pierde
+ * todo: `npm run db:reset-2fa -- <email>` (src/db/reset-two-factor.ts).
  */
 
 /** Minutos para escribir el código tras la contraseña. */
@@ -95,14 +97,14 @@ const WRONG_CODE = "El código no es correcto. Revisa que la hora del celular es
 export const twoFactorService = {
   async status(ctx: RequestContext): Promise<TwoFactorStatus> {
     const user = requireSuperAdminUser(ctx);
-    const row = await one<TwoFactorStatus>(
+    const row = await one<Omit<TwoFactorStatus, "required">>(
       pool,
       `select two_factor_secret is not null as enabled, two_factor_enabled_at as "enabledAt",
               cardinality(two_factor_recovery_codes) as "recoveryCodesLeft"
          from users where id = $1`,
       [user.id],
     );
-    return row!;
+    return { ...row!, required: config.superAdminTwoFactorRequired };
   },
 
   /** Genera la clave que se escanea con la app. No se activa hasta confirmar un código (enable). */

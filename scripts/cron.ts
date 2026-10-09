@@ -4,6 +4,7 @@
  * recordatorios de citas, reintenta los correos que la API no pudo enviar al momento y limpia lo
  * caducado. Avisa por ntfy de los correos enviados o de cualquier fallo; si no hubo correos ni
  * errores, no avisa. Los registros de Actions son públicos: sólo cifras, nunca datos de clientes.
+ * Los avisos de ntfy tampoco llevan pacientes (ni nombre ni email): cifras, negocio y hora.
  *
  * Variables: DATABASE_URL, DATABASE_SSL, GMAIL_USER, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET,
  * GMAIL_REFRESH_TOKEN, GMAIL_FROM_NAME, FRONTEND_URL (enlaces de los emails), NODE_ENV=production
@@ -51,15 +52,16 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
 /** "mar 7 oct 10:00" */
 const when = (email: SentEmail) => (email.date ? `${formatShortDate(email.date)}${email.startTime ? ` ${email.startTime}` : ""}` : null);
 
-/** Una línea por email: a quién (nombre abreviado y email enmascarado), de qué negocio y la cita. */
-function describeEmail(email: SentEmail): string {
+/**
+ * Una línea por email: de qué negocio y, si es de una cita, cuándo. Sin el paciente (ni nombre ni
+ * email): un tema de ntfy lo lee cualquiera que conozca su nombre. null: no hay nada que decir
+ * aparte del total del grupo (p. ej. los emails de la plataforma).
+ */
+function describeEmail(email: SentEmail): string | null {
   const appointment = when(email);
-  if (email.type === "booking_received") {
-    const booking = email.clientName ? `reserva de ${email.clientName}${appointment ? ` para el ${appointment}` : ""}` : null;
-    return `• ${[email.businessName ?? email.to, booking].filter(Boolean).join(" · ")} (${email.to})`;
-  }
-  const recipient = email.clientName ? `${email.clientName} (${email.to})` : email.to;
-  return `• ${[recipient, appointment, email.businessName].filter(Boolean).join(" · ")}`;
+  const detail = email.type === "booking_received" && appointment ? `reserva para el ${appointment}` : appointment;
+  const parts = [email.businessName, detail].filter(Boolean);
+  return parts.length > 0 ? `• ${parts.join(" · ")}` : null;
 }
 
 /**
@@ -76,7 +78,7 @@ export function describeSentEmails(sent: SentEmail[], total: number): string[] {
   for (const [type, ofType] of groups) {
     const [one, many] = EMAIL_GROUPS[type];
     if (lines.length > 0) lines.push("");
-    lines.push(`${ofType.length === 1 ? one : many} · ${ofType.length}`, ...ofType.map(describeEmail));
+    lines.push(`${ofType.length === 1 ? one : many} · ${ofType.length}`, ...ofType.map(describeEmail).filter((line) => line !== null));
   }
   if (total > sent.length) lines.push("", `…y ${total - sent.length} más (detalle en el panel: Actividad → Emails).`);
   return lines;
@@ -171,7 +173,7 @@ async function main(): Promise<void> {
   // Se cargan aquí y no arriba: validan la configuración al importarse (las pruebas sólo usan buildNotice).
   const { config } = await import("../src/config.ts");
   const { pool } = await import("../src/db/pool.ts");
-  const { disableImmediateDelivery } = await import("../src/services/mailer.ts");
+  const { disableImmediateDelivery, scrubEmails } = await import("../src/services/mailer.ts");
   const { runScheduledTasks } = await import("../src/jobs/scheduled-tasks.ts");
   // Este proceso envía él mismo, al final, lo que pone en cola.
   disableImmediateDelivery();
@@ -184,7 +186,8 @@ async function main(): Promise<void> {
         report = await runScheduledTasks();
         break;
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
+        // Sin direcciones de email: el registro de Actions es público y el aviso va a ntfy.
+        const reason = scrubEmails(error instanceof Error ? error.message : String(error));
         const delay = RETRY_DELAYS_MS[attempt];
         if (delay === undefined) return await fail(`No se pudo completar: ${reason}`);
         console.warn(`Fallo: ${reason}. Reintento en ${delay / 1000} s…`);
