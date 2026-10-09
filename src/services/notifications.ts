@@ -2,9 +2,10 @@ import { config } from "../config.ts";
 import { appointmentColumns, businessColumns } from "../db/columns.ts";
 import { many, one, type Db } from "../db/pool.ts";
 import { emailTemplates, type AppointmentEmailData, type EmailContent } from "../shared/lib/email/templates.ts";
-import { addDaysISO, daysBetween, getZonedNow, timeToMinutes, type ZonedNow } from "../shared/lib/time.ts";
+import { addDaysISO, getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
 import type { Appointment, BankAccount, Business, EmailType } from "../shared/types/index.ts";
 import { PASSWORD_MASK, scheduleEmailDelivery } from "./mailer.ts";
+import { isQuietTime, minutesUntilStart, reminderKeySql } from "./reminder-rules.ts";
 
 export { PASSWORD_MASK };
 
@@ -34,7 +35,7 @@ export async function queueEmail(
     to: string;
     appointmentId?: string | null;
     secret?: string;
-    /** Emails que se envían una sola vez (p. ej. la agenda del día de un profesional). */
+    /** Emails que se envían una sola vez (la agenda del día de un profesional, cada recordatorio). */
     dedupeKey?: string;
   } & EmailContent,
 ): Promise<boolean> {
@@ -125,7 +126,27 @@ function buildEmailData(context: AppointmentContext, appointment: Appointment): 
       context.bankAccount && appointment.price > 0 && !appointment.paidAt
         ? { bankAccount: context.bankAccount, url: paymentUrl(appointment.paymentToken) }
         : null,
+    // En las citas virtuales la hora va con la zona del negocio: el paciente puede estar en otro país.
+    timezone: business.timezone,
   };
+}
+
+/** Dónde es la cita: en el local, virtual o a domicilio (con la dirección). */
+const placeOf = (appointment: Appointment) =>
+  appointment.isVirtual ? "virtual" : appointment.homeVisit ? `home:${appointment.homeVisit.address}` : "business";
+
+/**
+ * Cambios que el paciente tiene que saber: fecha, hora, servicio, profesional o modalidad (en el
+ * local, virtual o a domicilio, y la dirección de la visita).
+ */
+export function isRescheduled(before: Appointment, after: Appointment): boolean {
+  return (
+    before.date !== after.date ||
+    before.startTime !== after.startTime ||
+    before.serviceId !== after.serviceId ||
+    before.professionalId !== after.professionalId ||
+    placeOf(before) !== placeOf(after)
+  );
 }
 
 /**
@@ -221,9 +242,11 @@ export async function notifyAppointmentChange(
   }
   if (after.status === "cancelled" || after.status === "completed" || after.status === "no_show") return false;
 
-  const rescheduled =
-    before.date !== after.date || before.startTime !== after.startTime || before.serviceId !== after.serviceId;
-  if (rescheduled) {
+  // Estaba cancelada y vuelve a estar activa: el paciente la daba por perdida.
+  if (before.status === "cancelled") {
+    return settings.confirmations && toClient("appointment_updated", emailTemplates.appointmentRestored(data));
+  }
+  if (isRescheduled(before, after)) {
     return settings.confirmations && toClient("appointment_updated", emailTemplates.appointmentUpdated(data));
   }
   if (after.status === "confirmed" && before.status !== "confirmed") {
@@ -233,35 +256,42 @@ export async function notifyAppointmentChange(
 }
 
 /**
- * Recordatorios pendientes de un negocio: citas activas que empiezan dentro de las
- * próximas `reminderHoursBefore` horas y aún no tienen recordatorio. Lo ejecuta el
- * trabajo programado del servidor (src/jobs/reminders.ts) y, al abrir el panel, el frontend.
+ * Recordatorios pendientes de un negocio: citas activas que empiezan dentro de las próximas
+ * `reminderHoursBefore` horas y aún no tienen recordatorio para su fecha y hora actuales (al
+ * reprogramar o reactivar una cita puede salir otro). No salen:
+ * - en las horas de silencio del negocio (21:00 a 7:00): a las 7:00 salen los de las citas que aún
+ *   no empezaron;
+ * - si la cita se agendó, se movió o se reactivó ya dentro de esas horas y el negocio envía
+ *   confirmaciones: el paciente acaba de recibir la confirmación o el aviso del cambio.
+ * Lo ejecutan el cron (scripts/cron.ts) y, en local, src/jobs/reminders.ts. `at`: el momento (pruebas).
  */
-export async function runReminderJob(db: Db, businessId: string): Promise<number> {
+export async function runReminderJob(db: Db, businessId: string, at: Date = new Date()): Promise<number> {
   const business = await one<Business>(db, `select ${businessColumns()} from businesses where id = $1`, [businessId]);
   if (!business || business.status !== "active" || !business.notificationSettings.reminders) return 0;
 
-  const now = getZonedNow(business.timezone);
-  const windowMinutes = business.notificationSettings.reminderHoursBefore * 60;
+  const now = getZonedNow(business.timezone, at);
+  if (isQuietTime(now)) return 0;
+  const settings = business.notificationSettings;
+  const windowMinutes = settings.reminderHoursBefore * 60;
   const lastDate = addDaysISO(now.date, Math.ceil(windowMinutes / 1440) + 1);
-  const candidates = await many<Appointment>(
+  const candidates = await many<Appointment & { reminderKey: string; scheduledAt: string }>(
     db,
-    `select ${appointmentColumns("a")}
+    `select ${appointmentColumns("a")}, ${reminderKeySql("a")} as "reminderKey", a.scheduled_at as "scheduledAt"
        from appointments a
       where a.business_id = $1
         and a.status in ('pending', 'confirmed')
         and a.date between $2 and $3
-        and not exists (
-          select 1 from notifications n where n.appointment_id = a.id and n.type = 'appointment_reminder'
-        )`,
+        and not exists (select 1 from notifications n where n.dedupe_key = ${reminderKeySql("a")})`,
     [businessId, now.date, lastDate],
   );
 
   let sent = 0;
-  for (const appointment of candidates) {
-    const minutesUntil =
-      daysBetween(now.date, appointment.date) * 1440 + timeToMinutes(appointment.startTime) - now.minutes;
+  for (const { reminderKey, scheduledAt, ...appointment } of candidates) {
+    const minutesUntil = minutesUntilStart(appointment.date, appointment.startTime, now);
     if (minutesUntil <= 0 || minutesUntil > windowMinutes) continue;
+    // Faltaban menos de `reminderHoursBefore` horas cuando se fijó la fecha y hora.
+    const minutesSinceScheduled = (at.getTime() - Date.parse(scheduledAt)) / 60_000;
+    if (settings.confirmations && minutesUntil + minutesSinceScheduled <= windowMinutes) continue;
 
     const context = await loadAppointmentContext(db, appointment);
     if (!context?.clientEmail) continue;
@@ -271,6 +301,7 @@ export async function runReminderJob(db: Db, businessId: string): Promise<number
       type: "appointment_reminder",
       to: context.clientEmail,
       appointmentId: appointment.id,
+      dedupeKey: reminderKey,
       ...emailTemplates.appointmentReminder(buildEmailData(context, appointment), when),
     });
     if (inserted) sent++;

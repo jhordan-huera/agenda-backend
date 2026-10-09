@@ -1,37 +1,72 @@
-import { many, one, pool, transaction } from "../db/pool.ts";
+import { many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
 import { deleteStalePendingAttachments } from "../services/clinical-attachment-service.ts";
 import { deleteStalePendingReceipts, purgeOldReceipts } from "../services/payment-service.ts";
-import { processEmailQueue, type EmailQueueReport } from "../services/mailer.ts";
+import { processEmailQueue, scrubEmails, type EmailQueueReport } from "../services/mailer.ts";
 import { runDailyAgendaJob, runReminderJob } from "../services/notifications.ts";
 import type { EmailType } from "../shared/types/index.ts";
 
+/** Emails puestos en cola y negocios en los que falló el trabajo (se siguió con los demás). */
+export interface QueuedReminders {
+  queued: number;
+  failures: number;
+}
+
+/**
+ * Ejecuta `work` para cada negocio, cada uno en su propia transacción. Si falla uno (p. ej. por
+ * datos rotos), se registra y se sigue con los demás: un negocio no frena el cron de todos ni el
+ * envío de la cola de emails.
+ */
+async function forEachBusiness(ids: string[], job: string, work: (db: Db, id: string) => Promise<number>): Promise<QueuedReminders> {
+  const result: QueuedReminders = { queued: 0, failures: 0 };
+  for (const id of ids) {
+    try {
+      result.queued += await transaction((db) => work(db, id));
+    } catch (error) {
+      result.failures++;
+      // Sólo el id del negocio y el motivo: los registros de GitHub Actions son públicos.
+      const message = scrubEmails(error instanceof Error ? error.message : String(error)).slice(0, 300);
+      console.error(`[${job}] Falló el negocio ${id}: ${message}`);
+    }
+  }
+  return result;
+}
+
 /**
  * Pone en cola los recordatorios de citas de todos los negocios activos y, por la mañana, la agenda
- * del día de los profesionales que la piden. Devuelve cuántos emails.
+ * del día de los profesionales que la piden. Devuelve cuántos emails y en cuántos negocios falló.
  */
-export async function queueAllReminders(): Promise<number> {
+export async function queueAllReminders(): Promise<QueuedReminders> {
   const businesses = await many<{ id: string }>(
     pool,
     `select id from businesses
       where status = 'active' and (notification_settings ->> 'reminders')::boolean`,
   );
-  let queued = 0;
-  for (const { id } of businesses) queued += await transaction((db) => runReminderJob(db, id));
+  const reminders = await forEachBusiness(
+    businesses.map(({ id }) => id),
+    "recordatorios",
+    (db, id) => runReminderJob(db, id),
+  );
   const withDailyAgenda = await many<{ id: string }>(
     pool,
     `select distinct p.business_id as id
        from professionals p join businesses b on b.id = p.business_id
       where b.status = 'active' and p.is_active and p.daily_agenda and p.email <> ''`,
   );
-  for (const { id } of withDailyAgenda) queued += await transaction((db) => runDailyAgendaJob(db, id));
-  return queued;
+  const agendas = await forEachBusiness(
+    withDailyAgenda.map(({ id }) => id),
+    "agenda del día",
+    (db, id) => runDailyAgendaJob(db, id),
+  );
+  return { queued: reminders.queued + agendas.queued, failures: reminders.failures + agendas.failures };
 }
 
 /** Resumen de una ejecución del cron (scripts/cron.ts). */
 export interface ScheduledTasksReport {
   /** Recordatorios puestos en cola en esta ejecución. */
   reminders: number;
+  /** Negocios en los que falló preparar los recordatorios o la agenda del día (detalle en el registro). */
+  reminderFailures: number;
   /** Lo que hizo esta ejecución con la cola de emails. */
   emails: EmailQueueReport;
   /** Emails enviados desde la ejecución anterior: también los que salieron al momento (reservas, avisos). */
@@ -112,6 +147,11 @@ async function findLoginAttacks(since: string | null): Promise<LoginAlert[]> {
 
 /** Hasta 30 lotes de 10 emails por ejecución; lo que quede sale en la siguiente. */
 const MAX_EMAIL_BATCHES = 30;
+/**
+ * Tiempo para empezar envíos en cada ejecución: el job de GitHub tiene 10 minutos y aún debe
+ * limpiar y avisar. Lo que quede sale en la siguiente.
+ */
+const EMAIL_BUDGET_MS = 6 * 60_000;
 
 /** Días que se guarda el contenido de cada email (para revisarlo en Actividad → Emails). */
 export const EMAIL_CONTENT_DAYS = 90;
@@ -140,7 +180,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const started = Date.now();
   const previous = await one<{ ranAt: string }>(pool, 'select ran_at as "ranAt" from cron_runs order by ran_at desc limit 1');
   const reminders = await queueAllReminders();
-  const emails = await processEmailQueue({ maxBatches: MAX_EMAIL_BATCHES });
+  const emails = await processEmailQueue({ maxBatches: MAX_EMAIL_BATCHES, deadline: started + EMAIL_BUDGET_MS });
   await deleteExpiredSessions();
   await deleteStalePendingAttachments();
   await deleteStalePendingReceipts();
@@ -172,7 +212,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     [previous?.ranAt ?? null, totals?.at ?? new Date().toISOString(), MAX_SENT_DETAILS],
   );
   const report: ScheduledTasksReport = {
-    reminders,
+    reminders: reminders.queued,
+    reminderFailures: reminders.failures,
     emails,
     sentSinceLastRun: totals?.sent ?? 0,
     sentEmails: sent.map((email) => ({

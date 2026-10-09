@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { clinicalAttachmentColumns } from "../db/columns.ts";
-import { isUuid, one, pool, transaction, type Db } from "../db/pool.ts";
+import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { CLINICAL_ATTACHMENT_MAX_BYTES, clinicalAttachmentInputSchema } from "../shared/lib/validations/clinical.ts";
 import type { ClinicalAttachment, ClinicalAttachmentUpload } from "../shared/types/index.ts";
@@ -127,7 +127,30 @@ export const clinicalAttachmentService = {
   },
 };
 
-/** Subidas que nunca se completaron (más de un día): se olvidan. Lo llama el cron. */
+/** Archivos sin terminar de subir que se borran en cada ejecución del cron, como máximo. */
+const STALE_BATCH = 500;
+
+/**
+ * Subidas que nunca se completaron (más de un día): primero su archivo (el navegador pudo llegar a
+ * subirlo) y después su registro. Si el almacenamiento falla, el registro queda y se reintenta en
+ * la próxima ejecución. Lo llama el cron.
+ */
 export async function deleteStalePendingAttachments(): Promise<void> {
-  await pool.query("delete from clinical_attachments where status = 'pending' and created_at < now() - interval '1 day'");
+  const stale = await many<{ id: string; storagePath: string }>(
+    pool,
+    `select id, storage_path as "storagePath" from clinical_attachments
+      where status = 'pending' and created_at < now() - interval '1 day'
+      order by created_at limit $1`,
+    [STALE_BATCH],
+  );
+  if (stale.length === 0) return;
+  try {
+    await fileStorage?.remove(stale.map((attachment) => attachment.storagePath));
+  } catch (error) {
+    console.error("No se pudieron borrar los archivos sin terminar de subir:", error instanceof Error ? error.message : error);
+    return;
+  }
+  await pool.query("delete from clinical_attachments where id = any($1::uuid[]) and status = 'pending'", [
+    stale.map((attachment) => attachment.id),
+  ]);
 }

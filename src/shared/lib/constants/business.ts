@@ -39,6 +39,44 @@ export function getTimezoneInfo(timezone: string) {
   return TIMEZONES.find((zone) => zone.value === timezone) ?? TIMEZONES[0];
 }
 
+/** Nombre IANA ("America/Guayaquil", "UTC"); no se aceptan desfases sueltos como "+05:00". */
+const TIMEZONE_NAME = /^[A-Za-z][A-Za-z_]*(?:\/[A-Za-z0-9_+-]+)*$/;
+
+/**
+ * ¿Existe la zona horaria? Una inválida rompe los recordatorios, la agenda y los reportes del
+ * negocio: tanto Intl como PostgreSQL fallan con ella.
+ */
+export function isValidTimezone(timezone: string): boolean {
+  if (TIMEZONES.some((zone) => zone.value === timezone)) return true;
+  if (!TIMEZONE_NAME.test(timezone)) return false;
+  try {
+    return Boolean(Intl.DateTimeFormat("en-US", { timeZone: timezone }).resolvedOptions().timeZone);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * "hora de Ecuador, GMT-5": la zona del negocio junto a la hora de una cita (emails de las citas
+ * virtuales: el paciente puede estar en otro país). Con la etiqueta de TIMEZONES si la zona está en
+ * la lista; si no, su nombre. El desfase es el de ese día (cambia con el horario de verano).
+ */
+export function describeTimezone(timezone: string, at: Date = new Date()): string {
+  const known = TIMEZONES.find((zone) => zone.value === timezone);
+  // "Ecuador (GMT-5)" → "Ecuador": el desfase se calcula aparte.
+  const name = known ? known.label.replace(/\s*\(GMT[^)]*\)$/, "") : timezone;
+  let offset = "";
+  try {
+    offset =
+      new Intl.DateTimeFormat("en-US", { timeZone: timezone, timeZoneName: "shortOffset" })
+        .formatToParts(at)
+        .find((part) => part.type === "timeZoneName")?.value ?? "";
+  } catch {
+    // Zona desconocida: sólo el nombre.
+  }
+  return offset ? `hora de ${name}, ${offset}` : `hora de ${name}`;
+}
+
 /** Dónde se presta un servicio (formulario de servicios y página pública). */
 export const SERVICE_MODES: { value: ServiceMode; label: string; description: string }[] = [
   { value: "business", label: "En el local", description: "El cliente viene a tu negocio." },

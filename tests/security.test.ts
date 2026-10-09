@@ -130,26 +130,50 @@ ok((await pedro("GET", "/auth/session")).body === null, "se cierran las sesiones
 
 console.log("Bloqueo por intentos fallidos (compartido entre servidores: se cuenta en la base)");
 const miguel = "miguel@demo.com";
-for (let i = 0; i < 10; i++) await login(agent(), miguel, `mala-${i}`, nextIp());
-r = await login(agent(), miguel, "demo1234", nextIp());
-ok(r.status === 429 && /Demasiados intentos fallidos/.test(r.body.error.message), "10 fallos bloquean la cuenta aunque la contraseña sea correcta", r.body);
+const attacker = nextIp();
+for (let i = 0; i < 10; i++) await login(agent(), miguel, `mala-${i}`, attacker);
+r = await login(agent(), miguel, "demo1234", attacker);
+ok(
+  r.status === 429 && /Demasiados intentos fallidos/.test(r.body.error.message),
+  "10 fallos desde una conexión la bloquean para esa cuenta, aunque la contraseña sea correcta",
+  r.body,
+);
+const lockedMessage = r.body.error?.message;
 const locked = await db.query("select count(*)::int as n from audit_logs where action = 'session.login_locked'");
 ok(locked.rows[0].n >= 1, "el bloqueo queda en la auditoría de seguridad");
+r = await login(agent(), miguel, "demo1234", nextIp());
+ok(r.status === 200, "el dueño sigue entrando desde su conexión: quien conoce su email no lo deja fuera", r.body);
 
 const unknown = "nadie@example.com";
-for (let i = 0; i < 10; i++) await login(agent(), unknown, `mala-${i}`, nextIp());
-const unknownLocked = await login(agent(), unknown, "lo-que-sea", nextIp());
+const unknownIp = nextIp();
+for (let i = 0; i < 10; i++) await login(agent(), unknown, `mala-${i}`, unknownIp);
+const unknownLocked = await login(agent(), unknown, "lo-que-sea", unknownIp);
 ok(
-  unknownLocked.status === 429 && unknownLocked.body.error.message === r.body.error.message,
+  unknownLocked.status === 429 && unknownLocked.body.error.message === lockedMessage,
   "un email no registrado se bloquea igual (no revela qué cuentas existen)",
   unknownLocked.body,
 );
 
 const andrea = "andrea@demo.com";
-for (let i = 0; i < 9; i++) await login(agent(), andrea, `mala-${i}`, nextIp());
-ok((await login(agent(), andrea, "demo1234", nextIp())).status === 200, "con 9 fallos todavía puede entrar");
-for (let i = 0; i < 9; i++) await login(agent(), andrea, `mala-${i}`, nextIp());
-ok((await login(agent(), andrea, "demo1234", nextIp())).status === 200, "entrar bien reinicia la cuenta de fallos");
+const andreaIp = nextIp();
+for (let i = 0; i < 9; i++) await login(agent(), andrea, `mala-${i}`, andreaIp);
+ok((await login(agent(), andrea, "demo1234", andreaIp)).status === 200, "con 9 fallos todavía puede entrar");
+for (let i = 0; i < 9; i++) await login(agent(), andrea, `mala-${i}`, andreaIp);
+ok((await login(agent(), andrea, "demo1234", andreaIp)).status === 200, "entrar bien reinicia la cuenta de fallos");
+
+// Ataque repartido entre muchas conexiones (una o dos contraseñas desde cada una): sigue frenado.
+const tomas = "tomas@demo.com";
+const tomasHome = nextIp();
+ok((await login(agent(), tomas, "demo1234", tomasHome)).status === 200, "Tomás entra desde su conexión de siempre");
+for (let i = 0; i < 15; i++) {
+  const ip = nextIp();
+  await login(agent(), tomas, `mala-${i}-a`, ip);
+  await login(agent(), tomas, `mala-${i}-b`, ip);
+}
+r = await login(agent(), tomas, "demo1234", nextIp());
+ok(r.status === 429, "30 fallos repartidos entre 15 conexiones: desde una conexión nueva ya no se puede probar", r.body);
+r = await login(agent(), tomas, "demo1234", tomasHome);
+ok(r.status === 200, "pero el dueño entra desde una conexión en la que ya había iniciado sesión", r.body);
 
 // 50 fallos desde una misma conexión (contra cuentas distintas) la bloquean.
 await db.query(

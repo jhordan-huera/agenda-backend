@@ -31,7 +31,7 @@ import { listSchedules } from "./business-data-service.ts";
 import { receiptStorage } from "./file-storage.ts";
 import { notifyAppointmentChange } from "./notifications.ts";
 import { assertAppointmentLimit, assertClientLimit } from "./plan-limits.ts";
-import { listProfessionals } from "./professional-service.ts";
+import { findProfessional, listProfessionals } from "./professional-service.ts";
 
 /**
  * Página pública de reservas (/book/:slug), sin sesión. Sólo expone lo necesario:
@@ -122,6 +122,74 @@ async function assertClientDailyLimit(db: Db, business: Business, clientId: stri
     "daily_limit",
     `${already} ese día con ${business.name}. Si necesitas otra, escríbele al negocio o elige otro día.`,
   );
+}
+
+/** "María  López" y "maria lopez" son el mismo nombre: sin tildes, mayúsculas ni espacios de más. */
+export function normalizePersonName(name: string): string {
+  return name.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/** Cuánto después de una reserva se reconoce su reintento (ver findRepeatedBooking). */
+const REPEATED_BOOKING_MINUTES = 30;
+
+/**
+ * La misma reserva otra vez: se perdió la respuesta (mala conexión) y el paciente volvió a
+ * confirmar. Su propia cita ocupa esa hora, así que se busca una cita activa reservada online hace
+ * poco con su cédula y el mismo servicio, fecha, hora y modalidad (y el mismo profesional, si lo
+ * eligió). Sólo las recientes: la confirmación trae el enlace de pago y el de la videollamada.
+ */
+async function findRepeatedBooking(
+  db: Db,
+  business: Business,
+  serviceId: string,
+  data: { documentId: string; date: string; startTime: string; isVirtual: boolean; homeVisit: unknown; professionalId: string | null },
+): Promise<(Appointment & { clientEmail: string }) | null> {
+  const chosen = business.bookingSettings.chooseProfessional !== false ? data.professionalId : null;
+  return one<Appointment & { clientEmail: string }>(
+    db,
+    `select ${appointmentColumns("a")}, c.email as "clientEmail"
+       from appointments a join clients c on c.id = a.client_id
+      where a.business_id = $1 and c.document_id = $2 and c.document_id <> ''
+        and a.service_id = $3 and a.date = $4 and a.start_time = $5
+        and a.status in ('pending', 'confirmed') and a.source = 'booking_page'
+        and a.is_virtual = $6 and (a.home_visit is not null) = $7
+        and ($8::text is null or a.professional_id::text = $8)
+        and a.created_at > now() - make_interval(mins => $9)
+      order by a.created_at desc
+      limit 1`,
+    [business.id, data.documentId, serviceId, data.date, data.startTime, data.isVirtual, Boolean(data.homeVisit), chosen, REPEATED_BOOKING_MINUTES],
+  );
+}
+
+/** Lo que ve el paciente al reservar (y otra vez si repite la misma reserva). */
+function toConfirmation(
+  appointment: Appointment,
+  context: { business: Business; service: Service; professional: Professional; clientEmail: string; emailSent: boolean },
+): BookingConfirmation {
+  const { business, service, professional } = context;
+  return {
+    appointmentId: appointment.id,
+    serviceName: service.name,
+    professionalId: professional.id,
+    professionalName: professional.displayName,
+    businessName: business.name,
+    date: appointment.date,
+    startTime: appointment.startTime,
+    endTime: appointment.endTime,
+    price: appointment.price,
+    showPrice: isPriceVisible(service),
+    homeVisit: appointment.homeVisit,
+    isVirtual: appointment.isVirtual,
+    // La sala del profesional: el paciente la recibe al reservar (no sale en la página pública).
+    meetingUrl: appointment.isVirtual ? professional.meetingUrl || null : null,
+    clientEmail: context.clientEmail,
+    emailSent: context.emailSent,
+    // Pago por transferencia: los datos de la agenda y el enlace para subir el comprobante.
+    payment:
+      professional.bankAccount && appointment.price > 0
+        ? { bankAccount: professional.bankAccount, token: appointment.paymentToken, receiptsEnabled: Boolean(receiptStorage) }
+        : null,
+  };
 }
 
 /* Lo que ve la página pública: nada de datos internos (propietario, avisos, plantillas clínicas…). */
@@ -255,6 +323,27 @@ export const publicBookingService = {
         );
       }
 
+      // Reintento de una reserva que ya se hizo: la misma confirmación, sin otra cita ni más emails.
+      const repeated = await findRepeatedBooking(db, business, service.id, data);
+      if (repeated) {
+        const { clientEmail, ...appointment } = repeated;
+        const emailSent = await one(
+          db,
+          "select 1 from notifications where appointment_id = $1 and type in ('booking_created', 'appointment_confirmed')",
+          [appointment.id],
+        );
+        return toConfirmation(appointment, {
+          business,
+          service,
+          professional:
+            professionals.find((option) => option.id === appointment.professionalId) ??
+            (await findProfessional(db, business.id, appointment.professionalId)),
+          // Su email completo sólo si lo acaba de escribir él mismo.
+          clientEmail: data.email && data.email === clientEmail ? clientEmail : maskEmail(clientEmail),
+          emailSent: Boolean(emailSent),
+        });
+      }
+
       // Con quién: el que eligió el paciente (si el negocio lo permite) o el primero libre a esa hora.
       const candidates = professionals.filter((professional) => offersService(professional, service.id));
       if (candidates.length === 0) throw new AppError("not_found", "El servicio ya no está disponible.");
@@ -287,12 +376,16 @@ export const publicBookingService = {
       const knownClient = Boolean(client);
       if (!client) {
         const contact = parseInput(newClientContactSchema, data);
-        // Cliente antiguo sin cédula con el mismo email: se le añade la cédula en lugar de duplicarlo.
-        const legacy = await many<Client>(
-          db,
-          `select ${clientColumns()} from clients where business_id = $1 and email = $2 and document_id = ''`,
-          [business.id, contact.email],
-        );
+        // Cliente antiguo sin cédula con el mismo email y el mismo nombre: se le añade la cédula en lugar
+        // de duplicarlo. Con otro nombre es otra persona (una madre y su hijo con un solo email): se crea
+        // aparte, para no mezclar sus citas ni sus historias clínicas.
+        const legacy = (
+          await many<Client>(
+            db,
+            `select ${clientColumns()} from clients where business_id = $1 and email = $2 and document_id = ''`,
+            [business.id, contact.email],
+          )
+        ).filter((candidate) => normalizePersonName(candidate.name) === normalizePersonName(contact.name));
         if (legacy.length === 1) {
           client = (await one<Client>(
             db,
@@ -348,30 +441,14 @@ export const publicBookingService = {
         summary: `Nueva reserva online de ${await describeAppointment(db, appointment)}`,
       });
 
-      return {
-        appointmentId: appointment.id,
-        serviceName: service.name,
-        professionalId: professional.id,
-        professionalName: professional.displayName,
-        businessName: business.name,
-        date: appointment.date,
-        startTime: appointment.startTime,
-        endTime: appointment.endTime,
-        price: appointment.price,
-        showPrice: isPriceVisible(service),
-        homeVisit: appointment.homeVisit,
-        isVirtual: appointment.isVirtual,
-        // La sala del profesional: el paciente la recibe al reservar (no sale en la página pública).
-        meetingUrl: appointment.isVirtual ? professional.meetingUrl || null : null,
+      return toConfirmation(appointment, {
+        business,
+        service,
+        professional,
         // A quien reservó con la cédula de un cliente existente no se le muestra su email completo.
         clientEmail: knownClient ? maskEmail(client.email) : client.email,
         emailSent,
-        // Pago por transferencia: los datos de la agenda y el enlace para subir el comprobante.
-        payment:
-          professional.bankAccount && appointment.price > 0
-            ? { bankAccount: professional.bankAccount, token: appointment.paymentToken, receiptsEnabled: Boolean(receiptStorage) }
-            : null,
-      };
+      });
     });
   },
 };

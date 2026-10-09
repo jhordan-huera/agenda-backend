@@ -208,11 +208,13 @@ async function seed() {
       [
         "id", "business_id", "client_id", "service_id", "professional_id", "date", "start_time", "end_time",
         "status", "notes", "price", "home_visit", "is_virtual", "source", "payment_token", "created_at", "updated_at",
+        "scheduled_at",
       ],
+      // La fecha y hora de las citas demo se fijaron al crearlas (días antes): sí llevan recordatorio.
       data.appointments.map((a) => [
         a.id, a.businessId, a.clientId, a.serviceId, a.professionalId, a.date, a.startTime, a.endTime,
         a.status, a.notes, a.price, a.homeVisit ? JSON.stringify(a.homeVisit) : null, a.isVirtual, a.source, a.paymentToken,
-        a.createdAt, a.updatedAt,
+        a.createdAt, a.updatedAt, a.createdAt,
       ]),
     );
     await insertRows(

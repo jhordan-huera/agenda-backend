@@ -85,11 +85,14 @@ export function describeSentEmails(sent: SentEmail[], total: number): string[] {
 /** Qué avisar según el resumen (null: nada que contar). */
 export function buildNotice(report: ScheduledTasksReport, options: { gmailConfigured?: boolean } = {}): Notice | null {
   const { emails } = report;
+  const businessFailures = report.reminderFailures ?? 0;
   const sentDetail = describeSentEmails(report.sentEmails ?? [], report.sentSinceLastRun);
   const lines = [
-    emails.retrying > 0 && `Se reintentarán en la próxima revisión: ${emails.retrying}`,
-    emails.failed > 0 && `No se enviarán (5 intentos fallidos): ${emails.failed}`,
+    emails.retrying > 0 && `Se reintentarán más tarde (la espera crece con cada fallo): ${emails.retrying}`,
+    emails.failed > 0 && `No se enviarán (agotaron los reintentos): ${emails.failed}`,
     report.pending > 0 && `Siguen en cola: ${report.pending}`,
+    businessFailures > 0 &&
+      `${plural(businessFailures, "negocio", "negocios")} con error al preparar los recordatorios (detalle en el registro de Actions); los demás siguieron`,
   ].filter(Boolean) as string[];
 
   if (options.gmailConfigured === false && report.pending > 0) {
@@ -104,22 +107,22 @@ export function buildNotice(report: ScheduledTasksReport, options: { gmailConfig
       tags: ["warning"],
     };
   }
-  if (emails.retrying > 0 || emails.failed > 0 || emails.errors.length > 0) {
+  if (emails.retrying > 0 || emails.failed > 0 || emails.errors.length > 0 || businessFailures > 0) {
     const problems = emails.failed + emails.retrying;
     return {
       title:
         problems > 0
           ? `Agenda360: ${plural(problems, "correo no se pudo enviar", "correos no se pudieron enviar")}`
-          : "Agenda360: error al procesar los correos",
+          : emails.errors.length > 0
+            ? "Agenda360: error al procesar los correos"
+            : "Agenda360: error al preparar los recordatorios",
       message: [
         ...lines,
-        "",
-        "Errores:",
-        ...emails.errors.map((error) => `• ${error}`),
+        ...(emails.errors.length > 0 ? ["", "Errores:", ...emails.errors.map((error) => `• ${error}`)] : []),
         ...(sentDetail.length > 0 ? ["", `Sí se enviaron (${report.sentSinceLastRun}):`, "", ...sentDetail] : []),
       ].join("\n"),
-      // Fallo definitivo: alta. Sólo reintentos (p. ej. Gmail caído un momento): normal.
-      priority: emails.failed > 0 ? 4 : 3,
+      // Fallo definitivo o un negocio sin recordatorios: alta. Sólo reintentos (p. ej. Gmail caído un momento): normal.
+      priority: emails.failed > 0 || businessFailures > 0 ? 4 : 3,
       tags: ["warning"],
       click: "/admin/activity",
     };
@@ -191,6 +194,7 @@ async function main(): Promise<void> {
 
     console.info(
       `Recordatorios: ${report.reminders} · enviados desde la anterior: ${report.sentSinceLastRun} · ` +
+        `negocios con error: ${report.reminderFailures} · ` +
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +
         `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ` +
         `emails sin contenido (más de 90 días): ${report.emailContentPurged} · ` +

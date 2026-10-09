@@ -12,13 +12,24 @@ import type { AuditActor } from "./context.ts";
 
 /**
  * Bloqueo ante intentos de adivinar contraseñas. Los fallos se cuentan en la auditoría (no en la
- * memoria de cada servidor), así que valen para todas las instancias de Vercel a la vez.
+ * memoria de cada servidor), así que valen para todas las instancias a la vez. Se frena a la
+ * conexión que falla, no a la cuenta: el email del dueño es público y cualquiera podría dejarlo
+ * fuera a propósito.
  */
 export const LOCKOUT_MINUTES = 15;
-/** Fallos en LOCKOUT_MINUTES que bloquean una cuenta (exista o no: no revela qué emails existen). */
-const MAX_FAILURES_PER_ACCOUNT = 10;
+/**
+ * Fallos en LOCKOUT_MINUTES con una cuenta desde una misma conexión que la bloquean para esa cuenta
+ * (exista o no: no revela qué emails existen). Desde otra conexión, el dueño sigue entrando.
+ */
+const MAX_FAILURES_PER_ACCOUNT_AND_IP = 10;
 /** Fallos en LOCKOUT_MINUTES que bloquean una conexión, pruebe la cuenta que pruebe. */
 const MAX_FAILURES_PER_IP = 50;
+/**
+ * Fallos con una cuenta en LOCKOUT_MINUTES sumando todas las conexiones (un ataque repartido entre
+ * muchas IP): a partir de ahí sólo se puede intentar desde conexiones en las que la cuenta ya inició
+ * sesión antes (los eventos de sesión se guardan 90 días). El dueño, desde las de siempre, entra.
+ */
+const MAX_FAILURES_PER_ACCOUNT = 30;
 
 /** Desde dónde se conecta (IP y navegador). Sólo se guarda en los eventos de sesión. */
 export interface ClientConnection {
@@ -58,26 +69,40 @@ export async function logSessionEvent(
 }
 
 /**
- * ¿Demasiados intentos fallidos recientes con esta cuenta (desde su último inicio de sesión
- * correcto) o desde esta conexión?
+ * ¿Demasiados intentos fallidos recientes con esta cuenta desde esta conexión (desde su último
+ * inicio de sesión correcto), desde esta conexión con cualquier cuenta, o con esta cuenta desde
+ * muchas conexiones y ésta es nueva para ella?
  */
 export async function isLockedOut(userId: string | null, email: string, ip: string): Promise<boolean> {
-  const row = await one<{ account: number; ip: number }>(
+  const row = await one<{ account: number; accountFromIp: number; ip: number; knownIp: boolean }>(
     pool,
-    `select count(*) filter (
-              where (actor_id = $1::uuid or (actor_id is null and lower(actor_name) = lower($2)))
+    `with failures as (
+       select ip,
+              coalesce(actor_id = $1::uuid or (actor_id is null and lower(actor_name) = lower($2)), false)
                 and created_at > coalesce(
                   (select max(s.created_at) from audit_logs s
                     where s.entity_type = 'session' and s.action = 'session.login' and s.actor_id = $1::uuid),
-                  '-infinity')
-            )::int as account,
-            count(*) filter (where ip = $3)::int as ip
-       from audit_logs
-      where entity_type = 'session' and action = 'session.login_failed'
-        and created_at > now() - make_interval(mins => $4)`,
+                  '-infinity') as own
+         from audit_logs
+        where entity_type = 'session' and action = 'session.login_failed'
+          and created_at > now() - make_interval(mins => $4)
+     )
+     select count(*) filter (where own)::int as account,
+            count(*) filter (where own and ip = $3)::int as "accountFromIp",
+            count(*) filter (where ip = $3)::int as ip,
+            exists (
+              select 1 from audit_logs k
+               where k.entity_type = 'session' and k.action = 'session.login' and k.actor_id = $1::uuid and k.ip = $3
+            ) as "knownIp"
+       from failures`,
     [userId, email, ip, LOCKOUT_MINUTES],
   );
-  return (row?.account ?? 0) >= MAX_FAILURES_PER_ACCOUNT || (row?.ip ?? 0) >= MAX_FAILURES_PER_IP;
+  if (!row) return false;
+  return (
+    row.accountFromIp >= MAX_FAILURES_PER_ACCOUNT_AND_IP ||
+    row.ip >= MAX_FAILURES_PER_IP ||
+    (row.account >= MAX_FAILURES_PER_ACCOUNT && !row.knownIp)
+  );
 }
 
 /** Error de cuenta o conexión bloqueada (mismo mensaje exista o no la cuenta). */

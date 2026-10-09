@@ -176,6 +176,17 @@ r = await valeria("POST", `${B}/appointments`, { ...base, startTime: "12:00", pr
 ok(r.status === 403, "y no en la de otro", r.body);
 r = await elena("PUT", `${B}/appointments/${ricardoAppointment.id}`, { ...base, startTime: "10:00", professionalId: andres.id });
 ok(r.status === 200 && r.body.professionalId === andres.id, "recepción reasigna la cita a otro profesional", r.body);
+const notifiable = sql(`select email <> '' from clients where id = '${someClient}'`) === "t";
+const changeNotices = Number(sql(`select count(*) from notifications where appointment_id = '${ricardoAppointment.id}' and type = 'appointment_updated'`));
+ok(changeNotices === (notifiable ? 1 : 0), "al paciente se le avisa que lo atenderá otro profesional", { notifiable, changeNotices });
+const whiteningService = (await ricardo("GET", `${B}/services`)).body.find((s: { name: string }) => s.name === "Blanqueamiento");
+const whiteningInput = { ...base, serviceId: whiteningService.id, startTime: "15:00", durationMinutes: whiteningService.durationMinutes };
+r = await elena("POST", `${B}/appointments`, { ...whiteningInput, professionalId: andres.id });
+ok(r.status === 400 && /no atiende/.test(r.body.error.message), "no se agenda un blanqueamiento con Andrés", r.body);
+r = await elena("POST", `${B}/appointments`, { ...whiteningInput, professionalId: ricardoAgenda.id });
+ok(r.status === 200, "con Ricardo sí", r.body);
+r = await elena("PUT", `${B}/appointments/${r.body.id}`, { ...whiteningInput, professionalId: andres.id });
+ok(r.status === 400 && /Andrés.*no atiende Blanqueamiento/.test(r.body.error.message), "ni se le pasa a Andrés al reasignarla", r.body);
 
 console.log("Llegada del paciente");
 r = await elena("PATCH", `${B}/appointments/${ricardoAppointment.id}/arrival`, { arrived: true });

@@ -31,6 +31,17 @@ export const moneyField = z.coerce
   .min(0, "El precio no puede ser negativo")
   .max(100_000, "Precio demasiado alto");
 
+/**
+ * Precio que hay que indicar: vacío no cuenta como $0 (z.coerce convierte "" en 0). Los números
+ * (lo que llega a la API) pasan igual que con moneyField.
+ */
+export const requiredMoneyField = z
+  .custom<string | number>(
+    (value) => typeof value === "number" || (typeof value === "string" && value.trim() !== ""),
+    "Escribe el precio",
+  )
+  .pipe(moneyField);
+
 export const emailField = z.string().trim().toLowerCase().pipe(z.email("Ingresa un email válido"));
 
 export const optionalEmailField = z

@@ -1,4 +1,5 @@
 // Plantillas de email: versión HTML y de texto, escape de datos y enlaces.
+import { describeTimezone, isValidTimezone } from "../src/shared/lib/constants/business.ts";
 import { emailTemplates } from "../src/shared/lib/email/templates.ts";
 
 let failures = 0;
@@ -46,6 +47,7 @@ const all = [
   emailTemplates.bookingReceived(appointment),
   emailTemplates.appointmentConfirmed(appointment),
   emailTemplates.appointmentUpdated(appointment),
+  emailTemplates.appointmentRestored(appointment),
   emailTemplates.appointmentCancelled(appointment),
   emailTemplates.appointmentReminder(appointment, "mañana"),
 ];
@@ -63,6 +65,18 @@ ok(/Contraseña: Clave2026!/.test(created.body) && /Iniciar sesión: https:\/\/a
 ok(/href="https:\/\/agenda\.example\/login"/.test(created.html) && /Si el botón no funciona/.test(created.html), "HTML: botón con enlace y alternativa en texto");
 const malicious = emailTemplates.appointmentCancelled({ ...appointment, bookingUrl: "javascript:alert(1)" });
 ok(!malicious.html.includes("javascript:"), "un enlace que no es http(s) no llega al HTML");
+
+console.log("Zona horaria en las citas virtuales");
+const virtual = { ...appointment, isVirtual: true, meetingUrl: null, payment: null, timezone: "America/Guayaquil" };
+ok(/Hora: 10:00 – 10:45 \(hora de Ecuador, GMT-5\)/.test(emailTemplates.appointmentConfirmed(virtual).body), "virtual: la hora con la zona del negocio", emailTemplates.appointmentConfirmed(virtual).body);
+ok(/a las 10:00 \(hora de Ecuador, GMT-5\)/.test(emailTemplates.appointmentReminder(virtual, "mañana").html), "también en el resumen del recordatorio");
+ok(!/hora de/.test(emailTemplates.appointmentConfirmed({ ...virtual, isVirtual: false }).body), "en el local, sin zona");
+ok(describeTimezone("Europe/Madrid", new Date("2026-07-01T12:00:00Z")) === "hora de España – Madrid, GMT+2", "con el horario de verano de ese día", describeTimezone("Europe/Madrid", new Date("2026-07-01T12:00:00Z")));
+ok(describeTimezone("America/Toronto", new Date("2026-01-15T12:00:00Z")) === "hora de America/Toronto, GMT-5", "una zona fuera de la lista: su nombre", describeTimezone("America/Toronto", new Date("2026-01-15T12:00:00Z")));
+ok(isValidTimezone("America/Guayaquil") && isValidTimezone("America/Toronto") && isValidTimezone("UTC"), "zonas válidas");
+ok(!isValidTimezone("Marte/Olimpo") && !isValidTimezone("") && !isValidTimezone("+05:00") && !isValidTimezone("America/Guayaquil; drop"), "zonas que no existen");
+const restored = emailTemplates.appointmentRestored(appointment);
+ok(restored.subject === "Tu cita ha sido restablecida" && /había sido cancelada/.test(restored.body) && /Hora: 10:00 – 10:45/.test(restored.body), "cita restablecida, con sus datos", restored.body);
 
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de plantillas de email pasaron");
 process.exitCode = failures ? 1 : 0;

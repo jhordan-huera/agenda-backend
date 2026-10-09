@@ -1,6 +1,6 @@
 // Copia de agenda-front/src/lib/validations/business.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
-import { DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY } from "../constants/business.ts";
+import { DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY, isValidTimezone } from "../constants/business.ts";
 import { emailField, optionalEmailField, optionalText, phoneField, requiredText } from "./fields.ts";
 import { imageUrlField } from "./images.ts";
 
@@ -19,6 +19,13 @@ export const slugSchema = z
   .max(40, "Máximo 40 caracteres")
   .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Usa sólo minúsculas, números y guiones");
 
+/** Zona horaria del negocio: tiene que existir (una inválida rompería los recordatorios y la agenda). */
+export const timezoneField = z
+  .string({ error: "Selecciona una zona horaria" })
+  .trim()
+  .min(1, "Selecciona una zona horaria")
+  .refine(isValidTimezone, "Zona horaria no válida: elige una de la lista");
+
 export const profileSchema = z.object({
   firstName: requiredText("El nombre"),
   lastName: requiredText("El apellido"),
@@ -32,7 +39,7 @@ export const businessProfileSchema = z.object({
   description: optionalText(400),
   category: businessCategorySchema,
   slug: slugSchema,
-  timezone: z.string().min(1, "Selecciona una zona horaria"),
+  timezone: timezoneField,
   phone: phoneField,
   email: optionalEmailField,
   address: optionalText(200),
@@ -98,7 +105,7 @@ export const notificationSettingsSchema = z.object({
 export const onboardingSchema = z.object({
   name: requiredText("El nombre del negocio"),
   category: businessCategorySchema,
-  timezone: z.string().min(1, "Selecciona una zona horaria"),
+  timezone: timezoneField,
   phone: phoneField,
   email: optionalEmailField,
   address: optionalText(200),

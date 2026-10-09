@@ -1,6 +1,6 @@
 // Copia de agenda-front/src/lib/validations/admin.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
-import { businessCategorySchema, slugSchema } from "./business.ts";
+import { businessCategorySchema, slugSchema, timezoneField } from "./business.ts";
 import { emailField, moneyField, optionalEmailField, optionalText, passwordField, phoneField, requiredText } from "./fields.ts";
 import { weeklyScheduleSchema } from "./schedule.ts";
 import { teamInviteSchema } from "./team.ts";
@@ -28,7 +28,7 @@ export const adminBusinessSchema = z.object({
   category: businessCategorySchema,
   slug: slugSchema,
   description: optionalText(400),
-  timezone: z.string().min(1, "Selecciona una zona horaria"),
+  timezone: timezoneField,
   phone: phoneField,
   email: optionalEmailField,
   address: optionalText(200),

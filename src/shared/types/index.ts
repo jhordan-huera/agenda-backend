@@ -111,7 +111,7 @@ export interface NotificationSettings {
 }
 
 /** Avisos por WhatsApp que se proponen al cambiar una cita. */
-export type WhatsAppNoticeKind = "confirmed" | "cancelled" | "rescheduled" | "completed" | "no_show";
+export type WhatsAppNoticeKind = "confirmed" | "cancelled" | "rescheduled" | "completed" | "no_show" | "pending";
 
 /** Un negocio suspendido no puede usar el panel ni recibir reservas online. */
 export type BusinessStatus = "active" | "suspended";

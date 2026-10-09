@@ -57,6 +57,21 @@ const runScript = (extraEnv = {}) =>
   });
 const lastRun = () => JSON.parse(sql("select json_build_object('ranAt', ran_at, 'report', report) from cron_runs order by ran_at desc limit 1") || "null");
 
+// Los recordatorios no salen entre las 21:00 y las 7:00 del negocio: la prueba no puede depender de la
+// hora a la que se ejecuta. El negocio de Jhordan pasa a una zona en la que ahora es mediodía y tiene
+// una cita confirmada a las 14:00, agendada hace días.
+const offset = ((12 - new Date().getUTCHours() + 36) % 24) - 12;
+const noonZone = offset === 0 ? "UTC" : `Etc/GMT${offset > 0 ? "-" : "+"}${Math.abs(offset)}`;
+sql(`update businesses set timezone = '${noonZone}' where slug = 'jhordan'`);
+sql(`insert into professionals (business_id, display_name) select id, 'Agenda del cron' from businesses where slug = 'jhordan'`);
+sql(`insert into appointments (business_id, client_id, service_id, professional_id, date, start_time, end_time, status, price, scheduled_at)
+     select b.id,
+            (select id from clients where business_id = b.id and email <> '' order by name limit 1),
+            (select id from services where business_id = b.id order by name limit 1),
+            (select id from professionals where business_id = b.id and display_name = 'Agenda del cron'),
+            (now() at time zone '${noonZone}')::date, '14:00', '14:30', 'confirmed', 0, now() - interval '3 days'
+       from businesses b where b.slug = 'jhordan'`);
+
 console.log("Cron directo contra la base");
 const queuedBefore = Number(sql("select count(*) from notifications where status = 'queued'"));
 const remindersBefore = Number(sql("select count(*) from notifications where type = 'appointment_reminder'"));
@@ -71,6 +86,7 @@ ok(received.length === 1 && received[0].priority === 4 && /no tiene acceso a Gma
 run = await runScript();
 let second = lastRun();
 ok(run.code === 0 && second.report.reminders === 0 && Math.abs(Date.parse(second.report.since) - Date.parse(first.ranAt)) < 1000, "la siguiente cuenta desde la anterior y no repite recordatorios", second.report);
+sql("update businesses set timezone = 'America/Guayaquil' where slug = 'jhordan'");
 
 sql("update notifications set status = 'sent', sent_at = now() where id = (select id from notifications where status = 'queued' order by created_at limit 1)");
 await runScript();

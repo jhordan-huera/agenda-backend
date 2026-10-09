@@ -336,7 +336,27 @@ export async function purgeOldReceipts(): Promise<number | null> {
   return old.length;
 }
 
-/** Subidas que nunca se completaron (más de un día): se olvidan. Lo llama el cron. */
+/**
+ * Subidas que nunca se completaron (más de un día): primero su archivo (el navegador pudo llegar a
+ * subirlo) y después su registro. Si el almacenamiento falla, el registro queda y se reintenta en
+ * la próxima ejecución. Lo llama el cron.
+ */
 export async function deleteStalePendingReceipts(): Promise<void> {
-  await pool.query("delete from payment_receipts where status = 'pending' and created_at < now() - interval '1 day'");
+  const stale = await many<{ id: string; storagePath: string }>(
+    pool,
+    `select id, storage_path as "storagePath" from payment_receipts
+      where status = 'pending' and created_at < now() - interval '1 day'
+      order by created_at limit $1`,
+    [PURGE_BATCH],
+  );
+  if (stale.length === 0) return;
+  try {
+    await receiptStorage?.remove(stale.map((receipt) => receipt.storagePath));
+  } catch (error) {
+    console.error("No se pudieron borrar los comprobantes sin terminar de subir:", error instanceof Error ? error.message : error);
+    return;
+  }
+  await pool.query("delete from payment_receipts where id = any($1::uuid[]) and status = 'pending'", [
+    stale.map((receipt) => receipt.id),
+  ]);
 }

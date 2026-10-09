@@ -17,7 +17,7 @@ export function startReminderJob(): () => void {
     if (running) return;
     running = true;
     try {
-      const queued = await queueAllReminders();
+      const { queued } = await queueAllReminders();
       if (queued > 0) console.info(`[recordatorios] ${queued} email(s) en cola`);
       await deleteExpiredSessions();
     } catch (error) {

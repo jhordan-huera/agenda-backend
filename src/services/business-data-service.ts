@@ -1,6 +1,7 @@
 import { appointmentColumns, blockedTimeColumns, clientColumns, scheduleColumns, serviceColumns } from "../db/columns.ts";
 import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
+import { offersService } from "../shared/lib/availability.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { BLOCKING_STATUSES } from "../shared/lib/constants/appointment-status.ts";
 import { formatNumericDate, formatTimeRange } from "../shared/lib/format.ts";
@@ -42,7 +43,7 @@ import {
   type AgendaScope,
 } from "./agenda-scope.ts";
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
-import { notifyAppointmentChange } from "./notifications.ts";
+import { isRescheduled, notifyAppointmentChange } from "./notifications.ts";
 import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
 import { assertAppointmentLimit, assertClientLimit } from "./plan-limits.ts";
 import { findProfessional, listProfessionals } from "./professional-service.ts";
@@ -442,6 +443,22 @@ async function resolveAppointmentProfessional(
   throw new AppError("validation", "Elige el profesional de la cita.");
 }
 
+/** El profesional tiene que atender el servicio de la cita (como en el formulario y en la página de reservas). */
+async function assertOffersService(db: Db, businessId: string, professionalId: string, serviceId: string) {
+  const professional = await findProfessional(db, businessId, professionalId);
+  if (offersService(professional, serviceId)) return;
+  const service = await one<{ name: string }>(db, "select name from services where id = $1", [serviceId]);
+  throw new AppError("validation", `${professional.displayName} no atiende ${service?.name ?? "ese servicio"}: elige otro profesional.`);
+}
+
+/**
+ * La fecha y hora de la cita se fijan de nuevo (scheduled_at, ver runReminderJob): al moverla, al
+ * cambiarle algo que se le avisa al paciente o al reactivarla. Un recordatorio que estuviera en cola
+ * deja de valer (era de la versión anterior) y puede salir otro.
+ */
+const resetsSchedule = (before: Appointment, after: Appointment) =>
+  (before.status === "cancelled" && after.status !== "cancelled") || isRescheduled(before, after);
+
 /** Una cita pasa a ocupar cupo del plan si se reactiva o se mueve a otro mes. */
 async function assertLimitOnChange(db: Db, before: Appointment, after: Appointment) {
   if (after.status === "cancelled") return;
@@ -473,13 +490,17 @@ async function buildAppointmentFields(db: Db, businessId: string, input: unknown
 /** jsonb: el lugar de una visita a domicilio (o null si es en el local). */
 const homeVisitJson = (visit: HomeVisitAddress | null) => (visit ? JSON.stringify(visit) : null);
 
-/** Guarda los campos editables de una cita y devuelve la fila actualizada. */
-async function saveAppointment(db: Db, appointment: Appointment): Promise<Appointment> {
+/**
+ * Guarda los campos editables de una cita y devuelve la fila actualizada. `rescheduled`: la fecha y
+ * hora se fijaron de nuevo (ver resetsSchedule).
+ */
+async function saveAppointment(db: Db, appointment: Appointment, rescheduled: boolean): Promise<Appointment> {
   return (await one<Appointment>(
     db,
     `update appointments
         set client_id = $2, service_id = $3, date = $4, start_time = $5, end_time = $6,
             status = $7, notes = $8, price = $9, home_visit = $10, professional_id = $11, is_virtual = $12,
+            scheduled_at = case when $13 then now() else scheduled_at end,
             updated_at = now()
       where id = $1
       returning ${appointmentColumns()}`,
@@ -496,6 +517,7 @@ async function saveAppointment(db: Db, appointment: Appointment): Promise<Appoin
       homeVisitJson(appointment.homeVisit),
       appointment.professionalId,
       appointment.isVirtual,
+      rescheduled,
     ],
   ))!;
 }
@@ -581,6 +603,7 @@ export const appointmentService = {
       const { requestedProfessionalId, ...fields } = await buildAppointmentFields(db, businessId, input);
       await assertClientInScope(db, scope, fields.clientId);
       const professionalId = await resolveAppointmentProfessional(db, businessId, actor, scope, requestedProfessionalId);
+      await assertOffersService(db, businessId, professionalId, fields.serviceId);
 
       const draft: Appointment = {
         id: "00000000-0000-0000-0000-000000000000",
@@ -654,9 +677,13 @@ export const appointmentService = {
           ? await resolveAppointmentProfessional(db, businessId, actor, scope, requestedProfessionalId)
           : before.professionalId;
       const updated: Appointment = { ...before, ...fields, professionalId };
+      // Otro profesional u otro servicio: tiene que atenderlo (una cita que ya estaba así se puede seguir editando).
+      if (professionalId !== before.professionalId || updated.serviceId !== before.serviceId) {
+        await assertOffersService(db, businessId, professionalId, updated.serviceId);
+      }
       await assertNoConflict(db, updated);
       await assertLimitOnChange(db, before, updated);
-      const appointment = await saveAppointment(db, updated);
+      const appointment = await saveAppointment(db, updated, resetsSchedule(before, updated));
       await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
 
       const rescheduled = before.date !== appointment.date || before.startTime !== appointment.startTime;
@@ -691,7 +718,7 @@ export const appointmentService = {
       const updated: Appointment = { ...before, status: nextStatus };
       await assertNoConflict(db, updated);
       await assertLimitOnChange(db, before, updated);
-      const appointment = await saveAppointment(db, updated);
+      const appointment = await saveAppointment(db, updated, resetsSchedule(before, updated));
       await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
       await logAudit(db, {
         businessId,
@@ -775,9 +802,10 @@ export async function setAppointmentArrival(
 const WHATSAPP_NOTICE_LABELS: Record<WhatsAppNoticeKind, string> = {
   confirmed: "que la cita está confirmada",
   cancelled: "que la cita se canceló",
-  rescheduled: "el cambio de fecha u hora",
+  rescheduled: "el cambio de la cita",
   completed: "con un gracias por la visita",
   no_show: "para reagendar (No asistió)",
+  pending: "que la cita vuelve a estar agendada",
 };
 
 /* --------------------------------- Horarios ---------------------------------- */
