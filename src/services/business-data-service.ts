@@ -4,11 +4,12 @@ import { AppError } from "../http/errors.ts";
 import { offersService } from "../shared/lib/availability.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { BLOCKING_STATUSES } from "../shared/lib/constants/appointment-status.ts";
+import { clientRequiredFieldsOf } from "../shared/lib/constants/business.ts";
 import { formatNumericDate, formatTimeRange } from "../shared/lib/format.ts";
 import { documentIdError } from "../shared/lib/identity.ts";
 import { addMinutesToTime, getZonedNow, minutesToTime } from "../shared/lib/time.ts";
 import { appointmentSchema, appointmentStatusSchema, whatsAppNoticeSchema } from "../shared/lib/validations/appointment.ts";
-import { clientSchema } from "../shared/lib/validations/client.ts";
+import { clientSchemaFor } from "../shared/lib/validations/client.ts";
 import { dateField } from "../shared/lib/validations/fields.ts";
 import { blockedTimeSchema, weeklyScheduleSchema } from "../shared/lib/validations/schedule.ts";
 import { serviceSchema } from "../shared/lib/validations/service.ts";
@@ -19,6 +20,7 @@ import type {
   BlockedTime,
   Client,
   ClientActivity,
+  ClientRequiredFields,
   HomeVisitAddress,
   ISODate,
   Schedule,
@@ -91,6 +93,19 @@ async function assertValidClientDocument(
     );
   }
   throw new AppError("conflict", `Ya existe un cliente con esa cédula: ${duplicate.name}.`);
+}
+
+/**
+ * Ficha del paciente desde el panel, con los datos obligatorios que el super admin eligió para el
+ * negocio (por defecto, cédula y email). La reserva online no pasa por aquí: tiene su propio esquema.
+ */
+async function clientInputSchema(db: Db, businessId: string) {
+  const business = await one<{ clientRequiredFields: ClientRequiredFields }>(
+    db,
+    `select client_required_fields as "clientRequiredFields" from businesses where id = $1`,
+    [businessId],
+  );
+  return clientSchemaFor(clientRequiredFieldsOf(business));
 }
 
 export const clientService = {
@@ -190,9 +205,7 @@ export const clientService = {
   async create(ctx: RequestContext, businessId: string, input: unknown): Promise<Client> {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "clients.manage", { lock: true });
-      const data = parseInput(clientSchema, input);
-      if (!data.documentId) throw new AppError("validation", "La cédula es obligatoria.");
-      if (!data.email) throw new AppError("validation", "El email es obligatorio.");
+      const data = parseInput(await clientInputSchema(db, businessId), input);
       await assertValidClientDocument(db, await agendaScope(db, actor, businessId), businessId, data.documentId);
       await assertClientLimit(db, businessId);
       const client = (await one<Client>(
@@ -217,16 +230,12 @@ export const clientService = {
   async update(ctx: RequestContext, businessId: string, clientId: string, input: unknown): Promise<Client> {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "clients.manage", { lock: true });
-      const data = parseInput(clientSchema, input);
+      // Con los datos obligatorios de hoy: a un paciente antiguo al que le falta uno (p. ej. la cédula,
+      // si el negocio pasó a exigirla) hay que completárselo para guardar cualquier cambio.
+      const data = parseInput(await clientInputSchema(db, businessId), input);
       const current = await findOwned<Client>(db, "clients", clientColumns(), businessId, clientId, "Cliente no encontrado.");
       const scope = await agendaScope(db, actor, businessId);
       await assertClientInScope(db, scope, clientId);
-      // Clientes antiguos sin cédula o sin email pueden seguir así hasta que se completen; una vez
-      // puestos, no se quitan (el formulario del panel ya los exige al editar).
-      if (!data.documentId && current.documentId) {
-        throw new AppError("validation", "La cédula es obligatoria.");
-      }
-      if (!data.email && current.email) throw new AppError("validation", "El email es obligatorio.");
       await assertValidClientDocument(db, scope, businessId, data.documentId, clientId);
       const client = (await one<Client>(
         db,

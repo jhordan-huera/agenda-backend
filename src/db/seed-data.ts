@@ -5,6 +5,7 @@
 import { DEFAULT_CURRENCY, DEFAULT_SUPPORT_EMAIL, DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import {
   DEFAULT_BOOKING_SETTINGS,
+  DEFAULT_CLIENT_REQUIRED_FIELDS,
   DEFAULT_NOTIFICATION_SETTINGS,
 } from "../shared/lib/constants/business.ts";
 import { getPlan } from "../shared/lib/constants/plans.ts";
@@ -69,6 +70,25 @@ export function demoBankAccount(displayName: string): BankAccount {
     holder: displayName.replace(/^(Dra?\.|Lic\.|Psic\.)\s+/, ""),
     holderId: "",
   };
+}
+
+/**
+ * Cuentas de ejemplo de una agenda demo: la primera es la de demoBankAccount; las demás, en los
+ * bancos siguientes, del otro tipo de cuenta y con otro número.
+ */
+export function demoBankAccounts(displayName: string, count = 1): BankAccount[] {
+  const first = demoBankAccount(displayName);
+  const bank = DEMO_BANKS.indexOf(first.bank);
+  return Array.from({ length: count }, (_, index) =>
+    index === 0
+      ? first
+      : {
+          ...first,
+          bank: DEMO_BANKS[(bank + index) % DEMO_BANKS.length],
+          accountType: index % 2 === 1 ? (first.accountType === "savings" ? "checking" : "savings") : first.accountType,
+          number: `${22 + index * 11}${first.number.slice(2)}`,
+        },
+  );
 }
 
 /** Categorías de salud de la migración 005 (historia clínica activada por defecto). */
@@ -146,6 +166,8 @@ interface TenantSeed {
   status?: BusinessStatus;
   members: MemberSeed[];
   professionalTitle: string;
+  /** Cuentas bancarias de ejemplo de la agenda del dueño (1 si no se indica; hasta 3). */
+  bankAccounts?: number;
   /** Agendas además de la del dueño, y cuántas contrató el negocio (Business). */
   extraProfessionals?: ExtraProfessionalSeed[];
   maxProfessionals?: number;
@@ -177,6 +199,8 @@ const TENANTS: TenantSeed[] = [
       address: "Av. República de El Salvador N36-84, Quito",
     },
     plan: "pro",
+    // Dos cuentas: al reservar, el paciente las ve las dos y transfiere a cualquiera.
+    bankAccounts: 2,
     members: [
       { firstName: "Andrea", lastName: "Vásquez", email: "andrea@demo.com", role: "admin" },
       { firstName: "Miguel", lastName: "Ortega", email: "miguel@demo.com", role: "staff" },
@@ -522,16 +546,18 @@ function seedTenant(
     clinicalDefaultTemplateId: null,
     brandColors: null,
     professionalScope: "all",
+    // No se inserta: la base pone el mismo valor por defecto (migración 031).
+    clientRequiredFields: { ...DEFAULT_CLIENT_REQUIRED_FIELDS },
     createdAt,
   });
-  const professionalBase = { businessId, avatarUrl: null, email: "", meetingUrl: "", bankAccount: null, allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, isActive: true, createdAt };
+  const professionalBase = { businessId, avatarUrl: null, email: "", meetingUrl: "", bankAccounts: [], allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, isActive: true, createdAt };
   db.professionals.push({
     ...professionalBase,
     id: professionalId,
     userId,
     displayName: `${tenant.user.firstName} ${tenant.user.lastName}`,
     // Todas las agendas demo cobran por transferencia (cuentas de ejemplo).
-    bankAccount: demoBankAccount(`${tenant.user.firstName} ${tenant.user.lastName}`),
+    bankAccounts: demoBankAccounts(`${tenant.user.firstName} ${tenant.user.lastName}`, tenant.bankAccounts),
     title: tenant.professionalTitle,
     color: "#4a6cb0",
     sortOrder: 0,
@@ -610,7 +636,7 @@ function seedTenant(
         displayName: extra.displayName,
         title: extra.title,
         color: extra.color,
-        bankAccount: demoBankAccount(extra.displayName),
+        bankAccounts: [demoBankAccount(extra.displayName)],
         allServices: !extra.services,
         serviceIds: extra.services ? offered.map((service) => service.id) : [],
         sortOrder: index + 1,

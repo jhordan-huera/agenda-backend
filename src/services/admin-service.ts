@@ -10,6 +10,7 @@ import {
 import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
+import { CLIENT_REQUIRED_FIELD_OPTIONS, clientRequiredFieldsOf } from "../shared/lib/constants/business.ts";
 import { PLANS, getEffectiveLimits, getPlan } from "../shared/lib/constants/plans.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
 import { formatSupportContact, getFullName, plural } from "../shared/lib/format.ts";
@@ -28,6 +29,7 @@ import {
   platformSettingsSchema,
   userPasswordSchema,
 } from "../shared/lib/validations/admin.ts";
+import { clientRequiredFieldsSchema } from "../shared/lib/validations/client.ts";
 import type {
   AdminAuditLog,
   AdminBusinessDetail,
@@ -67,6 +69,12 @@ import { applyPlanChange } from "./subscriptions.ts";
  * Panel del super admin. Cada operación empieza con authorizeSuperAdmin: aunque
  * alguien llegue a /admin desde el navegador, la API rechaza a quien no lo sea.
  */
+
+/** "nombre", "nombre y cédula", "nombre, cédula y email". */
+function listLabels(labels: string[]): string {
+  const words = labels.map((label) => label.toLowerCase());
+  return words.length <= 1 ? (words[0] ?? "") : `${words.slice(0, -1).join(", ")} y ${words.at(-1)}`;
+}
 
 /** Los últimos `count` meses terminando en `current` ("YYYY-MM"). */
 function lastMonths(current: string, count: number): string[] {
@@ -577,6 +585,43 @@ export const adminService = {
         changes: [{ label: "Agendas contratadas", before: label(before.maxProfessionals), after: label(max) }],
       });
       return subscription;
+    });
+  },
+
+  /**
+   * Datos del paciente obligatorios al crearlo o editarlo desde el panel de un negocio (el nombre lo es
+   * siempre). Sólo el super admin; queda en la actividad del negocio con lo que cambió.
+   */
+  async setClientRequiredFields(ctx: RequestContext, businessId: string, input: unknown): Promise<Business> {
+    const actor = authorizeSuperAdmin(ctx);
+    const next = parseInput(clientRequiredFieldsSchema, input);
+    return transaction(async (db) => {
+      const current = await findBusiness(db, businessId, true);
+      const previous = clientRequiredFieldsOf(current);
+      const changes = CLIENT_REQUIRED_FIELD_OPTIONS.filter((field) => previous[field.key] !== next[field.key]).map(
+        (field) => ({
+          label: field.label,
+          before: previous[field.key] ? "Obligatorio" : "Opcional",
+          after: next[field.key] ? "Obligatorio" : "Opcional",
+        }),
+      );
+      if (changes.length === 0) return current;
+      const business = (await one<Business>(
+        db,
+        `update businesses set client_required_fields = $2::jsonb where id = $1 returning ${businessColumns()}`,
+        [businessId, JSON.stringify(next)],
+      ))!;
+      const required = ["Nombre", ...CLIENT_REQUIRED_FIELD_OPTIONS.filter((field) => next[field.key]).map((field) => field.label)];
+      await logAudit(db, {
+        businessId,
+        actor,
+        action: "platform.client_required_fields_changed",
+        entityType: "business",
+        entityId: businessId,
+        summary: `Cambió los datos obligatorios del paciente en ${business.name}: ${listLabels(required)}`,
+        changes,
+      });
+      return business;
     });
   },
 

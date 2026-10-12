@@ -26,6 +26,7 @@ import type {
   Service,
 } from "../shared/types/index.ts";
 import { describeAppointment, logAudit } from "./audit.ts";
+import { withLegacyBankAccount } from "./bank-accounts.ts";
 import { lockBusiness, parseInput } from "./context.ts";
 import { listSchedules } from "./business-data-service.ts";
 import { receiptStorage } from "./file-storage.ts";
@@ -249,7 +250,7 @@ function toConfirmation(
   context: { business: Business; service: Service; professional: Professional; clientEmail: string; emailSent: boolean; repeated: boolean },
 ): BookingConfirmation {
   const { business, service, professional } = context;
-  const paysByTransfer = Boolean(professional.bankAccount) && appointment.price > 0;
+  const paysByTransfer = professional.bankAccounts.length > 0 && appointment.price > 0;
   return {
     appointmentId: appointment.id,
     serviceName: service.name,
@@ -267,10 +268,10 @@ function toConfirmation(
     meetingUrl: appointment.isVirtual ? professional.meetingUrl || null : null,
     clientEmail: context.clientEmail,
     emailSent: context.emailSent,
-    // Pago por transferencia: los datos de la agenda y el enlace para subir el comprobante.
+    // Pago por transferencia: todas las cuentas de la agenda (vale cualquiera) y el enlace para subir el comprobante.
     payment:
       paysByTransfer && !context.repeated
-        ? { bankAccount: professional.bankAccount!, token: appointment.paymentToken, receiptsEnabled: Boolean(receiptStorage) }
+        ? { ...withLegacyBankAccount(professional.bankAccounts), token: appointment.paymentToken, receiptsEnabled: Boolean(receiptStorage) }
         : null,
     paymentByEmail: paysByTransfer && context.repeated,
   };
@@ -284,6 +285,8 @@ function toPublicBusiness({
   notificationSettings: _notifications,
   clinicalRecordsEnabled: _clinical,
   clinicalDefaultTemplateId: _template,
+  professionalScope: _scope,
+  clientRequiredFields: _required,
   createdAt: _created,
   ...business
 }: Business): PublicBusiness {

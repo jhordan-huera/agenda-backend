@@ -147,7 +147,9 @@ ok(r.status === 400, "ni el email", r.body);
 const viejo = sql(`insert into clients (business_id, name) values ('${os.businessId}', 'Viejo Sin Datos') returning id`).split("\n")[0];
 const viejoClient = (await owner("GET", `${B}/clients/${viejo}`)).body;
 r = await owner("PUT", `${B}/clients/${viejo}`, { ...viejoClient, notes: "Nota nueva" });
-ok(r.status === 200 && r.body.notes === "Nota nueva", "un cliente antiguo sin cédula ni email puede seguir usándose (p. ej. guardar notas)", r.body);
+ok(r.status === 400 && /cédula es obligatoria/.test(r.body.error.message), "a un cliente antiguo sin cédula ni email hay que completárselos para guardar cambios (p. ej. notas)", r.body);
+r = await owner("PUT", `${B}/clients/${viejo}`, { ...viejoClient, documentId: cedulaFor("viejo-sin-datos"), email: "viejo@example.com", notes: "Nota nueva" });
+ok(r.status === 200 && r.body.notes === "Nota nueva", "con ellos ya se guarda", r.body);
 
 console.log("Historia clínica: fechas automáticas");
 const { a: ricardo, session: rs } = await login("ricardo@demo.com");

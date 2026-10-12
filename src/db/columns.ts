@@ -44,6 +44,7 @@ export const businessColumns = columns({
   clinicalDefaultTemplateId: "clinical_default_template_id",
   brandColors: "brand_colors",
   professionalScope: "professional_scope",
+  clientRequiredFields: "client_required_fields",
   createdAt: "created_at",
 });
 
@@ -57,7 +58,12 @@ const professionalOwnColumns = columns({
   color: "color",
   email: "email",
   meetingUrl: "meeting_url",
-  bankAccount: "bank_account",
+  bankAccounts: "bank_accounts",
+  /**
+   * @deprecated La primera de `bankAccounts` (o null), sólo para los fronts viejos en caché (de antes
+   * de las varias cuentas, migración 030): quitarla cuando ya no queden. Ver services/bank-accounts.ts.
+   */
+  bankAccount: "bank_accounts->0",
   allServices: "all_services",
   notifyNewAppointments: "notify_new_appointments",
   dailyAgenda: "daily_agenda",

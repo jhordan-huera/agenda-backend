@@ -17,6 +17,12 @@ export const bankAccountSchema = z.object({
 
 export type BankAccountInput = z.infer<typeof bankAccountSchema>;
 
+/** Cuentas de una agenda, como máximo (el paciente las ve todas y transfiere a cualquiera). */
+export const MAX_BANK_ACCOUNTS = 3;
+
+/** Cuentas de una agenda: la primera es la principal; la lista vacía, sin datos bancarios. */
+export const bankAccountsSchema = z.array(bankAccountSchema).max(MAX_BANK_ACCOUNTS, "Como máximo 3 cuentas");
+
 /** Comprobante de pago que sube el paciente (foto de la transferencia o PDF del banco). */
 export const RECEIPT_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "application/pdf"] as const;
 export const RECEIPT_MAX_BYTES = 10 * 1024 * 1024;

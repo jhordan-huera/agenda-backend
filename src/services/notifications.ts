@@ -82,8 +82,8 @@ interface AppointmentContext {
   professionalUserId: string | null;
   /** Sala de videollamada del profesional ("" = sin enlace). */
   meetingUrl: string;
-  /** Cuenta para el pago por transferencia de esta agenda (null: no cobra por transferencia). */
-  bankAccount: BankAccount | null;
+  /** Cuentas para el pago por transferencia de esta agenda, la principal primero (vacía: no cobra por transferencia). */
+  bankAccounts: BankAccount[];
 }
 
 async function loadAppointmentContext(db: Db, appointment: Appointment): Promise<AppointmentContext | null> {
@@ -95,7 +95,7 @@ async function loadAppointmentContext(db: Db, appointment: Appointment): Promise
     `select c.name as "clientName", c.email as "clientEmail", s.name as "serviceName",
             s.show_price as "showPrice",
             coalesce(p.meeting_url, '') as "meetingUrl",
-            p.bank_account as "bankAccount",
+            coalesce(p.bank_accounts, '[]'::jsonb) as "bankAccounts",
             p.display_name as "professionalName",
             coalesce(p.email, '') as "professionalEmail",
             coalesce(p.notify_new_appointments, false) as "professionalNotify",
@@ -129,10 +129,10 @@ function buildEmailData(context: AppointmentContext, appointment: Appointment): 
     homeVisit: appointment.homeVisit,
     isVirtual: appointment.isVirtual,
     meetingUrl: appointment.isVirtual ? context.meetingUrl || null : null,
-    // Sólo si hay algo que pagar y aún no se marcó como pagada.
+    // Sólo si hay algo que pagar y aún no se marcó como pagada; con todas las cuentas (vale cualquiera).
     payment:
-      context.bankAccount && appointment.price > 0 && !appointment.paidAt
-        ? { bankAccount: context.bankAccount, url: paymentUrl(appointment.paymentToken) }
+      context.bankAccounts.length > 0 && appointment.price > 0 && !appointment.paidAt
+        ? { bankAccounts: context.bankAccounts, url: paymentUrl(appointment.paymentToken) }
         : null,
     // En las citas virtuales la hora va con la zona del negocio: el paciente puede estar en otro país.
     timezone: business.timezone,

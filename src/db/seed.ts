@@ -1,5 +1,6 @@
 import { config, isLocalDatabaseUrl } from "../config.ts";
 import { hashPassword } from "../services/accounts.ts";
+import { bankAccountValues } from "../services/bank-accounts.ts";
 import { many, pool, transaction, type Db } from "./pool.ts";
 import { createSeedDatabase } from "./seed-data.ts";
 
@@ -150,12 +151,14 @@ async function seed() {
       "professionals",
       [
         "id", "business_id", "user_id", "display_name", "title", "avatar_url", "color", "email", "all_services",
-        "notify_new_appointments", "daily_agenda", "is_active", "sort_order", "created_at", "meeting_url", "bank_account",
+        "notify_new_appointments", "daily_agenda", "is_active", "sort_order", "created_at", "meeting_url", "bank_accounts",
+        "bank_account",
       ],
       data.professionals.map((p) => [
         p.id, p.businessId, p.userId, p.displayName, p.title, p.avatarUrl, p.color, p.email, p.allServices,
         p.notifyNewAppointments, p.dailyAgenda, p.isActive, p.sortOrder, p.createdAt, p.meetingUrl,
-        p.bankAccount ? JSON.stringify(p.bankAccount) : null,
+        // La primera cuenta también en bank_account (la columna de antes, ver services/bank-accounts.ts).
+        ...bankAccountValues(p.bankAccounts),
       ]),
     );
     await insertRows(
