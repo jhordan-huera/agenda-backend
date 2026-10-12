@@ -285,6 +285,8 @@ function toPublicBusiness({
   notificationSettings: _notifications,
   clinicalRecordsEnabled: _clinical,
   clinicalDefaultTemplateId: _template,
+  professionalScope: _scope,
+  clientRequiredFields: _required,
   createdAt: _created,
   ...business
 }: Business): PublicBusiness {

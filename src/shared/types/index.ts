@@ -148,11 +148,24 @@ export interface Business {
   brandColors: BrandColors | null;
   /** Qué pacientes ve quien tiene el rol Profesional: todos los del negocio o sólo los suyos. */
   professionalScope: ProfessionalScope;
+  /**
+   * Datos del paciente obligatorios al crearlo o editarlo desde el panel (el nombre lo es siempre). Los
+   * elige el super admin para cada negocio; la reserva online no cambia (pide cédula, nombre, email y teléfono).
+   */
+  clientRequiredFields: ClientRequiredFields;
   createdAt: ISODateTime;
 }
 
 /** "own": sólo los pacientes con citas en su agenda o que registró él. */
 export type ProfessionalScope = "all" | "own";
+
+/** true: el dato es obligatorio en la ficha del paciente; false: opcional (ver Business.clientRequiredFields). */
+export interface ClientRequiredFields {
+  documentId: boolean;
+  email: boolean;
+  phone: boolean;
+  address: boolean;
+}
 
 /**
  * Roles dentro de un negocio (tabla business_users). "staff" es Recepción (todas las agendas);
@@ -876,7 +889,14 @@ export type BusySlot = Pick<Appointment, "date" | "startTime" | "endTime" | "pro
 /** El negocio en la página pública: sin datos internos (propietario, estado, avisos…). */
 export type PublicBusiness = Omit<
   Business,
-  "ownerId" | "status" | "notificationSettings" | "clinicalRecordsEnabled" | "clinicalDefaultTemplateId" | "professionalScope" | "createdAt"
+  | "ownerId"
+  | "status"
+  | "notificationSettings"
+  | "clinicalRecordsEnabled"
+  | "clinicalDefaultTemplateId"
+  | "professionalScope"
+  | "clientRequiredFields"
+  | "createdAt"
 >;
 /** Sin su cuenta, su email ni sus avisos. */
 export type PublicProfessional = Pick<Professional, "id" | "displayName" | "title" | "avatarUrl" | "allServices" | "serviceIds">;

@@ -44,6 +44,7 @@ export const businessColumns = columns({
   clinicalDefaultTemplateId: "clinical_default_template_id",
   brandColors: "brand_colors",
   professionalScope: "professional_scope",
+  clientRequiredFields: "client_required_fields",
   createdAt: "created_at",
 });
 

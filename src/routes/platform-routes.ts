@@ -160,6 +160,11 @@ adminRoutes.put(
   "/businesses/:businessId/max-professionals",
   handle((req) => adminService.setMaxProfessionals(req.ctx, req.params.businessId, req.body?.maxProfessionals ?? null)),
 );
+// Datos obligatorios del paciente en el panel del negocio: { documentId, email, phone, address } (true: obligatorio).
+adminRoutes.put(
+  "/businesses/:businessId/client-required-fields",
+  handle((req) => adminService.setClientRequiredFields(req.ctx, req.params.businessId, req.body)),
+);
 adminRoutes.get(
   "/categories",
   handle((req) => categoryService.listForAdmin(req.ctx)),

@@ -50,6 +50,7 @@ export const optionalEmailField = z
   .toLowerCase()
   .refine((value) => value === "" || z.email().safeParse(value).success, "Ingresa un email válido");
 
+/** Teléfono opcional: vacío o con formato válido (el obligatorio es requiredPhoneField). */
 export const phoneField = z
   .string()
   .trim()

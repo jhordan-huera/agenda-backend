@@ -234,8 +234,17 @@ export const businessService = {
   },
 
   async update(ctx: RequestContext, businessId: string, input: unknown): Promise<Business> {
-    const { bookingSettings, notificationSettings, clinicalRecordsEnabled, brandColors, professionalScope, ...profile } = (input ??
-      {}) as Record<string, unknown>;
+    // Los datos obligatorios del paciente no se cambian aquí (ni el negocio ni el super admin en modo
+    // soporte): sólo desde /admin (PUT /admin/businesses/:id/client-required-fields). Se ignoran.
+    const {
+      bookingSettings,
+      notificationSettings,
+      clinicalRecordsEnabled,
+      brandColors,
+      professionalScope,
+      clientRequiredFields: _clientRequiredFields,
+      ...profile
+    } = (input ?? {}) as Record<string, unknown>;
     const profileData = Object.keys(profile).length ? parseInput(businessProfileSchema.partial(), profile) : {};
     const booking = bookingSettings ? parseInput(bookingSettingsSchema, bookingSettings) : null;
     const notifications = notificationSettings ? parseInput(notificationSettingsSchema, notificationSettings) : null;

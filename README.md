@@ -181,7 +181,7 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
 | Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status`) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
 | Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) |
-| Super admin | `/admin/stats` · `/admin/businesses` (+ `status`, `plan`, `members`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` |
+| Super admin | `/admin/stats` · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` |
 | Estado | `GET /health` |
 
 ## Contraseñas, modo soporte e historia clínica
@@ -207,9 +207,9 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   aplica el plan) o la rechazan con un motivo. El plan sólo cambia desde el panel `/admin` (también
   en modo soporte) y el propietario siempre recibe un email.
 - **Cédula de los clientes**: identifica al cliente dentro del negocio (única por negocio, sólo
-  números: sin letras ni guiones; en negocios de Ecuador, 10 dígitos con dígito verificador válido). Cédula y email son obligatorios al crear
-  un cliente (panel y reservas) y no se pueden quitar; los clientes antiguos sin ellos los completan
-  al editar su ficha. En la reserva pública el paciente escribe
+  números: sin letras ni guiones; en negocios de Ecuador, 10 dígitos con dígito verificador válido). En
+  el panel, los datos obligatorios del paciente dependen del negocio (ver «Datos obligatorios del
+  paciente»; por defecto, cédula y email). En la reserva pública el paciente escribe
   **siempre** cédula, nombre, email y teléfono: la página no dice si la cédula ya es de un cliente
   (con la de un paciente de un psicólogo, eso ya sería un dato sensible). Si la cédula existe en el
   negocio, la reserva sólo se une a esa ficha si coinciden el email o el teléfono guardados (sin
@@ -221,6 +221,21 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   mismo email **y el mismo nombre** (sin tildes, mayúsculas ni espacios de más) recibe la cédula en
   lugar de duplicarse; con otro nombre es otra persona (una madre y su hijo con un solo email) y se
   crea su propia ficha, para no mezclar citas ni historias clínicas. El email ya no es único (familias).
+- **Datos obligatorios del paciente** (migración 031, `businesses.client_required_fields`, jsonb
+  `{ documentId, email, phone, address }`, true = obligatorio; en la API, `clientRequiredFields` del
+  negocio): qué pide el panel de cada negocio al crear o editar un cliente. El nombre lo es siempre.
+  Por defecto `{documentId: true, email: true, phone: false, address: false}`, lo que se exigía hasta
+  ahora: los negocios existentes siguen igual. Sólo el super admin lo cambia, desde la ficha del
+  negocio en `/admin` (`PUT /admin/businesses/:id/client-required-fields`, con la verificación en dos
+  pasos obligatoria de `/admin`); `PATCH /businesses/:id` ignora el campo (también en modo soporte).
+  El cambio queda en la actividad del negocio (`platform.client_required_fields_changed`, autor
+  "(Super admin)", con cada dato antes → después). `POST` y `PUT …/clients` validan con
+  `clientSchemaFor(required)` (código compartido): sin un dato obligatorio responden 400 («La cédula es
+  obligatoria», «El teléfono es obligatorio»…), y lo que se escribe tiene que ser válido aunque sea
+  opcional (cédula ecuatoriana, email, teléfono). Al editar un paciente antiguo al que le falta un dato
+  que ahora es obligatorio hay que completarlo para guardar (también para guardar sus notas). La
+  reserva online no cambia: tiene su propio esquema y pide siempre cédula, nombre, email y teléfono.
+  La página pública no recibe el campo.
 - **Ubicación del local** (migración 007, columnas `businesses.lat`/`lng`): el negocio marca su
   local en un mapa; la página de reservas lo muestra y los emails enlazan "Cómo llegar" al punto
   exacto (sin punto, a la dirección escrita). Latitud y longitud van juntas o ninguna.

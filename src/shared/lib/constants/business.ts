@@ -2,6 +2,7 @@
 import type {
   BankAccountType,
   BookingSettings,
+  ClientRequiredFields,
   DayOfWeek,
   NotificationSettings,
   ServiceMode,
@@ -144,6 +145,30 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   whatsappOnStatusChange: true,
   whatsappFollowUps: true,
 };
+
+/**
+ * Datos obligatorios del paciente en el panel, si el super admin no eligió otros para el negocio (como
+ * hasta ahora: cédula y email). Igual que el valor por defecto de la migración 031.
+ */
+export const DEFAULT_CLIENT_REQUIRED_FIELDS: ClientRequiredFields = {
+  documentId: true,
+  email: true,
+  phone: false,
+  address: false,
+};
+
+/** Los datos del paciente que pueden ser obligatorios u opcionales, en el orden del formulario. */
+export const CLIENT_REQUIRED_FIELD_OPTIONS: { key: keyof ClientRequiredFields; label: string }[] = [
+  { key: "documentId", label: "Cédula" },
+  { key: "email", label: "Email" },
+  { key: "phone", label: "Teléfono" },
+  { key: "address", label: "Dirección" },
+];
+
+/** Los datos obligatorios del paciente en un negocio (con los de por defecto si aún no los trae). */
+export function clientRequiredFieldsOf(business: { clientRequiredFields?: ClientRequiredFields } | null | undefined) {
+  return { ...DEFAULT_CLIENT_REQUIRED_FIELDS, ...business?.clientRequiredFields };
+}
 
 /** Horario sugerido en el onboarding: lunes a viernes 08:00–17:00, sábado 09:00–13:00, domingo cerrado. */
 export const DEFAULT_WEEKLY_SCHEDULE: { dayOfWeek: DayOfWeek; isActive: boolean; intervals: TimeRange[] }[] =

@@ -5,6 +5,7 @@
 import { DEFAULT_CURRENCY, DEFAULT_SUPPORT_EMAIL, DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import {
   DEFAULT_BOOKING_SETTINGS,
+  DEFAULT_CLIENT_REQUIRED_FIELDS,
   DEFAULT_NOTIFICATION_SETTINGS,
 } from "../shared/lib/constants/business.ts";
 import { getPlan } from "../shared/lib/constants/plans.ts";
@@ -545,6 +546,8 @@ function seedTenant(
     clinicalDefaultTemplateId: null,
     brandColors: null,
     professionalScope: "all",
+    // No se inserta: la base pone el mismo valor por defecto (migración 031).
+    clientRequiredFields: { ...DEFAULT_CLIENT_REQUIRED_FIELDS },
     createdAt,
   });
   const professionalBase = { businessId, avatarUrl: null, email: "", meetingUrl: "", bankAccounts: [], allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, isActive: true, createdAt };
