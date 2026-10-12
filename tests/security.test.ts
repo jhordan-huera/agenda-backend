@@ -220,7 +220,9 @@ const cloudflare: Server = createServer((req, res) => {
       return;
     }
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(body.response === "token-bueno" ? { success: true } : { success: false, "error-codes": ["invalid-input-response"] }));
+    // Cloudflare dice en qué dominio se resolvió: el del frontend (FRONTEND_URL) o el de otra web.
+    const valid = { "token-bueno": { success: true, hostname: "localhost" }, "token-otra-web": { success: true, hostname: "copia-maliciosa.com" } };
+    res.end(JSON.stringify(valid[body.response as keyof typeof valid] ?? { success: false, "error-codes": ["invalid-input-response"] }));
   });
 });
 await new Promise<void>((resolve) => cloudflare.listen(0, "127.0.0.1", resolve));
@@ -260,7 +262,9 @@ try {
   r = await visitor("POST", bookings, { captchaToken: "token-bueno" });
   ok(r.status === 400, "con un token válido pasa a validar la reserva", r.body);
   r = await visitor("POST", bookings, { captchaToken: "token-caido" });
-  ok(r.status === 400, "si Cloudflare no responde, la reserva no se bloquea", r.body);
+  ok(r.status === 503 && /inténtalo de nuevo/.test(r.body.error.message), "si Cloudflare falla, se rechaza (no se deja pasar a nadie)", r.body);
+  r = await visitor("POST", bookings, { captchaToken: "token-otra-web" });
+  ok(r.status === 403, "un token resuelto en otro dominio → 403", r.body);
 } finally {
   captchaApi.kill("SIGTERM");
   cloudflare.close();

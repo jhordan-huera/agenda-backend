@@ -8,7 +8,7 @@ import type { Professional, Schedule } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
 import { diffChanges, PROFESSIONAL_FIELDS, type ProfessionalForAudit } from "./audit-changes.ts";
 import { authorize, parseInput, type RequestContext } from "./context.ts";
-import { assertStoredImage, releaseImages } from "./image-service.ts";
+import { assertStoredImage, imageFolder, releaseImages } from "./image-service.ts";
 import { assertMultipleAgendas, assertProfessionalLimit } from "./plan-limits.ts";
 
 /**
@@ -140,6 +140,12 @@ async function copyStartingSchedule(db: Db, businessId: string, professionalId: 
   }
 }
 
+/** La foto de una agenda: de las fotos de agendas del negocio o la del usuario que la atiende. */
+const agendaImageFolders = (businessId: string, userId: string | null) => [
+  imageFolder.professional(businessId),
+  ...(userId ? [imageFolder.avatar(userId)] : []),
+];
+
 export const professionalService = {
   async list(ctx: RequestContext, businessId: string): Promise<Professional[]> {
     await authorize(pool, ctx, businessId);
@@ -155,7 +161,7 @@ export const professionalService = {
       if (data.isActive) await assertProfessionalLimit(db, businessId);
       await assertAssignableMember(db, businessId, data.userId);
       await assertOwnServices(db, businessId, data);
-      assertStoredImage(data.avatarUrl, null, "La foto");
+      assertStoredImage(data.avatarUrl, null, "La foto", agendaImageFolders(businessId, data.userId));
       const next = await one<{ order: number }>(
         db,
         `select coalesce(max(sort_order), 0) + 1 as "order" from professionals where business_id = $1`,
@@ -205,7 +211,7 @@ export const professionalService = {
     const { professional, previousAvatar } = await transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "professionals.manage", { lock: true });
       const before = await findProfessional(db, businessId, professionalId);
-      assertStoredImage(data.avatarUrl, before.avatarUrl, "La foto");
+      assertStoredImage(data.avatarUrl, before.avatarUrl, "La foto", agendaImageFolders(businessId, data.userId));
       if (data.isActive && !before.isActive) await assertProfessionalLimit(db, businessId, professionalId);
       if (!data.isActive && before.isActive) await assertAnotherActive(db, businessId, professionalId);
       await assertAssignableMember(db, businessId, data.userId, professionalId);

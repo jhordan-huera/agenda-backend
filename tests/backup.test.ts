@@ -1,6 +1,6 @@
 // Copia de seguridad: volcado, restauración de prueba, cifrado, descifrado y protecciones.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
@@ -29,12 +29,13 @@ const backup = (extraEnv: Record<string, string | undefined>, args = ["--out", d
     env: { ...process.env, BACKUP_PASSPHRASE: PASSPHRASE, NTFY_TOPIC: "", ...extraEnv },
     encoding: "utf8",
   });
-const decrypt = (file: string, output: string, passphrase = PASSPHRASE) =>
-  spawnSync(process.execPath, ["scripts/decrypt-backup.ts", file, output], {
-    env: { ...process.env, BACKUP_PASSPHRASE: passphrase },
+const decrypt = (file: string, output?: string, passphrase = PASSPHRASE, extraEnv: Record<string, string> = {}) =>
+  spawnSync(process.execPath, ["scripts/decrypt-backup.ts", file, ...(output ? [output] : [])], {
+    env: { ...process.env, BACKUP_PASSPHRASE: passphrase, ...extraEnv },
     encoding: "utf8",
     input: "",
   });
+const ROOT = new URL("..", import.meta.url).pathname;
 
 try {
   console.log("Copia comprobada");
@@ -73,6 +74,22 @@ try {
   const counts = countCopyRows(sql);
   const users = (await db.query("select count(*)::int as n from users")).rows[0].n;
   ok(counts.get("public.users") === users && counts.size > 20, "con todas las tablas y filas", { tables: counts.size, users });
+  // Sin salida: fuera del repositorio, en ~/Agenda360-copias (sólo para este usuario).
+  const home = join(dir, "casa");
+  r = decrypt(file, undefined, PASSPHRASE, { HOME: home });
+  const defaultCopy = join(home, "Agenda360-copias", files[0].replace(/\.gz\.enc$/, ""));
+  ok(r.status === 0 && existsSync(defaultCopy), "por defecto la deja en ~/Agenda360-copias", r.stdout + r.stderr);
+  ok(
+    (statSync(join(home, "Agenda360-copias")).mode & 0o777) === 0o700 && (statSync(defaultCopy).mode & 0o777) === 0o600,
+    "carpeta 700 y archivo 600",
+  );
+  const insideRepo = join(ROOT, "agenda360-prueba-descifrada.sql");
+  r = decrypt(file, insideRepo);
+  ok(r.status === 1 && /dentro del repositorio/.test(r.stderr) && !existsSync(insideRepo), "se niega a dejarla dentro del repositorio", r.stderr);
+  r = decrypt(file, join(ROOT, "db", "copia.sql"));
+  ok(r.status === 1 && !existsSync(join(ROOT, "db", "copia.sql")), "ni en una subcarpeta del repositorio", r.stderr);
+  rmSync(insideRepo, { force: true });
+
   r = decrypt(file, join(dir, "mala.sql"), "otra-clave-cualquiera-123456");
   ok(r.status === 1 && /clave no es correcta/.test(r.stderr) && !existsSync(join(dir, "mala.sql")), "con otra clave no se abre", r.stderr);
   const tampered = Buffer.from(raw);
@@ -113,6 +130,22 @@ try {
     ),
     "usa el modo sesión del pooler de Supabase (pg_dump no funciona en el 6543)",
   );
+  const previousSsl = process.env.DATABASE_SSL;
+  process.env.DATABASE_SSL = "true";
+  try {
+    const verified = new URL(dumpUrl("postgresql://postgres.ref:clave@aws-0-us-west-2.pooler.supabase.com:6543/postgres", "/tmp/ca/supabase-ca.crt"));
+    ok(
+      verified.searchParams.get("sslmode") === "verify-full" && verified.searchParams.get("sslrootcert") === "/tmp/ca/supabase-ca.crt",
+      "con SSL, pg_dump comprueba el certificado de Supabase y el nombre del servidor (verify-full)",
+      verified.search,
+    );
+    const other = new URL(dumpUrl("postgresql://u:c@db.otro-proveedor.com:5432/postgres", "/tmp/ca/supabase-ca.crt"));
+    ok(other.searchParams.get("sslrootcert") === "system", "otro proveedor: los certificados del sistema", other.search);
+    ok(new URL(dumpUrl("postgresql://u:c@127.0.0.1:5432/postgres")).searchParams.get("sslmode") === "require", "este equipo: cifrada sin comprobar");
+  } finally {
+    if (previousSsl === undefined) delete process.env.DATABASE_SSL;
+    else process.env.DATABASE_SSL = previousSsl;
+  }
   ok(
     scrub("connection to server at \"aws-0-us-west-2.pooler.supabase.com\" failed: FATAL: password authentication failed for user \"postgres.owrmbz\"") ===
       'connection to server at "[servidor]" failed: FATAL: password authentication failed for user "postgres.[proyecto]"',

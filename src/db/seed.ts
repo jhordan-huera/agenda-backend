@@ -14,6 +14,8 @@ import { createSeedDatabase } from "./seed-data.ts";
  */
 const TABLES = [
   "cron_runs",
+  "rate_limits",
+  "image_uploads",
   "plan_change_requests",
   "clinical_note_addenda",
   "clinical_notes",
@@ -217,6 +219,9 @@ async function seed() {
         a.createdAt, a.updatedAt, a.createdAt,
       ]),
     );
+    // Reservas online demo ya confirmadas o atendidas: el negocio las gestionó, así que dan acceso al
+    // paciente a su profesional (las pendientes siguen esperando a recepción; ver la migración 028).
+    await db.query("update appointments set client_access_pending = false where client_access_pending and status <> 'pending'");
     await insertRows(
       db,
       "audit_logs",

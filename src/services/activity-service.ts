@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { auditLogColumns, auditLogConnectionColumns, notificationColumns } from "../db/columns.ts";
-import { many, pool, type Db } from "../db/pool.ts";
+import { many, one, pool, type Db } from "../db/pool.ts";
 import type { AuditLog, AuditLogPage, EmailNotification } from "../shared/types/index.ts";
 import { authorize, parseInput, type RequestContext } from "./context.ts";
 
@@ -106,17 +106,26 @@ export const notificationService = {
 export const auditLogService = {
   /**
    * Actividad del negocio. Sin los eventos de sesión (inicios de sesión, IP y navegador): ésos
-   * sólo los ve el super admin.
+   * sólo los ve el super admin. Los de la historia clínica (quién la consultó, nombres de archivos…)
+   * sólo quien tiene acceso clínico: el propietario y los miembros que él autorizó.
    */
   async list(ctx: RequestContext, businessId: string, query: Record<string, unknown>): Promise<AuditLogPage> {
-    await authorize(pool, ctx, businessId, "audit.view");
+    const actor = await authorize(pool, ctx, businessId, "audit.view");
     const filters = parseAuditFilters(query);
+    const clinicalAccess =
+      actor.role === "owner" ||
+      Boolean(
+        await one(pool, "select 1 from business_users where business_id = $1 and user_id = $2 and clinical_access", [
+          businessId,
+          actor.userId,
+        ]),
+      );
     return queryAuditLogs<AuditLog>(
       pool,
       {
         select: auditLogColumns("l"),
         from: "audit_logs l",
-        where: ["l.business_id = $1", "l.entity_type <> 'session'"],
+        where: ["l.business_id = $1", "l.entity_type <> 'session'", ...(clinicalAccess ? [] : ["l.entity_type <> 'clinical_record'"])],
         values: [businessId],
       },
       filters,

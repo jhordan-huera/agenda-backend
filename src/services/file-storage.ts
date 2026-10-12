@@ -206,7 +206,18 @@ export function verifyLocalToken(raw: string, op: LocalToken["op"]): LocalToken 
   }
 }
 
-export const localFilePath = (bucket: string, objectPath: string) => path.join(LOCAL_STORAGE_DIR, bucket, objectPath);
+/**
+ * Ruta en disco de un archivo local. Error si saldría de la carpeta de su bucket: con "..", con una
+ * ruta absoluta o con un bucket que no es una carpeta de LOCAL_STORAGE_DIR (fuera está el .env).
+ */
+export function localFilePath(bucket: string, objectPath: string): string {
+  const root = path.resolve(LOCAL_STORAGE_DIR, bucket);
+  const file = path.resolve(root, objectPath);
+  if (path.dirname(root) !== LOCAL_STORAGE_DIR || !file.startsWith(root + path.sep)) {
+    throw new Error("Ruta de archivo fuera de su carpeta.");
+  }
+  return file;
+}
 
 export async function writeLocalFile(bucket: string, objectPath: string, data: Buffer): Promise<void> {
   const file = localFilePath(bucket, objectPath);
@@ -214,7 +225,8 @@ export async function writeLocalFile(bucket: string, objectPath: string, data: B
   await writeFile(file, data, { flag: "wx" }); // Nunca sobrescribe.
 }
 
-export const readLocalFile = (bucket: string, objectPath: string) => readFile(localFilePath(bucket, objectPath));
+/** Con una ruta que se sale de su carpeta, la promesa falla (como si no existiera). */
+export const readLocalFile = async (bucket: string, objectPath: string) => readFile(localFilePath(bucket, objectPath));
 
 /** Prefijo de las imágenes públicas locales: el frontend de desarrollo pasa /api a la API. */
 const LOCAL_PUBLIC_PREFIX = "/api/files/public/";

@@ -19,9 +19,11 @@
  * Recuperar una copia: npm run backup:decrypt -- <archivo>
  */
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import pg from "pg";
+import { databaseTls, isSupabaseHost, SUPABASE_ROOT_CA } from "../src/db/tls.ts";
 import { decryptBackup, encryptBackup, MIN_PASSPHRASE_LENGTH } from "./backup-crypto.ts";
 import { env, notify } from "./notify.ts";
 
@@ -50,14 +52,25 @@ export function scrub(text: string): string {
     .replace(/password=\S+/gi, "password=[oculta]");
 }
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1", ""]);
+
 /**
  * pg_dump no funciona con el pooler de Supabase en modo transacción (puerto 6543): se usa el
- * modo sesión (5432) del mismo servidor y usuario.
+ * modo sesión (5432) del mismo servidor y usuario. Con DATABASE_SSL=true comprueba el certificado
+ * como la API (src/db/tls.ts): el de Supabase con su CA raíz (`supabaseCaFile`, un archivo) y el
+ * nombre del servidor (verify-full); otro proveedor, con los certificados del sistema.
  */
-export function dumpUrl(databaseUrl: string): string {
+export function dumpUrl(databaseUrl: string, supabaseCaFile?: string): string {
   const url = new URL(databaseUrl);
   if (url.hostname.endsWith(".pooler.supabase.com") && url.port === "6543") url.port = "5432";
-  if (env("DATABASE_SSL") === "true" && !url.searchParams.has("sslmode")) url.searchParams.set("sslmode", "require");
+  if (env("DATABASE_SSL") === "true" && !url.searchParams.has("sslmode")) {
+    if (LOCAL_HOSTS.has(url.hostname)) {
+      url.searchParams.set("sslmode", "require");
+    } else {
+      url.searchParams.set("sslmode", "verify-full");
+      url.searchParams.set("sslrootcert", isSupabaseHost(url.hostname) && supabaseCaFile ? supabaseCaFile : "system");
+    }
+  }
   return url.toString();
 }
 
@@ -78,13 +91,17 @@ function run(command: string, args: string[], input?: string): Promise<{ code: n
 }
 
 async function dumpDatabase(databaseUrl: string): Promise<string> {
+  // pg_dump lee la CA de un archivo: una copia temporal de la de src/db/tls.ts.
+  const caDir = await mkdtemp(join(tmpdir(), "agenda-ca-"));
+  const caFile = join(caDir, "supabase-ca.crt");
+  await writeFile(caFile, SUPABASE_ROOT_CA);
   const { code, stdout, stderr } = await run(env("PG_DUMP") ?? "pg_dump", [
-    `--dbname=${dumpUrl(databaseUrl)}`,
+    `--dbname=${dumpUrl(databaseUrl, caFile)}`,
     "--schema=public",
     "--no-owner",
     "--no-privileges",
     "--encoding=UTF8",
-  ]);
+  ]).finally(() => rm(caDir, { recursive: true, force: true }));
   if (code !== 0) throw new BackupError(`pg_dump falló: ${scrub(stderr.trim()).slice(0, 400) || `código ${code}`}`);
   const header = [
     `-- Copia de seguridad de Agenda360 (esquema public) · ${new Date().toISOString()}`,
@@ -177,14 +194,12 @@ async function sendByEmail(file: Buffer, fileName: string, summary: string[]): P
       `La copia cifrada pesa ${formatSize(file.length)} y Gmail no admite adjuntos tan grandes: hay que guardar las copias en otro sitio.`,
     );
   }
-  const nodemailer = (await import("nodemailer")).default;
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: { type: "OAuth2", user: config.gmail.user, clientId: config.gmail.clientId, clientSecret: config.gmail.clientSecret, refreshToken: config.gmail.refreshToken },
-  });
+  // Por SMTP o por la API de Gmail, como la cola de emails (GMAIL_TRANSPORT). Un adjunto grande tarda en subir.
+  const { createGmailSender } = await import("../src/services/gmail-transport.ts");
+  const transporter = createGmailSender(config.gmail, { timeoutMs: 120_000 });
   const recipient = config.emailRedirectTo ?? to;
   try {
-    await transporter.sendMail({
+    await transporter.send({
       from: { name: config.gmail.fromName, address: config.gmail.user },
       to: recipient,
       subject: `Copia de seguridad de Agenda360 · ${today()}`,
@@ -194,9 +209,9 @@ async function sendByEmail(file: Buffer, fileName: string, summary: string[]): P
         ...summary,
         "",
         "Para recuperarla:",
-        "1. Guarda el adjunto en la carpeta agenda-backend de tu ordenador.",
-        `2. Ejecuta: npm run backup:decrypt -- ${fileName}`,
-        "   (usa la clave BACKUP_PASSPHRASE de tu .env o te la pide).",
+        "1. Guarda el adjunto FUERA de la carpeta agenda-backend (p. ej. en Descargas): el repositorio es público.",
+        `2. Desde agenda-backend, ejecuta: npm run backup:decrypt -- ~/Downloads/${fileName}`,
+        "   (usa la clave BACKUP_PASSPHRASE de tu .env o te la pide). El .sql queda en ~/Agenda360-copias.",
         "3. Restaura el .sql resultante en una base de datos VACÍA (ver el README, «Copias de seguridad»).",
         "",
         "Sin la clave nadie puede abrir la copia, tampoco Google. Si pierdes la clave, las copias no sirven:",
@@ -216,9 +231,8 @@ const DATABASE_WARN_MB = Number(env("DATABASE_WARN_MB") ?? 350);
 
 /** Tamaño de la base en bytes (null si no se pudo leer: no impide la copia). */
 async function databaseSize(databaseUrl: string): Promise<number | null> {
-  // Supabase exige SSL (con su propia CA); la base local de las pruebas, no.
-  const ssl = env("DATABASE_SSL") === "false" ? undefined : { rejectUnauthorized: false };
-  const client = new pg.Client({ connectionString: databaseUrl, ssl });
+  // Supabase exige SSL (y se comprueba su certificado, como en la API); la base local de las pruebas, no.
+  const client = new pg.Client({ connectionString: databaseUrl, ssl: databaseTls(databaseUrl, env("DATABASE_SSL") !== "false") });
   try {
     await client.connect();
     const result = await client.query<{ bytes: string }>("select pg_database_size(current_database()) as bytes");

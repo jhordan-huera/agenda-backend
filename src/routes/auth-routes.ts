@@ -1,4 +1,5 @@
 import { Router, type Request } from "express";
+import { requireCaptcha } from "../http/captcha.ts";
 import { clientIp } from "../http/client-ip.ts";
 import { handle, limitRequests } from "../http/handlers.ts";
 import { clearSessionCookie, setSessionCookie } from "../http/session.ts";
@@ -12,11 +13,13 @@ export const authRoutes = Router();
 const connectionOf = (req: Request) => ({ ip: clientIp(req), userAgent: req.get("user-agent") ?? null });
 
 const loginLimit = limitRequests({
+  name: "login",
   windowMinutes: 15,
   max: 30,
   message: "Demasiados intentos de inicio de sesión. Espera unos minutos e inténtalo de nuevo.",
 });
 const signupLimit = limitRequests({
+  name: "registro",
   windowMinutes: 60,
   max: 20,
   message: "Demasiados registros desde esta conexión. Inténtalo más tarde.",
@@ -44,7 +47,8 @@ authRoutes.post("/login/two-factor", loginLimit, async (req, res) => {
   res.json(session);
 });
 
-authRoutes.post("/register", signupLimit, async (req, res) => {
+// Con CAPTCHA: el registro envía un email de bienvenida a la dirección que se escriba.
+authRoutes.post("/register", signupLimit, requireCaptcha, async (req, res) => {
   const { session, issued } = await authService.signUp(req.body);
   setSessionCookie(res, issued);
   res.status(201).json(session);

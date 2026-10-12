@@ -133,23 +133,24 @@ let notice = buildNotice({ ...base, reminders: 2, sentSinceLastRun: 4, sentEmail
 ok(notice?.priority === 2 && notice.title === "Agenda360: 4 correos enviados" && notice.click === "/admin/activity", "correos enviados: aviso discreto que abre la actividad", notice);
 const message = notice?.message ?? "";
 ok(
-  message.startsWith("Recordatorios de cita · 2\n• María L. (ma***@gmail.com) · mié 7 oct 10:00 · Dra. Nadia\n• Juan P. (ju***@hotmail.com) · mié 7 oct 11:30 · Dra. Nadia"),
-  "agrupa por tipo (primero los recordatorios) con a quién, cuándo y de qué negocio",
+  message.startsWith("Recordatorios de cita · 2\n• Dra. Nadia · mié 7 oct 10:00\n• Dra. Nadia · mié 7 oct 11:30"),
+  "agrupa por tipo (primero los recordatorios) con de qué negocio y cuándo",
   message,
 );
 ok(
-  message.includes("Aviso de nueva reserva (al negocio) · 1\n• Dra. Nadia · reserva de Carlos M. para el sáb 10 oct 09:00 (dr***@gmail.com)") &&
-    message.includes("Solicitud de cambio de plan · 1\n• jh***@gmail.com"),
+  message.includes("Aviso de nueva reserva (al negocio) · 1\n• Dra. Nadia · reserva para el sáb 10 oct 09:00") &&
+    /Solicitud de cambio de plan · 1(\n|$)/.test(message),
   "cada tipo con su descripción",
   message,
 );
+ok(!/María|Carlos|Juan|@/.test(message), "sin pacientes: ni nombres ni emails (ntfy no es sitio para datos personales)", message);
 ok(
   describeSentEmails(sample.slice(0, 1), 45).at(-1) === "…y 44 más (detalle en el panel: Actividad → Emails).",
   "si son muchos, dice cuántos faltan",
 );
 notice = buildNotice({ ...base, sentSinceLastRun: 1, sentEmails: sample.slice(0, 1), emails: emails({ retrying: 1, errors: ["Gmail: 454 Too many login attempts"] }) });
 ok(notice?.priority === 3 && /1 correo no se pudo enviar/.test(notice.title) && /Too many login attempts/.test(notice.message), "reintentos: aviso normal con el error", notice);
-ok(/Sí se enviaron \(1\):\n\nRecordatorio de cita · 1\n• María L\./.test(notice?.message ?? ""), "y también lista los que sí salieron", notice?.message);
+ok(/Sí se enviaron \(1\):\n\nRecordatorio de cita · 1\n• Dra\. Nadia · mié 7 oct 10:00/.test(notice?.message ?? ""), "y también lista los que sí salieron", notice?.message);
 notice = buildNotice({ ...base, pending: 4, emails: emails({ failed: 2, retrying: 1, errors: ["invalid_grant"] }) });
 ok(notice?.priority === 4 && /3 correos no se pudieron enviar/.test(notice.title) && /No se enviarán.*2/.test(notice.message) && /Siguen en cola: 4/.test(notice.message), "fallos definitivos: prioridad alta", notice);
 ok(buildNotice({ ...base, emails: emails() }, { gmailConfigured: false }) === null, "sin Gmail pero sin nada en cola: no avisa");

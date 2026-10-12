@@ -189,7 +189,7 @@ export const emailTemplates = {
         { kind: "button", label: "Entrar al panel", url: data.loginUrl },
         {
           kind: "note",
-          text: "Por seguridad, activa la verificación en dos pasos en Configuración apenas entres. Guarda este email: si necesitas otra contraseña, pídesela a quien te agregó.",
+          text: "Al entrar por primera vez tendrás que activar la verificación en dos pasos (con una app de autenticación en tu celular): es obligatoria para los super admins. Guarda este email: si necesitas otra contraseña, pídesela a quien te agregó.",
         },
       ],
     }),

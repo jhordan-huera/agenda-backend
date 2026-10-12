@@ -1,22 +1,11 @@
 // Copia de agenda-front/src/lib/validations/booking.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
-import {
-  dateField,
-  documentIdField,
-  emailField,
-  homeVisitSchema,
-  optionalEmailField,
-  optionalText,
-  phoneField,
-  requiredPhoneField,
-  requiredText,
-  timeField,
-} from "./fields.ts";
+import { dateField, documentIdField, emailField, homeVisitSchema, optionalText, requiredPhoneField, requiredText, timeField } from "./fields.ts";
 
 /**
- * Reserva desde la página pública. El cliente se identifica con su cédula: si ya es cliente del
- * negocio, se usan sus datos guardados y nombre, email y teléfono pueden ir vacíos; si es nuevo,
- * la API los exige (ver newClientContactSchema).
+ * Reserva desde la página pública. El paciente escribe siempre su cédula, nombre, email y teléfono:
+ * la página no dice si la cédula ya es de un cliente del negocio. Si lo es, la API sólo une la
+ * reserva a esa ficha cuando coinciden el email o el teléfono guardados.
  */
 export const publicBookingSchema = z
   .object({
@@ -24,9 +13,9 @@ export const publicBookingSchema = z
     date: dateField,
     startTime: timeField,
     documentId: documentIdField,
-    name: optionalText(120),
-    email: optionalEmailField,
-    phone: phoneField,
+    name: requiredText("Tu nombre"),
+    email: emailField,
+    phone: requiredPhoneField,
     notes: optionalText(500),
     /** null = cita en el local (o virtual). A domicilio, la ubicación exacta marcada en el mapa es obligatoria. */
     homeVisit: homeVisitSchema.nullable().default(null),
@@ -41,14 +30,10 @@ export const publicBookingSchema = z
   })
   .refine((data) => !(data.isVirtual && data.homeVisit), { path: ["isVirtual"], message: "Una cita virtual no es a domicilio" });
 
-/** Datos obligatorios de un cliente nuevo en la reserva online. */
-export const newClientContactSchema = z.object({
-  name: requiredText("Tu nombre"),
-  email: emailField,
-  phone: requiredPhoneField,
-});
-
-/** Búsqueda del cliente por cédula en la página pública. */
+/**
+ * Búsqueda por cédula de las versiones anteriores de la página pública. La API la sigue aceptando
+ * (una página abierta o guardada sin conexión aún la usa), pero ya no dice si la cédula es de un cliente.
+ */
 export const clientLookupSchema = z.object({ documentId: documentIdField });
 
 export type PublicBookingInput = z.infer<typeof publicBookingSchema>;

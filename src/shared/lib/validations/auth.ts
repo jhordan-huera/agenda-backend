@@ -64,6 +64,11 @@ export const twoFactorDisableSchema = z.object({
   code: twoFactorCode,
 });
 
+/** Para cambiar el email de la cuenta hace falta la contraseña actual. */
+export const currentPasswordSchema = z.object({
+  currentPassword: z.string({ error: "Escribe tu contraseña actual" }).min(1, "Escribe tu contraseña actual").max(200),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type TwoFactorLoginInput = z.infer<typeof twoFactorLoginSchema>;
 export type TwoFactorDisableInput = z.infer<typeof twoFactorDisableSchema>;

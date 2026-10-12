@@ -40,6 +40,8 @@ import {
   assertAppointmentInScope,
   assertClientInScope,
   ownClientCondition,
+  pendingClientCondition,
+  releaseClientAccess,
   type AgendaScope,
 } from "./agenda-scope.ts";
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
@@ -61,8 +63,17 @@ async function findOwned<T>(db: Db, table: string, columns: string, businessId: 
 
 /* ---------------------------------- Clientes --------------------------------- */
 
-/** La cédula identifica al cliente en el negocio: no puede repetirse y, en Ecuador, debe ser válida. */
-async function assertValidClientDocument(db: Db, businessId: string, documentId: string, excludeId?: string) {
+/**
+ * La cédula identifica al cliente en el negocio: no puede repetirse y, en Ecuador, debe ser válida.
+ * Con «sólo sus pacientes» el aviso no dice de quién es: el profesional no ve a los demás pacientes.
+ */
+async function assertValidClientDocument(
+  db: Db,
+  scope: AgendaScope,
+  businessId: string,
+  documentId: string,
+  excludeId?: string,
+) {
   if (!documentId) return;
   const business = await one<{ timezone: string }>(db, "select timezone from businesses where id = $1", [businessId]);
   const error = documentIdError(documentId, business?.timezone ?? "");
@@ -72,21 +83,44 @@ async function assertValidClientDocument(db: Db, businessId: string, documentId:
     "select name from clients where business_id = $1 and document_id = $2 and ($3::uuid is null or id <> $3::uuid)",
     [businessId, documentId, excludeId ?? null],
   );
-  if (duplicate) throw new AppError("conflict", `Ya existe un cliente con esa cédula: ${duplicate.name}.`);
+  if (!duplicate) return;
+  if (scope.ownClients) {
+    throw new AppError(
+      "conflict",
+      "Ya existe un cliente con esa cédula en el negocio. Si va a atenderse contigo, pide a recepción que le agende la cita en tu agenda.",
+    );
+  }
+  throw new AppError("conflict", `Ya existe un cliente con esa cédula: ${duplicate.name}.`);
 }
 
 export const clientService = {
-  /** Con el rol Profesional y "sólo sus pacientes", únicamente los suyos. */
+  /**
+   * Con el rol Profesional y "sólo sus pacientes", únicamente los suyos y, sólo con el nombre
+   * (`restricted`), los de reservas online en su agenda que el negocio aún no gestionó: así ve la cita,
+   * pero no su ficha ni su historia (ver ownClientCondition).
+   */
   async list(ctx: RequestContext, businessId: string): Promise<Client[]> {
     const actor = await authorize(pool, ctx, businessId);
     const own = (await agendaScope(pool, actor, businessId)).ownClients;
-    const clients = await many<Client>(
+    if (!own) {
+      const clients = await many<Client>(pool, `select ${clientColumns("c")} from clients c where c.business_id = $1`, [
+        businessId,
+      ]);
+      return clients.sort(byName);
+    }
+    const rows = await many<Client & { visible: boolean }>(
       pool,
-      `select ${clientColumns("c")} from clients c
-        where c.business_id = $1 ${own ? `and ${ownClientCondition("c", 2, 3)}` : ""}`,
-      own ? [businessId, own.professionalId, own.userId] : [businessId],
+      `select ${clientColumns("c")}, ${ownClientCondition("c", 2, 3)} as visible from clients c
+        where c.business_id = $1 and (${ownClientCondition("c", 2, 3)} or ${pendingClientCondition("c", 2)})`,
+      [businessId, own.professionalId, own.userId],
     );
-    return clients.sort(byName);
+    return rows
+      .map(({ visible, ...client }): Client =>
+        visible
+          ? client
+          : { ...client, documentId: "", email: "", phone: "", address: "", notes: "", restricted: true },
+      )
+      .sort(byName);
   },
 
   /**
@@ -159,7 +193,7 @@ export const clientService = {
       const data = parseInput(clientSchema, input);
       if (!data.documentId) throw new AppError("validation", "La cédula es obligatoria.");
       if (!data.email) throw new AppError("validation", "El email es obligatorio.");
-      await assertValidClientDocument(db, businessId, data.documentId);
+      await assertValidClientDocument(db, await agendaScope(db, actor, businessId), businessId, data.documentId);
       await assertClientLimit(db, businessId);
       const client = (await one<Client>(
         db,
@@ -185,14 +219,15 @@ export const clientService = {
       const actor = await authorize(db, ctx, businessId, "clients.manage", { lock: true });
       const data = parseInput(clientSchema, input);
       const current = await findOwned<Client>(db, "clients", clientColumns(), businessId, clientId, "Cliente no encontrado.");
-      await assertClientInScope(db, await agendaScope(db, actor, businessId), clientId);
+      const scope = await agendaScope(db, actor, businessId);
+      await assertClientInScope(db, scope, clientId);
       // Clientes antiguos sin cédula o sin email pueden seguir así hasta que se completen; una vez
       // puestos, no se quitan (el formulario del panel ya los exige al editar).
       if (!data.documentId && current.documentId) {
         throw new AppError("validation", "La cédula es obligatoria.");
       }
       if (!data.email && current.email) throw new AppError("validation", "El email es obligatorio.");
-      await assertValidClientDocument(db, businessId, data.documentId, clientId);
+      await assertValidClientDocument(db, scope, businessId, data.documentId, clientId);
       const client = (await one<Client>(
         db,
         `update clients set name = $2, document_id = $3, email = $4, phone = $5, address = $6, notes = $7, is_active = $8
@@ -684,6 +719,7 @@ export const appointmentService = {
       await assertNoConflict(db, updated);
       await assertLimitOnChange(db, before, updated);
       const appointment = await saveAppointment(db, updated, resetsSchedule(before, updated));
+      await releaseClientAccess(db, actor, appointment.id);
       await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
 
       const rescheduled = before.date !== appointment.date || before.startTime !== appointment.startTime;
@@ -719,6 +755,8 @@ export const appointmentService = {
       await assertNoConflict(db, updated);
       await assertLimitOnChange(db, before, updated);
       const appointment = await saveAppointment(db, updated, resetsSchedule(before, updated));
+      // Confirmada (o atendida) por recepción, un administrador o el propietario: el paciente pasa a ser del profesional.
+      await releaseClientAccess(db, actor, appointment.id);
       await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
       await logAudit(db, {
         businessId,
@@ -786,6 +824,7 @@ export async function setAppointmentArrival(
         where id = $1 returning ${appointmentColumns()}`,
       [appointmentId],
     ))!;
+    await releaseClientAccess(db, actor, appointmentId);
     await logAudit(db, {
       businessId,
       actor,

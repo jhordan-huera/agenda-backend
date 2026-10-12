@@ -92,6 +92,28 @@ function fromBodyParserError(error: unknown): AppError | null {
   return null;
 }
 
+/**
+ * Lo que se registra de un error inesperado. Nunca el objeto entero: los de PostgreSQL traen en
+ * `detail` (y a veces en `where` o `parameters`) la fila con datos de pacientes, y los registros
+ * de Vercel, Lambda y GitHub Actions no son sitio para eso. Sólo qué falló y dónde.
+ */
+export function errorForLog(error: unknown, depth = 0): Record<string, unknown> {
+  if (!(error instanceof Error)) return { type: typeof error };
+  const { code, table, constraint } = error as { code?: unknown; table?: unknown; constraint?: unknown };
+  const cause = (error as { cause?: unknown }).cause;
+  return Object.fromEntries(
+    Object.entries({
+      name: error.name,
+      code: typeof code === "string" || typeof code === "number" ? code : undefined,
+      table: typeof table === "string" ? table : undefined,
+      constraint: typeof constraint === "string" ? constraint : undefined,
+      message: error.message,
+      stack: error.stack,
+      cause: cause !== undefined && depth < 2 ? errorForLog(cause, depth + 1) : undefined,
+    }).filter(([, value]) => value !== undefined),
+  );
+}
+
 export const notFoundHandler: RequestHandler = (_req, _res, next) => {
   next(new AppError("not_found", "Ruta no encontrada."));
 };
@@ -106,7 +128,7 @@ export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
     return;
   }
   if (!appError) {
-    console.error(error);
+    console.error("Error inesperado:", errorForLog(error));
     res.status(500).json({ error: { code: "server", message: "Ocurrió un error inesperado. Inténtalo de nuevo." } });
     return;
   }

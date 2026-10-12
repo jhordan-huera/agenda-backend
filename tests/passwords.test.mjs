@@ -1,4 +1,4 @@
-// Contraseñas gestionadas por el super admin.
+// Contraseñas gestionadas por el super admin. Cambiar el email de la cuenta pide la contraseña actual.
 import pg from "pg";
 import { businessInput, createBusinessWithOwner } from "./helpers/business.mjs";
 
@@ -29,6 +29,7 @@ const login = (a, email, password) => a("POST", "/auth/login", { email, password
 console.log("Usuarios normales");
 const owner = agent();
 let r = await login(owner, "jhordan@demo.com", "demo1234");
+const ownerId = r.body.userId;
 const B = `/businesses/${r.body.businessId}`;
 r = await owner("POST", "/auth/change-password", { currentPassword: "demo1234", newPassword: "OtraClave1", confirmPassword: "OtraClave1" });
 ok(r.status === 403 && /soporte/.test(r.body.error.message), "el propietario no puede cambiar su contraseña", r.body);
@@ -36,6 +37,18 @@ r = await owner("POST", `${B}/team`, { firstName: "X", lastName: "Y", email: "x@
 ok(r.status === 404, "el propietario ya no puede invitar (ruta eliminada)", r.status);
 r = await agent()("POST", "/auth/forgot-password", { email: "jhordan@demo.com" });
 ok(r.status === 404, "recuperación por enlace eliminada", r.status);
+
+console.log("Cambiar el email de la cuenta");
+const profile = { firstName: "Jhordan", lastName: "Demo", phone: "", avatarUrl: null };
+r = await owner("PUT", `/users/${ownerId}`, { ...profile, email: "jhordan.nuevo@example.com" });
+ok(r.status === 400 && /contraseña/.test(r.body.error.message), "sin la contraseña actual → 400", r.body);
+r = await owner("PUT", `/users/${ownerId}`, { ...profile, email: "jhordan.nuevo@example.com", currentPassword: "OtraClave1" });
+ok(r.status === 400 && /no es correcta/.test(r.body.error.message), "con una contraseña equivocada → 400", r.body);
+r = await owner("PUT", `/users/${ownerId}`, { ...profile, email: "jhordan.nuevo@example.com", currentPassword: "demo1234" });
+ok(r.status === 200 && r.body.email === "jhordan.nuevo@example.com", "con la contraseña actual sí", r.body);
+r = await owner("PUT", `/users/${ownerId}`, { ...profile, email: "jhordan.nuevo@example.com", firstName: "Jhordan" });
+ok(r.status === 200, "el resto del perfil se edita sin contraseña", r.body);
+ok((await login(agent(), "jhordan.nuevo@example.com", "demo1234")).status === 200, "entra con el email nuevo y la misma contraseña");
 
 console.log("Super admin");
 const admin = agent();

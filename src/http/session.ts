@@ -1,6 +1,7 @@
 import type { CookieOptions, RequestHandler, Response } from "express";
 import { config } from "../config.ts";
 import { findSessionByToken, type IssuedSession } from "../services/auth-service.ts";
+import { superAdminNeedsTwoFactor, TWO_FACTOR_REQUIRED_CODE, TWO_FACTOR_REQUIRED_MESSAGE } from "../services/context.ts";
 import { AppError } from "./errors.ts";
 
 const COOKIE_NAME = "agendo_session";
@@ -26,15 +27,31 @@ export function clearSessionCookie(res: Response): void {
   res.clearCookie(COOKIE_NAME, cookieOptions());
 }
 
-/** Carga el usuario de la cookie de sesión en `req.ctx` (o null si no hay sesión válida). */
+/**
+ * Carga el usuario de la cookie de sesión en `req.ctx` (o null si no hay sesión válida). Cada uso
+ * renueva la sesión (caducidad por inactividad); con «Recordarme» también la fecha de la cookie.
+ */
 export const loadSession: RequestHandler = async (req, res, next) => {
   req.ctx = { user: null, sessionId: null };
   const token: unknown = req.cookies?.[COOKIE_NAME];
   if (typeof token !== "string" || !token) return next();
   const session = await findSessionByToken(token);
-  if (session) req.ctx = session;
-  else clearSessionCookie(res);
+  if (session) {
+    const { renewedUntil, ...ctx } = session;
+    req.ctx = ctx;
+    if (renewedUntil) setSessionCookie(res, { token, expiresAt: renewedUntil, persistent: true });
+  } else clearSessionCookie(res);
   next();
+};
+
+/**
+ * Panel /admin y modo soporte (/businesses, /images): el super admin sin la verificación en dos pasos
+ * (obligatoria) recibe 403 con el código `two_factor_required`, y el frontend le pide activarla. Sólo
+ * puede iniciar sesión, activarla (/auth/two-factor) y cerrar sesión.
+ */
+export const requireSuperAdminTwoFactor: RequestHandler = (req, res, next) => {
+  if (!superAdminNeedsTwoFactor(req.ctx)) return next();
+  res.status(403).json({ error: { code: TWO_FACTOR_REQUIRED_CODE, message: TWO_FACTOR_REQUIRED_MESSAGE } });
 };
 
 /**

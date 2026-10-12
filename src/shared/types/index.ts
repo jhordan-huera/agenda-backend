@@ -301,6 +301,12 @@ export interface Client {
   notes: string;
   isActive: boolean;
   createdAt: ISODateTime;
+  /**
+   * Sólo para un Profesional con «sólo sus pacientes»: paciente de una reserva online en su agenda que el
+   * negocio aún no confirmó. Llega sólo con el nombre (sin contacto ni notas) para mostrar la cita; su
+   * ficha y su historia no se abren hasta que recepción, un administrador o el propietario la gestione.
+   */
+  restricted?: true;
 }
 
 /** Modalidades de un servicio: en el local, en casa del cliente o por videollamada. */
@@ -846,6 +852,8 @@ export interface TwoFactorStatus {
   enabledAt: ISODateTime | null;
   /** Códigos de recuperación sin usar. */
   recoveryCodesLeft: number;
+  /** Obligatoria (con datos reales, siempre): sin ella no se usa el panel /admin ni el modo soporte. */
+  required: boolean;
 }
 
 /** Clave para la app de autenticación: el QR lleva `otpauthUrl`; `secret`, para escribirla a mano. */
@@ -893,9 +901,13 @@ export interface PublicBusinessProfile {
  * Resultado de buscar una cédula en la página pública de reservas. Nunca incluye datos de
  * contacto: sólo el nombre y la inicial del apellido para saludar ("María L.").
  */
+/**
+ * Respuesta de la búsqueda por cédula de las versiones anteriores de la página pública: siempre la
+ * misma, para no revelar si alguien es paciente del negocio.
+ */
 export interface PublicClientLookup {
-  found: boolean;
-  greetingName: string | null;
+  found: false;
+  greetingName: null;
 }
 
 export interface BookingConfirmation {
@@ -915,11 +927,17 @@ export interface BookingConfirmation {
   isVirtual: boolean;
   /** Enlace de la videollamada (citas virtuales, si el profesional lo configuró). */
   meetingUrl: string | null;
+  /** A dónde se envió la confirmación; "" si no es el email que escribió el paciente (va al de su ficha). */
   clientEmail: string;
   /** true si se envió el email de confirmación al cliente. */
   emailSent: boolean;
   /** Pago por transferencia: la agenda tiene datos bancarios y la cita tiene precio. */
   payment: BookingPayment | null;
+  /**
+   * La misma reserva otra vez (se perdió la respuesta y el paciente volvió a confirmar): la cita se
+   * paga por transferencia, pero los datos y el enlace de pago no van en la respuesta (le llegaron por email).
+   */
+  paymentByEmail: boolean;
 }
 
 export interface BookingPayment {

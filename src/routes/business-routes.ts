@@ -1,5 +1,7 @@
 import { Router } from "express";
+import { clientIp } from "../http/client-ip.ts";
 import { handle, limitRequests, queryParam } from "../http/handlers.ts";
+import { requireSuperAdminTwoFactor } from "../http/session.ts";
 import { businessService, subscriptionService, teamService, userService } from "../services/account-service.ts";
 import { auditLogService, notificationService } from "../services/activity-service.ts";
 import { clinicalAttachmentService } from "../services/clinical-attachment-service.ts";
@@ -25,15 +27,21 @@ userRoutes.get(
   "/:userId",
   handle((req) => userService.getById(req.ctx, req.params.userId)),
 );
+// Cambiar el email pide la contraseña actual y queda en los eventos de sesión (con IP y navegador).
 userRoutes.put(
   "/:userId",
-  handle((req) => userService.update(req.ctx, req.params.userId, req.body)),
+  handle((req) =>
+    userService.update(req.ctx, req.params.userId, req.body, { ip: clientIp(req), userAgent: req.get("user-agent") ?? null }),
+  ),
 );
 
 /* ------------------------------------------------------------ /api/images --- */
 
 /** Logo o foto de perfil: URL firmada para subirla al almacenamiento y su dirección pública. */
 export const imageRoutes = Router();
+
+// Modo soporte del super admin: sin la verificación en dos pasos (obligatoria), `two_factor_required`.
+imageRoutes.use(requireSuperAdminTwoFactor);
 
 imageRoutes.post(
   "/",
@@ -48,6 +56,9 @@ imageRoutes.post(
  * servicio comprueba que la sesión es miembro y que su rol tiene permiso.
  */
 export const businessRoutes = Router();
+
+// El super admin entra a los negocios en modo soporte ("Gestionar negocio"): con la verificación en dos pasos.
+businessRoutes.use(requireSuperAdminTwoFactor);
 
 businessRoutes.post(
   "/",

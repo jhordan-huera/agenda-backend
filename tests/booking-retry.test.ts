@@ -1,5 +1,6 @@
-// Página de reservas: repetir la misma reserva (se perdió la respuesta) devuelve la misma cita, y un
-// cliente antiguo sin cédula sólo se reutiliza si coincide también el nombre (no sólo el email).
+// Página de reservas: repetir la misma reserva (se perdió la respuesta) devuelve la misma cita (si
+// coinciden el email o el teléfono), y un cliente antiguo sin cédula sólo se reutiliza si coincide
+// también el nombre (no sólo el email).
 import { execFileSync } from "node:child_process";
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { getAvailableSlots } from "../src/shared/lib/availability.ts";
@@ -79,10 +80,16 @@ ok(
 );
 ok(count(`select count(*) from appointments a join clients c on c.id = a.client_id where c.document_id = '${ana.documentId}'`) === 1, "no se crea otra cita");
 ok(count(`select count(*) from notifications where appointment_id = '${appointmentId}'`) === emailsAfterFirst, "ni se reenvían los emails");
-const onlyDocument = await book(day.service.id, day.date, day.slots[0], { documentId: ana.documentId });
+const samePhone = await book(day.service.id, day.date, day.slots[0], { ...ana, email: "otro.email@correo.ec", phone: "0994445555" });
 ok(
-  onlyDocument.status === 200 && onlyDocument.body.appointmentId === appointmentId && onlyDocument.body.clientEmail === "an***@correo.ec",
-  "con sólo la cédula, la misma cita y el email enmascarado",
+  samePhone.status === 200 && samePhone.body.appointmentId === appointmentId && samePhone.body.clientEmail === "",
+  "con su cédula y su teléfono (escrito de otra forma) también es su reserva, sin mostrar el email de la ficha",
+  samePhone.body,
+);
+const onlyDocument = await book(day.service.id, day.date, day.slots[0], { ...ana, email: "adivino@correo.ec", phone: "+593 98 000 0000" });
+ok(
+  onlyDocument.status === 409 && !JSON.stringify(onlyDocument.body).includes(appointmentId) && !JSON.stringify(onlyDocument.body).includes("ana."),
+  "con su cédula y la hora, pero otro email y otro teléfono: no recibe la confirmación (ni el enlace de pago), sólo «hora ocupada»",
   onlyDocument.body,
 );
 const otherPerson = await book(day.service.id, day.date, day.slots[0], {

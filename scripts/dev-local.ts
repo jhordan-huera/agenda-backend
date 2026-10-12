@@ -31,7 +31,7 @@ const reset = process.argv.includes("--reset");
 const reminders = process.argv.includes("--recordatorios");
 
 /** La cuenta de Gmail de .env (nada más) y el correo al que van todos los emails de prueba. */
-const GMAIL_VARS = ["GMAIL_USER", "GMAIL_FROM_NAME", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"];
+const GMAIL_VARS = ["GMAIL_USER", "GMAIL_FROM_NAME", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN", "GMAIL_TRANSPORT"];
 const dotEnv = existsSync(join(ROOT, ".env")) ? parseEnv(readFileSync(join(ROOT, ".env"), "utf8")) : {};
 const gmail = Object.fromEntries(GMAIL_VARS.filter((name) => dotEnv[name]).map((name) => [name, dotEnv[name]]));
 // Nunca a los destinatarios reales: "off" no vale aquí.

@@ -26,12 +26,18 @@ const TYPES: Record<string, string> = {
   pdf: "application/pdf",
 };
 const typeOf = (objectPath: string) => TYPES[objectPath.split(".").pop() ?? ""] ?? "application/octet-stream";
+/**
+ * Un trozo de la ruta que no es un nombre de archivo o carpeta. Express decodifica cada trozo por
+ * separado: "..%2F..%2F.env" llega como un solo trozo "../../.env", así que también se rechazan
+ * las barras (y localFilePath comprueba además que el archivo quede dentro de su bucket).
+ */
+const isUnsafePart = (part: string) => !part || part === "." || part === ".." || /[/\\\0]/.test(part);
 
 if (fileStorage?.kind === "local") {
   fileRoutes.get("/public/:bucket/*path", async (req, res) => {
     const bucket = String(req.params.bucket);
     const parts = req.params.path as unknown as string[];
-    if (!isPublicBucket(bucket) || parts.some((part) => !part || part === "." || part === "..")) {
+    if (!isPublicBucket(bucket) || !Array.isArray(parts) || parts.some(isUnsafePart)) {
       throw new AppError("not_found", "Archivo no encontrado.");
     }
     const objectPath = parts.join("/");

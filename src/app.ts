@@ -5,11 +5,14 @@ import * as helmetModule from "helmet";
 import { config } from "./config.ts";
 import { pool } from "./db/pool.ts";
 import { errorHandler, notFoundHandler } from "./http/errors.ts";
+import { sameSecret } from "./http/secrets.ts";
 import { loadSession, requireAjaxHeader } from "./http/session.ts";
+import { noStore } from "./http/no-store.ts";
 import { authRoutes } from "./routes/auth-routes.ts";
 import { businessRoutes, imageRoutes, userRoutes } from "./routes/business-routes.ts";
 import { fileRoutes } from "./routes/file-routes.ts";
 import { adminRoutes, publicRoutes } from "./routes/platform-routes.ts";
+import { flushAlerts } from "./services/alerts.ts";
 import { flushEmailDelivery } from "./services/mailer.ts";
 
 // helmet trae tipos ESM y CommonJS: según cómo los resuelva TypeScript (en local o al compilar
@@ -25,19 +28,44 @@ export const app = express();
 
 app.set("trust proxy", config.trustProxy);
 app.disable("x-powered-by");
+
+/**
+ * En Lambda la Function URL es pública (sin autenticación de AWS): sólo se atiende lo que llega por
+ * el proxy del frontend (middleware.ts), que firma cada petición con PROXY_SECRET. Así nadie se salta
+ * la web (ni sus cabeceras de seguridad) llamando a la API directamente. Quedan abiertos
+ * /api/health (comprobación tras publicar) y la raíz (comprobación de arranque del adaptador).
+ */
+const PROXY_FREE_PATHS = new Set(["/", "/api/health"]);
+if (config.onLambda) {
+  const proxySecret = config.proxySecret;
+  if (proxySecret) {
+    app.use((req, res, next) => {
+      if ((req.method === "GET" && PROXY_FREE_PATHS.has(req.path)) || sameSecret(req.get("x-agendo-proxy-secret"), proxySecret)) {
+        return next();
+      }
+      res.status(403).json({ error: { code: "forbidden", message: "Acceso no permitido: entra desde la web de Agenda360." } });
+    });
+  } else {
+    console.warn(
+      "⚠ Lambda sin PROXY_SECRET: la Function URL atiende peticiones de cualquiera, sin pasar por el frontend. " +
+        "Pon el mismo PROXY_SECRET aquí y en el frontend de Vercel.",
+    );
+  }
+}
+
 app.use(helmet());
 app.use(cors({ origin: config.frontendUrls, credentials: true }));
 // Las imágenes van al almacenamiento, pero las antiguas (data URL) aún llegan sin cambios dentro del
 // JSON al guardar el perfil o el negocio, hasta pasarlas con src/db/move-images-to-storage.ts (npm run db:move-images).
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
-// En AWS Lambda la ejecución se congela al responder: los emails que la petición puso en cola se
-// envían antes de que salga la respuesta (ver flushEmailDelivery).
+// En AWS Lambda la ejecución se congela al responder: los emails que la petición puso en cola (y
+// los avisos por ntfy) se envían antes de que salga la respuesta (ver flushEmailDelivery).
 if (config.onLambda) {
   app.use((_req, res, next) => {
     const end = res.end.bind(res) as (...args: unknown[]) => Response;
     res.end = ((...args: unknown[]) => {
-      void flushEmailDelivery().finally(() => end(...args));
+      void Promise.all([flushEmailDelivery(), flushAlerts()]).finally(() => end(...args));
       return res;
     }) as Response["end"];
     next();
@@ -73,6 +101,8 @@ api.get("/health", async (_req, res) => {
   res.status(failure ? 503 : 200).json({
     ok: !failure,
     database: !failure,
+    // false: sin las claves de Turnstile, las reservas online y el registro no piden CAPTCHA.
+    captcha: Boolean(config.turnstile),
     // Sólo desde un equipo propio: el frontend local muestra el aviso "Base de PRODUCCIÓN".
     ...(config.productionDbFromHere ? { productionDatabase: true } : {}),
     ...failure,
@@ -92,6 +122,8 @@ api.use("/images", imageRoutes);
 api.use("/businesses", businessRoutes);
 api.use("/admin", adminRoutes);
 
+// Las respuestas de /api, sin caché salvo las rutas que ponen la suya (ver http/no-store.ts).
+app.use("/api", noStore);
 app.use("/api", api);
 
 // La raíz no es la aplicación: quien la abra en el navegador ve qué es y dónde comprobar el estado.
