@@ -257,12 +257,33 @@ for (let d = 1; d < 40 && !slot; d++) {
 }
 r = await visitor("POST", `/public/businesses/${business.slug}/bookings`, { serviceId: consult.id, date: slotDate, startTime: slot, ...person("aviso1"), professionalId: valeriaAgenda.id });
 ok(r.status === 200, "reserva online con Valeria", r.body);
-const notices = () => Number(sql("select count(*) from notifications where type = 'professional_new_appointment' and to_email = 'valeria.avisos@example.com'"));
-ok(notices() === 1, "a Valeria le llega el aviso de la cita nueva", notices());
+const sentTo = (type: string, to: string) => Number(sql(`select count(*) from notifications where type = '${type}' and to_email = '${to}'`));
+const notices = () => sentTo("professional_new_appointment", "valeria.avisos@example.com");
+const copies = () => sentTo("appointment_copy", "valeria.avisos@example.com");
+ok(copies() === 1 && notices() === 0, "a Valeria le llega la copia del email al paciente, en lugar del aviso de cita nueva", [copies(), notices()]);
+const copy = sql(`select subject || ' | ' || body from notifications where type = 'appointment_copy' and appointment_id = '${r.body.appointmentId}'`);
+ok(
+  /^Copia · Cliente aviso1: /.test(copy) && /Copia para ti del email que recibió Cliente aviso1/.test(copy) && /Ver en la agenda: http/.test(copy),
+  "la copia dice de quién es y enlaza la cita en la agenda",
+  copy,
+);
+const businessNotice = Number(sql(`select count(*) from notifications where type = 'booking_received' and appointment_id = '${r.body.appointmentId}'`));
+ok(businessNotice === 1, "el negocio (otro email) sigue recibiendo su aviso de nueva reserva", businessNotice);
 r = await valeria("POST", `${B}/appointments`, { ...base, date: slotDate, startTime: "07:00" });
-ok(r.status === 200 && notices() === 1, "de lo que agenda ella misma no se le avisa", notices());
+ok(r.status === 200 && copies() === 2 && notices() === 0, "también le llega la copia de lo que agenda ella misma", [copies(), notices()]);
 r = await elena("POST", `${B}/appointments`, { ...base, date: slotDate, startTime: "07:30", professionalId: valeriaAgenda.id });
-ok(r.status === 200 && notices() === 2, "de lo que agenda recepción sí", notices());
+ok(r.status === 200 && copies() === 3 && notices() === 0, "y de lo que agenda recepción", [copies(), notices()]);
+const byReception = r.body.id;
+r = await elena("PATCH", `${B}/appointments/${byReception}/status`, { status: "cancelled" });
+ok(r.status === 200 && copies() === 4, "y de la cancelación", copies());
+const ownerLogin = sql(`select email from users where id = '${ricardoAgenda.userId}'`);
+const ownerCopies = sentTo("appointment_copy", ownerLogin);
+r = await elena("POST", `${B}/appointments`, { ...base, date: slotDate, startTime: "07:00", professionalId: ricardoAgenda.id });
+ok(r.status === 200 && sentTo("appointment_copy", ownerLogin) === ownerCopies + 1, "sin email de avisos, la copia va al email con el que entra", ownerLogin);
+sql(`update businesses set notification_settings = notification_settings || '{"confirmations": false}' where id = '${rs.businessId}'`);
+r = await elena("POST", `${B}/appointments`, { ...base, date: slotDate, startTime: "08:00", professionalId: valeriaAgenda.id });
+ok(r.status === 200 && copies() === 4 && notices() === 1, "si el paciente no recibe email no hay copia: le llega el aviso de cita nueva", [copies(), notices()]);
+sql(`update businesses set notification_settings = notification_settings || '{"confirmations": true}' where id = '${rs.businessId}'`);
 
 const { transaction, pool } = await import("../src/db/pool.ts");
 const { runDailyAgendaJob } = await import("../src/services/notifications.ts");

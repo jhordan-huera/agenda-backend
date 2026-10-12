@@ -458,7 +458,9 @@ export type EmailType =
   | "platform_admin_added"
   | "professional_new_appointment"
   | "professional_daily_agenda"
-  | "payment_receipt_received";
+  | "payment_receipt_received"
+  /** Copia al profesional de un email al paciente sobre su cita (no los recordatorios). */
+  | "appointment_copy";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo

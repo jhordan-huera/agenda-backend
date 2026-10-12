@@ -26,6 +26,8 @@ export interface EmailMessage {
   title: string;
   greeting?: string;
   blocks: EmailBlock[];
+  /** Antes del título, separado del resto (p. ej. la nota de la copia al profesional). */
+  before?: EmailBlock[];
   /** Firma: "El equipo de Agenda360" o los datos del negocio. */
   signature: string[];
   /** Pie pequeño bajo la tarjeta. */
@@ -132,6 +134,7 @@ ${message.brand.caption ? `<div style="font:400 12px/1.4 ${FONT};color:${COLORS.
 </tr></table>
 </td></tr>
 <tr><td style="background:#ffffff;border:1px solid ${COLORS.border};border-radius:14px;padding:32px 28px;">
+${message.before?.length ? `${message.before.map(renderBlockHtml).join("\n")}\n<hr style="margin:0 0 24px;border:0;border-top:1px solid ${COLORS.border};">` : ""}
 <h1 style="margin:0 0 18px;font:700 22px/1.3 ${FONT};color:${COLORS.text};">${escapeHtml(message.title)}</h1>
 ${message.greeting ? `<p style="margin:0 0 16px;font:400 15px/1.6 ${FONT};color:${COLORS.text};">${escapeHtml(message.greeting)}</p>` : ""}
 ${message.blocks.map(renderBlockHtml).join("\n")}
@@ -160,7 +163,8 @@ function renderBlockText(block: EmailBlock): string {
 }
 
 function renderText(message: EmailMessage): string {
-  return [message.greeting, ...message.blocks.map(renderBlockText), message.signature.join("\n")]
+  const before = message.before?.length ? [...message.before.map(renderBlockText), "—"] : [];
+  return [...before, message.greeting, ...message.blocks.map(renderBlockText), message.signature.join("\n")]
     .filter((part) => part && part.trim())
     .join("\n\n");
 }

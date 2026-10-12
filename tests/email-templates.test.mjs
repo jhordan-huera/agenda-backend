@@ -103,5 +103,17 @@ const hidden = emailTemplates.bookingCreated({ ...withPayment([pichincha, guayaq
 ok(/transfiere a cualquiera de estas 2 cuentas/.test(hidden) && !/\$35/.test(hidden), "con el precio oculto, sin monto", hidden);
 ok(!/Pago por transferencia/.test(emailTemplates.bookingCreated({ ...appointment, payment: { bankAccounts: [], url: "https://agenda.example/pago/abc" } }).body), "sin cuentas, sin bloque de pago");
 
+
+console.log("Copia al profesional");
+const professionalCopy = { agendaUrl: "https://agenda.example/dashboard/calendar?date=2026-05-04", pending: false };
+const original = emailTemplates.appointmentConfirmed(appointment);
+const copy = emailTemplates.appointmentConfirmed({ ...appointment, professionalCopy });
+ok(copy.subject === `Copia · ${appointment.clientName}: ${original.subject}`, "el asunto dice de qué paciente es", copy.subject);
+ok(copy.body.startsWith(`Copia para ti del email que recibió ${appointment.clientName}.`) && copy.body.endsWith(original.body), "arriba la nota y debajo el mismo email que recibió el paciente", copy.body);
+ok(/Ver en la agenda: https:\/\/agenda\.example\/dashboard\/calendar/.test(copy.body) && /href="https:\/\/agenda\.example\/dashboard\/calendar/.test(copy.html), "con el botón para abrir la cita en la agenda");
+ok(copy.html.indexOf("Copia para ti") < copy.html.indexOf("<h1"), "la nota va antes del título");
+ok(!/Copia/.test(original.subject + original.body + original.html), "el email al paciente no cambia");
+ok(/pendiente: confírmala en tu agenda/.test(emailTemplates.bookingCreated({ ...appointment, professionalCopy: { ...professionalCopy, pending: true } }).body), "si está pendiente, lo recuerda");
+
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de plantillas de email pasaron");
 process.exitCode = failures ? 1 : 0;
