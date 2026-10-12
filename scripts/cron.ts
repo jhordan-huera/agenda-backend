@@ -34,6 +34,7 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   appointment_cancelled: ["Cita cancelada", "Citas canceladas"],
   booking_received: ["Aviso de nueva reserva (al negocio)", "Avisos de nueva reserva (al negocio)"],
   professional_new_appointment: ["Aviso de cita nueva (al profesional)", "Avisos de cita nueva (al profesional)"],
+  appointment_copy: ["Copia al profesional", "Copias al profesional"],
   professional_daily_agenda: ["Agenda del día (al profesional)", "Agendas del día (al profesional)"],
   payment_receipt_received: ["Comprobante de pago (al negocio)", "Comprobantes de pago (al negocio)"],
   business_created: ["Negocio creado", "Negocios creados"],

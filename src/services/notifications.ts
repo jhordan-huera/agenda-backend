@@ -80,6 +80,11 @@ interface AppointmentContext {
   professionalEmail: string;
   professionalNotify: boolean;
   professionalUserId: string | null;
+  /**
+   * A dónde va la copia de los emails al paciente: el email de avisos del profesional o, si no tiene,
+   * el de su usuario ("" = sin copia: una agenda sin email ni usuario).
+   */
+  professionalCopyEmail: string;
   /** Sala de videollamada del profesional ("" = sin enlace). */
   meetingUrl: string;
   /** Cuentas para el pago por transferencia de esta agenda, la principal primero (vacía: no cobra por transferencia). */
@@ -99,8 +104,11 @@ async function loadAppointmentContext(db: Db, appointment: Appointment): Promise
             p.display_name as "professionalName",
             coalesce(p.email, '') as "professionalEmail",
             coalesce(p.notify_new_appointments, false) as "professionalNotify",
-            p.user_id as "professionalUserId"
-       from clients c cross join services s left join professionals p on p.id = $3
+            p.user_id as "professionalUserId",
+            coalesce(nullif(p.email, ''), u.email, '') as "professionalCopyEmail"
+       from clients c cross join services s
+       left join professionals p on p.id = $3
+       left join users u on u.id = p.user_id
       where c.id = $1 and s.id = $2`,
     [appointment.clientId, appointment.serviceId, appointment.professionalId],
   );
@@ -157,9 +165,16 @@ export function isRescheduled(before: Appointment, after: Appointment): boolean 
   );
 }
 
+const sameEmail = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/** Enlace a la cita en la agenda del panel. */
+const agendaUrlOf = (appointment: Appointment) =>
+  `${appOrigin()}/dashboard/calendar?date=${appointment.date}&appointment=${appointment.id}`;
+
 /**
  * Aviso al profesional de una cita nueva en su agenda (o que le pasaron de otra), salvo que la haya
- * agendado él mismo o que ya le llegue como aviso del negocio (mismo email que el negocio).
+ * agendado él mismo, que ya le llegue como aviso del negocio (mismo email que el negocio) o que a ese
+ * email ya le haya llegado la copia del email al paciente (`copiedTo`).
  */
 async function notifyProfessional(
   db: Db,
@@ -168,12 +183,14 @@ async function notifyProfessional(
   after: Appointment,
   origin: "dashboard" | "booking_page",
   actorUserId: string | null,
+  copiedTo: string,
 ) {
   const isNewForProfessional = !before || before.professionalId !== after.professionalId;
   if (!isNewForProfessional || !["pending", "confirmed"].includes(after.status)) return;
   if (!context.professionalEmail || !context.professionalNotify) return;
   if (actorUserId && actorUserId === context.professionalUserId) return;
   if (origin === "booking_page" && context.professionalEmail === context.business.email) return;
+  if (sameEmail(context.professionalEmail, copiedTo)) return;
   await queueEmail(db, {
     businessId: context.business.id,
     type: "professional_new_appointment",
@@ -204,8 +221,37 @@ export async function notifyReceiptReceived(db: Db, appointment: Appointment): P
   }
 }
 
+/** El email al paciente que corresponde a un cambio de su cita, según la configuración del negocio. */
+interface ClientMessage {
+  type: EmailType;
+  template: (data: AppointmentEmailData) => EmailContent;
+}
+
+function clientMessageFor(settings: Business["notificationSettings"], before: Appointment | null, after: Appointment): ClientMessage | null {
+  if (!before) {
+    if (!settings.confirmations || !["pending", "confirmed"].includes(after.status)) return null;
+    return after.status === "confirmed"
+      ? { type: "appointment_confirmed", template: emailTemplates.appointmentConfirmed }
+      : { type: "booking_created", template: emailTemplates.bookingCreated };
+  }
+  if (after.status === "cancelled" && before.status !== "cancelled") {
+    return settings.cancellations ? { type: "appointment_cancelled", template: emailTemplates.appointmentCancelled } : null;
+  }
+  if (after.status === "cancelled" || after.status === "completed" || after.status === "no_show") return null;
+  if (!settings.confirmations) return null;
+  // Estaba cancelada y vuelve a estar activa: el paciente la daba por perdida.
+  if (before.status === "cancelled") return { type: "appointment_updated", template: emailTemplates.appointmentRestored };
+  if (isRescheduled(before, after)) return { type: "appointment_updated", template: emailTemplates.appointmentUpdated };
+  if (after.status === "confirmed" && before.status !== "confirmed") {
+    return { type: "appointment_confirmed", template: emailTemplates.appointmentConfirmed };
+  }
+  return null;
+}
+
 /**
- * Emails automáticos al crear o cambiar una cita, según la configuración de notificaciones.
+ * Emails automáticos al crear o cambiar una cita, según la configuración de notificaciones. Cada
+ * email que sale al paciente (no los recordatorios) le llega también, como copia, al profesional de
+ * la cita; a ese email ya no se le manda además el aviso de cita nueva o de nueva reserva.
  * `actorUserId`: quién hizo el cambio desde el panel (al profesional no se le avisa de lo que hizo él).
  * Devuelve true si se envió un email al cliente.
  */
@@ -220,48 +266,45 @@ export async function notifyAppointmentChange(
   if (!context) return false;
   const { business } = context;
   const data = buildEmailData(context, after);
-  const settings = business.notificationSettings;
-  await notifyProfessional(db, context, before, after, origin, actorUserId);
+  const message = clientMessageFor(business.notificationSettings, before, after);
 
-  const toClient = async (type: EmailType, content: EmailContent) => {
-    if (!context.clientEmail) return false;
+  let sentToClient = false;
+  let copiedTo = "";
+  if (message && context.clientEmail) {
     // La reserva online de un paciente nuevo: tope por negocio (además del general a terceros).
     const hold = origin === "booking_page" ? await newPatientEmailHold(db, business.id, after.clientId) : null;
-    return queueEmail(db, { businessId: business.id, type, to: context.clientEmail, appointmentId: after.id, hold, ...content });
-  };
-
-  if (!before) {
-    if (origin === "booking_page" && business.email) {
+    sentToClient = await queueEmail(db, {
+      businessId: business.id,
+      type: message.type,
+      to: context.clientEmail,
+      appointmentId: after.id,
+      hold,
+      ...message.template(data),
+    });
+    const copyTo = context.professionalCopyEmail;
+    if (sentToClient && copyTo && !sameEmail(copyTo, context.clientEmail)) {
       await queueEmail(db, {
         businessId: business.id,
-        type: "booking_received",
-        to: business.email,
+        type: "appointment_copy",
+        to: copyTo,
         appointmentId: after.id,
-        ...emailTemplates.bookingReceived(data),
+        ...message.template({ ...data, professionalCopy: { agendaUrl: agendaUrlOf(after), pending: after.status === "pending" } }),
       });
+      copiedTo = copyTo;
     }
-    if (!settings.confirmations || !["pending", "confirmed"].includes(after.status)) return false;
-    return after.status === "confirmed"
-      ? toClient("appointment_confirmed", emailTemplates.appointmentConfirmed(data))
-      : toClient("booking_created", emailTemplates.bookingCreated(data));
   }
 
-  if (after.status === "cancelled" && before.status !== "cancelled") {
-    return settings.cancellations && toClient("appointment_cancelled", emailTemplates.appointmentCancelled(data));
+  if (!before && origin === "booking_page" && business.email && !sameEmail(business.email, copiedTo)) {
+    await queueEmail(db, {
+      businessId: business.id,
+      type: "booking_received",
+      to: business.email,
+      appointmentId: after.id,
+      ...emailTemplates.bookingReceived(data),
+    });
   }
-  if (after.status === "cancelled" || after.status === "completed" || after.status === "no_show") return false;
-
-  // Estaba cancelada y vuelve a estar activa: el paciente la daba por perdida.
-  if (before.status === "cancelled") {
-    return settings.confirmations && toClient("appointment_updated", emailTemplates.appointmentRestored(data));
-  }
-  if (isRescheduled(before, after)) {
-    return settings.confirmations && toClient("appointment_updated", emailTemplates.appointmentUpdated(data));
-  }
-  if (after.status === "confirmed" && before.status !== "confirmed") {
-    return settings.confirmations && toClient("appointment_confirmed", emailTemplates.appointmentConfirmed(data));
-  }
-  return false;
+  await notifyProfessional(db, context, before, after, origin, actorUserId, copiedTo);
+  return sentToClient;
 }
 
 /**

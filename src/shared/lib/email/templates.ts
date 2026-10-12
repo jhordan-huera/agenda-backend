@@ -47,6 +47,11 @@ export interface AppointmentEmailData {
    * zona ("10:00 (hora de Ecuador, GMT-5)"): el paciente puede estar en otro país.
    */
   timezone?: string;
+  /**
+   * Copia del email al profesional de la cita: el mismo email que recibe el paciente, con el
+   * paciente en el asunto y, arriba, una nota y el botón para abrir la cita en la agenda.
+   */
+  professionalCopy?: { agendaUrl: string; pending: boolean };
 }
 
 /* ------------------------------------------------------------------ Piezas -- */
@@ -61,10 +66,28 @@ type MessageContent = Omit<EmailMessage, "brand" | "signature" | "footer">;
 const platformEmail = (message: MessageContent): EmailContent =>
   composeEmail({ ...message, brand: PLATFORM_BRAND, signature: PLATFORM_SIGNATURE, footer: PLATFORM_FOOTER });
 
+/** La copia al profesional: "Copia · Paciente: asunto" y, antes del email, la nota y el botón de la agenda. */
+function asProfessionalCopy(data: AppointmentEmailData, message: MessageContent): Partial<MessageContent> {
+  if (!data.professionalCopy) return {};
+  const { agendaUrl, pending } = data.professionalCopy;
+  return {
+    subject: `Copia · ${data.clientName}: ${message.subject}`,
+    preheader: `Copia del email que recibió ${data.clientName}.`,
+    before: [
+      {
+        kind: "callout",
+        text: `Copia para ti del email que recibió ${data.clientName}.${pending ? " La cita está pendiente: confírmala en tu agenda." : ""}`,
+      },
+      { kind: "button", label: "Ver en la agenda", url: agendaUrl },
+    ],
+  };
+}
+
 /** Email a un cliente sobre su cita: con la marca y los datos del negocio. */
 const clientEmail = (data: AppointmentEmailData, message: MessageContent): EmailContent =>
   composeEmail({
     ...message,
+    ...asProfessionalCopy(data, message),
     brand: { name: data.businessName, caption: data.professionalName !== data.businessName ? data.professionalName : undefined },
     signature: [data.businessName, data.businessAddress, data.businessPhone].filter(Boolean),
     footer: `Reserva gestionada con ${APP_NAME}.`,

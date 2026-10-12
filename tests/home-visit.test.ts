@@ -50,6 +50,7 @@ let r = await call("POST", "/public/businesses/fisioactiva/bookings", { document
 ok(r.status === 400 && /mapa/.test(r.body.error.message), "a domicilio sin punto en el mapa → 400", r.body);
 r = await call("POST", "/public/businesses/fisioactiva/bookings", { documentId: undefined, serviceId: both.id, ...slotA, ...person, homeVisit: visit });
 ok(r.status === 200 && r.body.price === both.price + 10 && r.body.homeVisit?.lat === -2.9 && r.body.showPrice === true, "reserva a domicilio con recargo", r.body);
+const onlineHomeVisit = r.body.appointmentId;
 r = await call("POST", "/public/businesses/fisioactiva/bookings", { documentId: undefined, serviceId: both.id, ...slotB, ...person, email: "local@example.com" });
 ok(r.status === 200 && r.body.price === both.price && r.body.homeVisit === null, "mismo servicio en el local, sin recargo", r.body);
 
@@ -96,7 +97,10 @@ ok(r.status === 200 && r.body.homeVisit === null, "pasar la cita al local", r.bo
 r = await call("GET", `${B}/notifications`);
 const confirmation = r.body.find((n: { appointmentId: string; type: string }) => n.appointmentId === apptId && n.type === "appointment_confirmed");
 ok(confirmation && /Precio: \$45/.test(confirmation.body) && /a domicilio/i.test(confirmation.body), "email con precio y lugar a domicilio", confirmation?.body);
-const received = r.body.find((n: { type: string; body: string }) => n.type === "booking_received" && /a domicilio/i.test(n.body));
+// Al negocio le llega su aviso o, si es el mismo email del dueño, la copia del email al paciente.
+const received = r.body.find(
+  (n: { appointmentId: string; type: string }) => n.appointmentId === onlineHomeVisit && ["booking_received", "appointment_copy"].includes(n.type),
+);
 ok(received && /Ubicación: https:\/\/www\.google\.com\/maps\/search\/\?api=1&query=-2\.9,-79/.test(received.body), "el negocio recibe el enlace al punto del mapa", received?.body);
 
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de domicilio pasaron");
