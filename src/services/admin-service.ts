@@ -129,14 +129,10 @@ async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBu
     [businessId ?? null],
   );
   const ids = rows.map((row) => row.id);
-  const owners = await many<User>(db, `select ${userColumns()} from users where id = any($1::uuid[])`, [
-    rows.map((row) => row.ownerId),
+  const [owners, subscriptions] = await Promise.all([
+    many<User>(db, `select ${userColumns()} from users where id = any($1::uuid[])`, [rows.map((row) => row.ownerId)]),
+    many<Subscription>(db, `select ${subscriptionColumns()} from subscriptions where business_id = any($1::uuid[])`, [ids]),
   ]);
-  const subscriptions = await many<Subscription>(
-    db,
-    `select ${subscriptionColumns()} from subscriptions where business_id = any($1::uuid[])`,
-    [ids],
-  );
 
   return rows.map(({ appointmentsThisMonth, clients, users, professionals, lastActivityAt, ...business }) => {
     const owner = owners.find((user) => user.id === business.ownerId);
@@ -207,28 +203,26 @@ export const adminService = {
   async getStats(ctx: RequestContext): Promise<PlatformStats> {
     authorizeSuperAdmin(ctx);
     const month = getZonedNow(DEFAULT_TIMEZONE).date.slice(0, 7);
-    const businesses = await many<{
-      status: BusinessStatus;
-      createdAt: string;
-      plan: PlanId | null;
-      subscriptionStatus: string | null;
-    }>(
-      pool,
-      `select b.status, b.created_at as "createdAt", s.plan, s.status as "subscriptionStatus"
-         from businesses b left join subscriptions s on s.business_id = b.id`,
-    );
+    // Las dos consultas a la vez: cada ida y vuelta a la base cuenta (sobre todo desde dev:prod).
+    const [businesses, counts] = await Promise.all([
+      many<{ status: BusinessStatus; createdAt: string; plan: PlanId | null; subscriptionStatus: string | null }>(
+        pool,
+        `select b.status, b.created_at as "createdAt", s.plan, s.status as "subscriptionStatus"
+           from businesses b left join subscriptions s on s.business_id = b.id`,
+      ),
+      one<{ users: number; appointments: number; online: number }>(
+        pool,
+        `select (select count(*) from users where platform_role is null) as users,
+                count(*) as appointments,
+                count(*) filter (where source = 'booking_page') as online
+           from appointments
+          where status <> 'cancelled' and date >= $1::date and date < ($1::date + interval '1 month')`,
+        [`${month}-01`],
+      ).then((row) => row!),
+    ]);
     const businessesByPlan = Object.fromEntries(PLANS.map((plan) => [plan.id, 0])) as Record<PlanId, number>;
     for (const business of businesses) businessesByPlan[getPlan(business.plan ?? "free").id]++;
     const active = businesses.filter((b) => b.status === "active").length;
-    const counts = (await one<{ users: number; appointments: number; online: number }>(
-      pool,
-      `select (select count(*) from users where platform_role is null) as users,
-              count(*) as appointments,
-              count(*) filter (where source = 'booking_page') as online
-         from appointments
-        where status <> 'cancelled' and date >= $1::date and date < ($1::date + interval '1 month')`,
-      [`${month}-01`],
-    ))!;
     return {
       businesses: {
         total: businesses.length,
@@ -255,12 +249,11 @@ export const adminService = {
   async getBusiness(ctx: RequestContext, businessId: string): Promise<AdminBusinessDetail | null> {
     authorizeSuperAdmin(ctx);
     if (!isUuid(businessId)) return null;
-    const [summary] = await summarizeBusinesses(pool, businessId);
-    if (!summary) return null;
-    return {
-      ...summary,
-      members: await listTeamMembers(pool, businessId),
-      recentActivity: await many<AuditLog>(
+    // El resumen, el equipo y la actividad a la vez (no dependen entre sí).
+    const [[summary], members, recentActivity] = await Promise.all([
+      summarizeBusinesses(pool, businessId),
+      listTeamMembers(pool, businessId),
+      many<AuditLog>(
         pool,
         `select ${auditLogColumns()} from audit_logs
           where business_id = $1 and entity_type <> 'session'
@@ -268,7 +261,9 @@ export const adminService = {
           limit 15`,
         [businessId],
       ),
-    };
+    ]);
+    if (!summary) return null;
+    return { ...summary, members, recentActivity };
   },
 
   /**
@@ -704,12 +699,14 @@ export const adminService = {
 
   async listUsers(ctx: RequestContext): Promise<AdminUserSummary[]> {
     authorizeSuperAdmin(ctx);
-    const users = await many<User>(pool, `select ${userColumns()} from users order by created_at desc`);
-    const memberships = await many<{ userId: string; businessId: string; businessName: string; role: BusinessRole }>(
-      pool,
-      `select bu.user_id as "userId", bu.business_id as "businessId", b.name as "businessName", bu.role
-         from business_users bu join businesses b on b.id = bu.business_id`,
-    );
+    const [users, memberships] = await Promise.all([
+      many<User>(pool, `select ${userColumns()} from users order by created_at desc`),
+      many<{ userId: string; businessId: string; businessName: string; role: BusinessRole }>(
+        pool,
+        `select bu.user_id as "userId", bu.business_id as "businessId", b.name as "businessName", bu.role
+           from business_users bu join businesses b on b.id = bu.business_id`,
+      ),
+    ]);
     return users.map((user) => ({
       user,
       memberships: memberships

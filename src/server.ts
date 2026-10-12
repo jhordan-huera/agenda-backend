@@ -9,6 +9,9 @@ import { fileStorage } from "./services/file-storage.ts";
 /** Comprueba la base de datos al arrancar y avisa de lo que falta, sin detener el servidor. */
 async function checkDatabase(): Promise<void> {
   try {
+    // Con la base de producción desde este equipo, abre varias conexiones ya al arrancar: cada una
+    // tarda 1–4 s en abrirse y una página pide varias cosas a la vez (ver pool.ts).
+    if (config.productionDbFromHere) await Promise.all(Array.from({ length: 4 }, () => pool.query("select 1")));
     const { rows } = await pool.query("select to_regclass('public.schema_migrations') is not null as migrated");
     if (!rows[0].migrated) {
       console.warn("⚠ La base de datos está vacía: ejecuta `npm run db:migrate` para crear las tablas.");
