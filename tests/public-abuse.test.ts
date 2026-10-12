@@ -145,7 +145,7 @@ try {
   {
     const { id: _id, businessId: _b, sortOrder: _s, createdAt: _c, ...rest } = jhordanAgenda;
     const bank = { bank: "Produbanco", accountType: "savings", number: "0200123456", holder: "Jhordan Demo", holderId: "" };
-    await jhordan.a("PUT", `${jhordan.B}/professionals/${jhordanAgenda.id}`, { ...rest, bankAccount: bank });
+    await jhordan.a("PUT", `${jhordan.B}/professionals/${jhordanAgenda.id}`, { ...rest, bankAccounts: [bank] });
     const ana = person("reintento-pago");
     const slot = slots[slotIndex++];
     const book = (who: object) =>
@@ -161,7 +161,7 @@ try {
     ok(guessed.status === 409 && !JSON.stringify(guessed.body).includes(token), "con la cédula y la hora pero otro email y otro teléfono: «hora ocupada», sin token", guessed.body);
     const guessedEmail = await book({ ...ana, email: "ana@otro.ec", phone: "+593 98 111 2222" });
     ok(guessedEmail.status === 409 && guessedEmail.body.error.code === "conflict", "un email adivinado da la misma respuesta (no confirma nada)", guessedEmail.body);
-    await jhordan.a("PUT", `${jhordan.B}/professionals/${jhordanAgenda.id}`, { ...rest, bankAccount: null });
+    await jhordan.a("PUT", `${jhordan.B}/professionals/${jhordanAgenda.id}`, { ...rest, bankAccounts: [] });
   }
 
   console.log("Topes de emails (a terceros y a pacientes nuevos)");

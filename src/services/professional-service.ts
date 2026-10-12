@@ -3,11 +3,12 @@ import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { BANK_ACCOUNT_TYPE_LABELS, DEFAULT_WEEKLY_SCHEDULE } from "../shared/lib/constants/business.ts";
 import { getFullName } from "../shared/lib/format.ts";
-import { professionalSchema, type ProfessionalInput } from "../shared/lib/validations/professional.ts";
-import type { Professional, Schedule } from "../shared/types/index.ts";
+import type { ProfessionalInput } from "../shared/lib/validations/professional.ts";
+import type { BankAccount, Professional, Schedule } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
 import { diffChanges, PROFESSIONAL_FIELDS, type ProfessionalForAudit } from "./audit-changes.ts";
-import { authorize, parseInput, type RequestContext } from "./context.ts";
+import { accountsToSave, bankAccountValues, parseProfessionalInput } from "./bank-accounts.ts";
+import { authorize, type RequestContext } from "./context.ts";
 import { assertStoredImage, imageFolder, releaseImages } from "./image-service.ts";
 import { assertMultipleAgendas, assertProfessionalLimit } from "./plan-limits.ts";
 
@@ -111,9 +112,7 @@ async function professionalForAudit(db: Db, professional: Professional): Promise
     color: professional.color,
     email: professional.email,
     meetingUrl: professional.meetingUrl,
-    bankAccount: professional.bankAccount
-      ? `${professional.bankAccount.bank} · ${BANK_ACCOUNT_TYPE_LABELS[professional.bankAccount.accountType]} · ${professional.bankAccount.number} · ${professional.bankAccount.holder}`
-      : null,
+    bankAccounts: professional.bankAccounts.length ? professional.bankAccounts.map(describeBankAccount).join(", ") : null,
     memberName: member ? getFullName(member) : null,
     servicesLabel: services,
     notifyNewAppointments: professional.notifyNewAppointments,
@@ -121,6 +120,10 @@ async function professionalForAudit(db: Db, professional: Professional): Promise
     isActive: professional.isActive,
   };
 }
+
+/** Una cuenta en la auditoría, como siempre: "Banco Pichincha · Ahorros · 2200123456 · Ana Ruiz". */
+const describeBankAccount = (account: BankAccount) =>
+  `${account.bank} · ${BANK_ACCOUNT_TYPE_LABELS[account.accountType]} · ${account.number} · ${account.holder}`;
 
 /** El horario inicial de una agenda nueva: el del primer profesional (o el de por defecto). */
 async function copyStartingSchedule(db: Db, businessId: string, professionalId: string) {
@@ -154,7 +157,8 @@ export const professionalService = {
 
   /** Agenda nueva con el horario del primer profesional como punto de partida. */
   async create(ctx: RequestContext, businessId: string, input: unknown): Promise<Professional> {
-    const data = parseInput(professionalSchema, input);
+    const parsed = parseProfessionalInput(input);
+    const { data } = parsed;
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "professionals.manage", { lock: true });
       await assertMultipleAgendas(db, businessId);
@@ -171,8 +175,8 @@ export const professionalService = {
         db,
         `insert into professionals
            (business_id, user_id, display_name, title, avatar_url, color, email, all_services,
-            notify_new_appointments, daily_agenda, is_active, sort_order, meeting_url, bank_account)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            notify_new_appointments, daily_agenda, is_active, sort_order, meeting_url, bank_accounts, bank_account)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
          returning id`,
         [
           businessId,
@@ -188,7 +192,8 @@ export const professionalService = {
           data.isActive,
           next?.order ?? 1,
           data.meetingUrl,
-          data.bankAccount ? JSON.stringify(data.bankAccount) : null,
+          // La primera cuenta también en bank_account, para el código anterior (ver bank-accounts.ts).
+          ...bankAccountValues(accountsToSave(parsed, [])),
         ],
       ))!;
       await saveServices(db, id, data);
@@ -207,7 +212,8 @@ export const professionalService = {
   },
 
   async update(ctx: RequestContext, businessId: string, professionalId: string, input: unknown): Promise<Professional> {
-    const data = parseInput(professionalSchema, input);
+    const parsed = parseProfessionalInput(input);
+    const { data } = parsed;
     const { professional, previousAvatar } = await transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "professionals.manage", { lock: true });
       const before = await findProfessional(db, businessId, professionalId);
@@ -220,7 +226,7 @@ export const professionalService = {
         `update professionals
             set user_id = $2, display_name = $3, title = $4, avatar_url = $5, color = $6, email = $7,
                 all_services = $8, notify_new_appointments = $9, daily_agenda = $10, is_active = $11,
-                meeting_url = $12, bank_account = $13
+                meeting_url = $12, bank_accounts = $13, bank_account = $14
           where id = $1`,
         [
           professionalId,
@@ -235,7 +241,8 @@ export const professionalService = {
           data.dailyAgenda,
           data.isActive,
           data.meetingUrl,
-          data.bankAccount ? JSON.stringify(data.bankAccount) : null,
+          // La primera cuenta también en bank_account, para el código anterior (ver bank-accounts.ts).
+          ...bankAccountValues(accountsToSave(parsed, before.bankAccounts)),
         ],
       );
       await saveServices(db, professionalId, data);

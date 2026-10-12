@@ -37,8 +37,11 @@ export interface AppointmentEmailData {
   /** Por videollamada, con el enlace del profesional (null: aún no lo configuró). */
   isVirtual: boolean;
   meetingUrl: string | null;
-  /** Pago por transferencia: datos de la cuenta y enlace para subir el comprobante (null: no aplica). */
-  payment: { bankAccount: BankAccount; url: string } | null;
+  /**
+   * Pago por transferencia: las cuentas de la agenda (vale cualquiera; la primera es la principal) y
+   * el enlace para subir el comprobante (null: no aplica).
+   */
+  payment: { bankAccounts: BankAccount[]; url: string } | null;
   /**
    * Zona horaria del negocio (p. ej. America/Guayaquil). En las citas virtuales la hora lleva la
    * zona ("10:00 (hora de Ecuador, GMT-5)"): el paciente puede estar en otro país.
@@ -114,10 +117,8 @@ function appointmentDetails(data: AppointmentEmailData, title = "Tu cita"): Emai
   return { kind: "details", title, rows };
 }
 
-/** Datos para transferir y el botón para enviar el comprobante. */
-function payment(data: AppointmentEmailData): EmailBlock[] {
-  if (!data.payment) return [];
-  const { bankAccount: account, url } = data.payment;
+/** Banco, tipo, número, titular y cédula/RUC (si la tiene) de una cuenta. */
+function bankAccountRows(account: BankAccount): Extract<EmailBlock, { kind: "details" }>["rows"] {
   const rows: Extract<EmailBlock, { kind: "details" }>["rows"] = [
     { label: "Banco", value: account.bank },
     { label: "Tipo de cuenta", value: BANK_ACCOUNT_TYPE_LABELS[account.accountType] },
@@ -125,9 +126,37 @@ function payment(data: AppointmentEmailData): EmailBlock[] {
     { label: "Titular", value: account.holder },
   ];
   if (account.holderId) rows.push({ label: "Cédula / RUC", value: account.holderId, mono: true });
-  if (data.showPrice) rows.push({ label: "Monto", value: formatPrice(data.price, data.currency) });
+  return rows;
+}
+
+/**
+ * Datos para transferir y el botón para enviar el comprobante. Con una cuenta, un recuadro con sus
+ * datos y el monto; con varias, el monto en el texto y un recuadro por cuenta (vale cualquiera).
+ */
+function payment(data: AppointmentEmailData): EmailBlock[] {
+  if (!data.payment || data.payment.bankAccounts.length === 0) return [];
+  const { bankAccounts, url } = data.payment;
+  const amount = formatPrice(data.price, data.currency);
+  const accounts: EmailBlock[] =
+    bankAccounts.length === 1
+      ? [
+          {
+            kind: "details",
+            title: "Pago por transferencia",
+            rows: [...bankAccountRows(bankAccounts[0]), ...(data.showPrice ? [{ label: "Monto", value: amount }] : [])],
+          },
+        ]
+      : [
+          {
+            kind: "text",
+            text: `Pago por transferencia: transfiere${data.showPrice ? ` ${amount}` : ""} a cualquiera de estas ${bankAccounts.length} cuentas.`,
+          },
+          ...bankAccounts.map(
+            (account, index): EmailBlock => ({ kind: "details", title: `Cuenta ${index + 1}`, rows: bankAccountRows(account) }),
+          ),
+        ];
   return [
-    { kind: "details", title: "Pago por transferencia", rows },
+    ...accounts,
     { kind: "button", label: "Enviar el comprobante", url },
     { kind: "note", text: "Cuando transfieras, sube ahí la foto o el PDF del comprobante (o envíalo por WhatsApp al negocio)." },
   ];

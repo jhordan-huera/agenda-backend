@@ -19,6 +19,7 @@ import type {
 } from "../shared/types/index.ts";
 import { agendaScope, assertAppointmentInScope } from "./agenda-scope.ts";
 import { describeAppointment, logAudit } from "./audit.ts";
+import { withLegacyBankAccount } from "./bank-accounts.ts";
 import { authorize, parseInput, type RequestContext } from "./context.ts";
 import { receiptStorage, type FileStorage } from "./file-storage.ts";
 import { notifyReceiptReceived } from "./notifications.ts";
@@ -26,9 +27,10 @@ import { greetingName } from "./public-booking-service.ts";
 
 /**
  * Pago por transferencia. Cada cita tiene un enlace privado (/pago/:token) donde el paciente ve
- * los datos bancarios de la agenda y sube la foto o el PDF del comprobante, sin sesión: el token es
- * la autorización. El archivo va directo del navegador al bucket privado de comprobantes; el
- * negocio lo abre con una URL firmada de unos minutos y marca la cita como pagada.
+ * las cuentas de la agenda (todas: transfiere a cualquiera) y sube la foto o el PDF del comprobante
+ * (uno por cita), sin sesión: el token es la autorización. El archivo va directo del navegador al
+ * bucket privado de comprobantes; el negocio lo abre con una URL firmada de unos minutos y marca la
+ * cita como pagada.
  */
 
 const EXTENSIONS: Record<string, string> = {
@@ -58,7 +60,8 @@ interface PaymentContext {
   serviceName: string;
   showPrice: boolean;
   professionalName: string;
-  bankAccount: BankAccount | null;
+  /** Cuentas de la agenda, la principal primero (vacía: ya no cobra por transferencia). */
+  bankAccounts: BankAccount[];
 }
 
 /** La cita de un enlace de pago (con su negocio, servicio y agenda); un enlace inválido no existe. */
@@ -76,7 +79,7 @@ async function findByToken(db: Db, token: string, lock = false): Promise<Payment
         `select b.status as "businessStatus", b.name as "businessName", b.slug as "businessSlug", b.logo_url as "logoUrl",
                 b.phone, b.timezone, b.currency, b.brand_colors as "brandColors", c.name as "clientName",
                 s.name as "serviceName", s.show_price as "showPrice", p.display_name as "professionalName",
-                p.bank_account as "bankAccount"
+                p.bank_accounts as "bankAccounts"
            from businesses b, clients c, services s, professionals p
           where b.id = $1 and c.id = $2 and s.id = $3 and p.id = $4`,
         [appointment.businessId, appointment.clientId, appointment.serviceId, appointment.professionalId],
@@ -127,7 +130,8 @@ export const paymentService = {
       endTime: appointment.endTime,
       status: appointment.status,
       amount: isPriceVisible(found) && appointment.price > 0 ? appointment.price : null,
-      bankAccount: found.bankAccount,
+      // Todas las cuentas: el paciente transfiere a cualquiera.
+      ...withLegacyBankAccount(found.bankAccounts),
       receipts: (await readyReceipts(pool, appointment.id)).map(({ id, fileName, createdAt }) => ({ id, fileName, createdAt })),
       paid: Boolean(appointment.paidAt),
       receiptsEnabled: Boolean(receiptStorage),

@@ -109,7 +109,9 @@ Publica primero la API y después agenda-front si el cambio toca a los dos.
    con la base local la verificación en dos pasos no es obligatoria, salvo con `SUPER_ADMIN_2FA=required`).
    Varias agendas (plan Business, 3 contratadas): `ricardo@demo.com` (propietario de Clínica Dental
    Sonrisa), `valeria@demo.com` (rol Profesional, sólo su agenda) y `elena@demo.com` (recepción); el
-   Dr. Andrés Vega es un profesional sin usuario.
+   Dr. Andrés Vega es un profesional sin usuario. Todas las agendas demo cobran por transferencia con
+   una cuenta de ejemplo; la de `jhordan@demo.com` tiene dos (al reservar en `/book/jhordan` se ven
+   las dos).
 
 5. **Arranca la API**
 
@@ -286,12 +288,21 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   inicios y cierres de sesión a los 90 días, las acciones del panel a los 5 meses (antes, 1 año) y
   los accesos y cambios en la historia clínica a los 5 años. Las citas, pacientes y pagos no se
   tocan; nadie más puede borrar ni editar la auditoría (triggers).
-- **Pago por transferencia** (migración 025): `professionals.bank_account` (jsonb: banco, tipo de
-  cuenta `savings`/`checking`, número sólo con dígitos, titular y cédula/RUC opcional) se guarda con
-  la ficha del profesional. Cada cita tiene `payment_token` (enlace privado `/pago/:token` del
-  frontend), `receipt_at` (último comprobante) y `paid_at`. Con datos bancarios y precio mayor que 0,
-  la confirmación de la reserva (`payment`) y los emails de reserva y confirmación (mientras no esté
-  pagada) llevan los datos y el enlace. Sin sesión: `GET /public/payments/:token`, `POST
+- **Pago por transferencia** (migraciones 025 y 030): cada agenda tiene **hasta 3 cuentas**
+  (`professionals.bank_accounts`, jsonb: lista de `{ bank, accountType: savings|checking, number
+  (sólo dígitos), holder, holderId (cédula/RUC, opcional) }`; la primera es la principal; lista
+  vacía = no cobra por transferencia; `bankAccounts` en la ficha, validado con `bankAccountsSchema`).
+  Cada cita tiene `payment_token` (enlace privado `/pago/:token` del frontend), `receipt_at` (último
+  comprobante) y `paid_at`. Con cuentas y precio mayor que 0, la confirmación de la reserva
+  (`payment.bankAccounts`), la página de pago y los emails de reserva y confirmación (mientras no esté
+  pagada) llevan **todas** las cuentas (el paciente transfiere a cualquiera) y el enlace; la
+  actividad registra "Datos bancarios" con todas, antes y después. Transición desde la cuenta única
+  (`src/services/bank-accounts.ts`): la 030 copió `bank_account` a la lista y la columna se conserva
+  con la primera cuenta (o null), con un trigger que pasa a la lista lo que escriba el código
+  anterior, así que se puede migrar antes de publicar o volver atrás; las respuestas llevan además
+  `bankAccount` (la primera o null) y la API acepta todavía `bankAccount` si no viene `bankAccounts`
+  (reemplaza la primera y conserva las demás), ambos obsoletos, para los fronts viejos en caché.
+  Publicar el backend antes que el front (el front nuevo ya no conoce `bankAccount`). Sin sesión: `GET /public/payments/:token`, `POST
   /public/payments/:token/receipts` (JPG, PNG, WebP, HEIC o PDF, 10 MB; **uno por cita**: enviado,
   se rechaza otro, también si dos pestañas suben a la vez; no en citas canceladas o "No asistió") y `POST …/receipts/:id/complete` (avisa por email al negocio). En el
   panel: `GET /businesses/:id/appointments/:id/receipts`, `GET /businesses/:id/payment-receipts/:id/url`

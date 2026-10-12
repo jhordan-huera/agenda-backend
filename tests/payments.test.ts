@@ -1,7 +1,7 @@
 // Pago por transferencia: datos bancarios de la agenda, enlace de pago, comprobantes en el
 // almacenamiento (bucket privado) y logos y fotos en el bucket público de imágenes.
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
@@ -57,19 +57,78 @@ const visitor = agent();
 
 console.log("Datos bancarios de la agenda");
 const professional: Professional = (await owner("GET", `${B}/professionals`)).body.find((p: Professional) => p.userId === session.userId);
-const professionalInput = (bankAccount: unknown) => {
-  const { id: _id, businessId: _b, sortOrder: _s, createdAt: _c, ...rest } = professional;
-  return { ...rest, bankAccount };
+/** La ficha tal como la devuelve la API, con otras cuentas (sin `bankAccount`, que es de los fronts viejos). */
+const professionalBody = () => {
+  const { id: _id, businessId: _b, sortOrder: _s, createdAt: _c, bankAccount: _old, ...rest } = professional as Professional & { bankAccount?: unknown };
+  return rest;
 };
+const professionalInput = (bankAccounts: unknown) => ({ ...professionalBody(), bankAccounts });
+const saveAccounts = (bankAccounts: unknown) => owner("PUT", `${B}/professionals/${professional.id}`, professionalInput(bankAccounts));
+/** Lo que quedó en la base: el número de cada cuenta y el de `bank_account` (la columna de antes). */
+const storedNumbers = () =>
+  sql(`select coalesce((select string_agg(a->>'number', ',') from jsonb_array_elements(bank_accounts) a), '') || ' / ' ||
+              coalesce(bank_account->>'number', 'null') from professionals where id = '${professional.id}'`);
+const lastBankChange = async () =>
+  ((await owner("GET", `${B}/audit-logs?entityId=${professional.id}`)).body.entries[0]?.changes ?? []).find(
+    (c: { label: string }) => c.label === "Datos bancarios",
+  ) as { before: string; after: string } | undefined;
+
+ok(professional.bankAccounts.length === 2 && professional.bankAccounts[0].bank !== professional.bankAccounts[1].bank, "la agenda demo de jhordan tiene 2 cuentas", professional.bankAccounts);
 const account = { bank: "Produbanco", accountType: "checking", number: "0200-123 456", holder: "Jhordan Demo", holderId: "1712345678" };
-let r = await owner("PUT", `${B}/professionals/${professional.id}`, professionalInput({ ...account, number: "abc" }));
+const pichinchaAccount = { bank: "Banco Pichincha", accountType: "savings", number: "2200 987 654", holder: "Jhordan Demo", holderId: "" };
+const jepAccount = { bank: "Cooperativa JEP", accountType: "savings", number: "4100555666", holder: "Jhordan Huera", holderId: "" };
+let r = await saveAccounts([{ ...account, number: "abc" }]);
 ok(r.status === 400 && /número de cuenta/.test(r.body.error.message), "número de cuenta con letras → 400", r.body);
-r = await owner("PUT", `${B}/professionals/${professional.id}`, professionalInput({ ...account, accountType: "otra" }));
-ok(r.status === 400, "tipo de cuenta inválido → 400", r.body);
-r = await owner("PUT", `${B}/professionals/${professional.id}`, professionalInput(account));
-ok(r.status === 200 && r.body.bankAccount?.number === "0200123456" && r.body.bankAccount.accountType === "checking", "se guarda (el número, sólo con dígitos)", r.body);
-const changes = (await owner("GET", `${B}/audit-logs?entityId=${professional.id}`)).body.entries[0]?.changes ?? [];
-ok(changes.some((c: { label: string; after: string }) => c.label === "Datos bancarios" && /Produbanco · Corriente/.test(c.after)), "la actividad registra el cambio", changes);
+r = await saveAccounts([account, { ...pichinchaAccount, accountType: "otra" }]);
+ok(r.status === 400, "tipo de cuenta inválido en la segunda cuenta → 400", r.body);
+r = await saveAccounts([account, pichinchaAccount, jepAccount, { ...jepAccount, number: "4100777888" }]);
+ok(r.status === 400 && r.body.error.message === "Como máximo 3 cuentas", "4 cuentas → 400 «Como máximo 3 cuentas»", r.body);
+r = await saveAccounts(account);
+ok(r.status === 400, "una cuenta suelta en lugar de la lista → 400", r.body);
+ok(storedNumbers().startsWith(professional.bankAccounts.map((a) => a.number).join(",")), "nada de eso cambió lo guardado", storedNumbers());
+r = await saveAccounts([account]);
+ok(
+  r.status === 200 && r.body.bankAccounts.length === 1 && r.body.bankAccounts[0].number === "0200123456" && r.body.bankAccounts[0].accountType === "checking",
+  "se guarda una cuenta (el número, sólo con dígitos)",
+  r.body,
+);
+ok(r.body.bankAccount?.number === "0200123456", "la respuesta trae también `bankAccount` (la primera) para los fronts viejos", r.body.bankAccount);
+ok(storedNumbers() === "0200123456 / 0200123456", "la columna bank_account guarda la primera", storedNumbers());
+let change = await lastBankChange();
+ok(change && /Produbanco · Corriente/.test(change.after), "la actividad registra el cambio", change);
+r = await saveAccounts([account, pichinchaAccount]);
+ok(r.status === 200 && r.body.bankAccounts.map((a: { number: string }) => a.number).join(",") === "0200123456,2200987654", "se guardan 2 cuentas, en su orden", r.body.bankAccounts);
+ok(storedNumbers() === "0200123456,2200987654 / 0200123456", "bank_account sigue siendo la primera", storedNumbers());
+change = await lastBankChange();
+ok(
+  change?.before === "Produbanco · Corriente · 0200123456 · Jhordan Demo" &&
+    change.after === "Produbanco · Corriente · 0200123456 · Jhordan Demo, Banco Pichincha · Ahorros · 2200987654 · Jhordan Demo",
+  "la actividad muestra antes y después con varias cuentas",
+  change,
+);
+r = await saveAccounts([pichinchaAccount, account, jepAccount]);
+ok(r.status === 200 && r.body.bankAccounts.length === 3 && r.body.bankAccount.number === "2200987654", "se guardan 3 cuentas (la principal, la que va primero)", r.body.bankAccounts);
+ok(storedNumbers() === "2200987654,0200123456,4100555666 / 2200987654", "al ordenarlas, bank_account pasa a ser la nueva primera", storedNumbers());
+
+console.log("Fronts viejos en caché (sólo conocen `bankAccount`)");
+const { bankAccounts: _accounts, ...legacyBody } = professionalBody();
+r = await owner("PUT", `${B}/professionals/${professional.id}`, { ...legacyBody, bankAccount: { ...account, bank: "Banco del Austro" } });
+ok(
+  r.status === 200 && r.body.bankAccounts.map((a: { bank: string }) => a.bank).join(",") === "Banco del Austro,Produbanco,Cooperativa JEP",
+  "se acepta `bankAccount`: reemplaza la primera y conserva las demás (ese front no las veía)",
+  r.body.bankAccounts,
+);
+ok(storedNumbers() === "0200123456,0200123456,4100555666 / 0200123456", "y bank_account queda sincronizada", storedNumbers());
+r = await owner("PUT", `${B}/professionals/${professional.id}`, { ...legacyBody, bankAccount: { ...account, number: "12" } });
+ok(r.status === 400, "la cuenta antigua también se valida", r.body);
+r = await owner("PUT", `${B}/professionals/${professional.id}`, { ...legacyBody, bankAccount: null });
+ok(r.status === 200 && r.body.bankAccounts.length === 0 && r.body.bankAccount === null, "`bankAccount: null` quita el cobro por transferencia", r.body);
+ok(storedNumbers() === "/ null", "sin cuentas: lista vacía y bank_account null", storedNumbers());
+r = await owner("PUT", `${B}/professionals/${professional.id}`, { ...legacyBody, bankAccounts: [account, pichinchaAccount], bankAccount: null });
+ok(r.status === 200 && r.body.bankAccounts.length === 2, "si vienen las dos, manda `bankAccounts`", r.body.bankAccounts);
+r = await owner("GET", `${B}/professionals`);
+const listed = r.body.find((p: Professional) => p.id === professional.id);
+ok(listed.bankAccounts.length === 2 && listed.bankAccount.number === "0200123456", "la lista de profesionales trae `bankAccounts` y `bankAccount`", listed);
 
 console.log("Reserva con pago por transferencia");
 const services = (await owner("GET", `${B}/services`)).body;
@@ -96,10 +155,23 @@ const book = (serviceId: string, slot: object, seed: string) =>
 
 r = await book(paid.id, slots[0], "pago1");
 const booking = r.body;
-ok(r.status === 200 && booking.payment?.bankAccount?.bank === "Produbanco" && /^[0-9a-f]{32}$/.test(booking.payment.token) && booking.payment.receiptsEnabled, "la confirmación trae los datos y el enlace de pago", r.body);
+ok(
+  r.status === 200 && booking.payment?.bankAccounts?.map((a: { bank: string }) => a.bank).join(",") === "Produbanco,Banco Pichincha" &&
+    /^[0-9a-f]{32}$/.test(booking.payment.token) && booking.payment.receiptsEnabled,
+  "la confirmación trae las 2 cuentas y el enlace de pago",
+  r.body,
+);
+ok(booking.payment.bankAccount?.bank === "Produbanco", "y `bankAccount` con la primera, para los fronts viejos", booking.payment);
 const token: string = booking.payment.token;
 const created = sql(`select body from notifications where to_email = 'pago1@example.com' and type = 'booking_created'`);
-ok(/Pago por transferencia/.test(created) && /0200123456/.test(created) && created.includes(`/pago/${token}`), "el email de la reserva trae los datos y el enlace", created.slice(0, 400));
+ok(
+  /Pago por transferencia: transfiere \$[\d.,]+ a cualquiera de estas 2 cuentas/.test(created) && /Cuenta 1\nBanco: Produbanco/.test(created) &&
+    /Cuenta 2\nBanco: Banco Pichincha/.test(created) && /0200123456/.test(created) && /2200987654/.test(created) && created.includes(`/pago/${token}`),
+  "el email de la reserva trae las 2 cuentas y el enlace",
+  created.slice(0, 900),
+);
+const createdHtml = sql(`select html from notifications where to_email = 'pago1@example.com' and type = 'booking_created'`);
+ok(createdHtml.includes("0200123456") && createdHtml.includes("2200987654"), "también en el HTML", null);
 r = await book(free.id, slots[1], "gratis1");
 ok(r.status === 200 && r.body.payment === null, "un servicio gratis no pide pago", r.body);
 
@@ -107,11 +179,12 @@ console.log("Enlace de pago (sin sesión)");
 const anonymous = agent();
 r = await anonymous("GET", `/public/payments/${token}`);
 ok(
-  r.status === 200 && r.body.amount === paid.price && r.body.bankAccount.number === "0200123456" && r.body.clientName === "Paciente P." &&
-    r.body.receipts.length === 0 && r.body.paid === false && r.body.receiptsEnabled,
-  "muestra monto, cuenta y nombre abreviado",
+  r.status === 200 && r.body.amount === paid.price && r.body.bankAccounts.map((a: { number: string }) => a.number).join(",") === "0200123456,2200987654" &&
+    r.body.clientName === "Paciente P." && r.body.receipts.length === 0 && r.body.paid === false && r.body.receiptsEnabled,
+  "muestra monto, las 2 cuentas y nombre abreviado",
   r.body,
 );
+ok(r.body.bankAccount?.number === "0200123456", "y `bankAccount` con la primera, para los fronts viejos", r.body.bankAccount);
 ok(!JSON.stringify(r.body).includes("pago1@example.com"), "no expone el email del paciente", r.body);
 r = await anonymous("GET", `/public/payments/${"0".repeat(32)}`);
 ok(r.status === 404, "token inexistente → 404", r.body);
@@ -266,6 +339,48 @@ execFileSync(process.execPath, ["src/db/move-images-to-storage.ts"], { env: proc
 const moved = sql(`select logo_url from businesses where id = '${session.businessId}'`);
 ok(moved.startsWith("/api/files/public/imagenes/antiguas/") && (await fetch(ORIGIN + moved)).ok, "npm run db:move-images la pasa al almacenamiento", moved.slice(0, 80));
 ok(sql("select count(*) from businesses where logo_url like 'data:%'") === "0", "no quedan imágenes dentro de la base", null);
+
+console.log("Migración 030 (varias cuentas)");
+{
+  const migration = readFileSync(new URL("../db/migrations/030_multiple_bank_accounts.sql", import.meta.url), "utf8");
+  const start = migration.indexOf("update professionals set bank_accounts");
+  const backfill = migration.slice(start, migration.indexOf(";", start) + 1);
+  const [withAccount, without] = sql(`select id from professionals where business_id <> '${session.businessId}' order by display_name limit 2`).split("\n");
+  const old = JSON.stringify({ bank: "Banco Bolivariano", accountType: "savings", number: "5500112233", holder: "Agenda Antigua", holderId: "" });
+  const banks = (id: string) => sql(`select coalesce(string_agg(a->>'bank', ',' order by n), '') from professionals, jsonb_array_elements(bank_accounts) with ordinality as t(a, n) where id = '${id}'`);
+  // Como antes de la 030: la cuenta sólo en bank_account (una agenda con cuenta y otra sin ella).
+  sql(`update professionals set bank_accounts = '[]', bank_account = '${old}' where id = '${withAccount}'`);
+  sql(`update professionals set bank_accounts = '[]', bank_account = null where id = '${without}'`);
+  sql(backfill);
+  ok(sql(`select bank_accounts = jsonb_build_array(bank_account) from professionals where id = '${withAccount}'`) === "t", "convierte la cuenta que había en una lista con ella", banks(withAccount));
+  ok(sql(`select bank_accounts = '[]' and bank_account is null from professionals where id = '${without}'`) === "t", "sin cuenta: lista vacía", banks(without));
+  const rejects = (query: string) => {
+    try {
+      sql(query);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  ok(rejects(`update professionals set bank_accounts = '[{}, {}, {}, {}]' where id = '${without}'`), "la base no admite 4 cuentas");
+  ok(rejects(`update professionals set bank_accounts = '{}' where id = '${without}'`), "ni algo que no sea una lista");
+  ok(rejects(`update professionals set bank_accounts = '["2200123456"]' where id = '${without}'`), "ni una lista con algo que no es una cuenta");
+
+  // El código anterior (antes de publicar el nuevo, o al volver atrás) sólo escribe bank_account.
+  const pichincha = JSON.stringify({ ...pichinchaAccount, number: "2200987654" });
+  sql(`update professionals set bank_accounts = '[${old}, ${pichincha}]', bank_account = '${old}' where id = '${without}'`);
+  sql(`update professionals set bank_account = '${JSON.stringify({ ...jepAccount, number: "4100555666" })}' where id = '${without}'`);
+  ok(banks(without) === "Cooperativa JEP,Banco Pichincha", "si el código anterior cambia la cuenta, reemplaza la primera y conserva las demás", banks(without));
+  sql(`update professionals set display_name = display_name where id = '${without}'`);
+  ok(banks(without) === "Cooperativa JEP,Banco Pichincha", "otros cambios no tocan las cuentas", banks(without));
+  sql(`update professionals set bank_account = null where id = '${without}'`);
+  ok(banks(without) === "", "si la quita, se queda sin cuentas", banks(without));
+  const inserted = sql(
+    `insert into professionals (business_id, display_name, bank_account) select business_id, 'Agenda del código anterior', '${old}'::jsonb
+       from professionals where id = '${without}' returning bank_accounts = jsonb_build_array(bank_account)`,
+  ).split("\n")[0];
+  ok(inserted === "t", "y una agenda que crea con cuenta la tiene también en la lista", inserted);
+}
 
 console.log(failures === 0 ? "\nTodo bien." : `\n${failures} fallos.`);
 process.exitCode = failures === 0 ? 0 : 1;

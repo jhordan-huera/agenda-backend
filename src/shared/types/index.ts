@@ -233,8 +233,11 @@ export interface Professional {
   dailyAgenda: boolean;
   /** Enlace de su sala de videollamada (Meet, Zoom…) para las citas virtuales ("" = sin enlace). */
   meetingUrl: string;
-  /** Cuenta a la que le transfieren sus pacientes; null: no cobra por transferencia. */
-  bankAccount: BankAccount | null;
+  /**
+   * Cuentas a las que le pueden transferir sus pacientes (hasta 3; la primera es la principal).
+   * Vacía: no cobra por transferencia.
+   */
+  bankAccounts: BankAccount[];
   /** Inactivo: no recibe citas nuevas ni aparece en la página de reservas; su historial se conserva. */
   isActive: boolean;
   sortOrder: number;
@@ -941,7 +944,8 @@ export interface BookingConfirmation {
 }
 
 export interface BookingPayment {
-  bankAccount: BankAccount;
+  /** Cuentas de la agenda (al menos una): el paciente transfiere a cualquiera. */
+  bankAccounts: BankAccount[];
   /** Enlace privado de pago de la cita (/pago/:token). */
   token: string;
   /** false: no se pueden subir comprobantes (sólo enviarlos por WhatsApp). */
@@ -961,8 +965,8 @@ export interface PublicPayment {
   status: AppointmentStatus;
   /** Monto a transferir; null: el negocio no muestra el precio de este servicio. */
   amount: number | null;
-  /** null: la agenda ya no tiene datos bancarios. */
-  bankAccount: BankAccount | null;
+  /** Cuentas de la agenda (la primera es la principal); vacía: ya no tiene datos bancarios. */
+  bankAccounts: BankAccount[];
   /** Comprobantes enviados, del más antiguo al más reciente. */
   receipts: Pick<PaymentReceipt, "id" | "fileName" | "createdAt">[];
   /** El negocio ya marcó la cita como pagada. */

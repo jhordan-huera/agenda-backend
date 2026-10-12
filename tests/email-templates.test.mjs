@@ -78,5 +78,30 @@ ok(!isValidTimezone("Marte/Olimpo") && !isValidTimezone("") && !isValidTimezone(
 const restored = emailTemplates.appointmentRestored(appointment);
 ok(restored.subject === "Tu cita ha sido restablecida" && /había sido cancelada/.test(restored.body) && /Hora: 10:00 – 10:45/.test(restored.body), "cita restablecida, con sus datos", restored.body);
 
+console.log("Pago por transferencia: una cuenta o varias");
+const pichincha = { bank: "Banco Pichincha", accountType: "savings", number: "2200123456", holder: "Ana Pérez", holderId: "1712345678" };
+const guayaquil = { bank: "Banco Guayaquil", accountType: "checking", number: "0012345678", holder: "Ana Pérez", holderId: "" };
+const withPayment = (bankAccounts) => ({ ...appointment, showPrice: true, payment: { bankAccounts, url: "https://agenda.example/pago/abc" } });
+const one = emailTemplates.bookingCreated(withPayment([pichincha])).body;
+ok(
+  /Pago por transferencia\nBanco: Banco Pichincha\nTipo de cuenta: Ahorros\nNúmero de cuenta: 2200123456\nTitular: Ana Pérez\nCédula \/ RUC: 1712345678\nMonto: \$35/.test(one) &&
+    !/cualquiera/.test(one),
+  "una cuenta: un recuadro con sus datos y el monto, como siempre",
+  one,
+);
+const two = emailTemplates.appointmentConfirmed(withPayment([pichincha, guayaquil]));
+ok(
+  /Pago por transferencia: transfiere \$35 a cualquiera de estas 2 cuentas\./.test(two.body) &&
+    /Cuenta 1\nBanco: Banco Pichincha/.test(two.body) &&
+    /Cuenta 2\nBanco: Banco Guayaquil\nTipo de cuenta: Corriente\nNúmero de cuenta: 0012345678\nTitular: Ana Pérez\n\n/.test(two.body) &&
+    /Enviar el comprobante: https:\/\/agenda\.example\/pago\/abc/.test(two.body),
+  "varias: el monto en el texto y un recuadro por cuenta (la segunda, sin cédula)",
+  two.body,
+);
+ok(two.html.includes("2200123456") && two.html.includes("0012345678") && two.html.includes("Cuenta 2"), "también en el HTML");
+const hidden = emailTemplates.bookingCreated({ ...withPayment([pichincha, guayaquil]), showPrice: false }).body;
+ok(/transfiere a cualquiera de estas 2 cuentas/.test(hidden) && !/\$35/.test(hidden), "con el precio oculto, sin monto", hidden);
+ok(!/Pago por transferencia/.test(emailTemplates.bookingCreated({ ...appointment, payment: { bankAccounts: [], url: "https://agenda.example/pago/abc" } }).body), "sin cuentas, sin bloque de pago");
+
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de plantillas de email pasaron");
 process.exitCode = failures ? 1 : 0;
