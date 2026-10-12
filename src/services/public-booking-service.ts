@@ -25,8 +25,10 @@ import type {
   PublicService,
   Service,
 } from "../shared/types/index.ts";
+import { sendAlert } from "./alerts.ts";
 import { describeAppointment, logAudit } from "./audit.ts";
 import { withLegacyBankAccount } from "./bank-accounts.ts";
+import { loadOnlineBooking, onlineBookingAlert } from "./booking-alerts.ts";
 import { lockBusiness, parseInput } from "./context.ts";
 import { listSchedules } from "./business-data-service.ts";
 import { receiptStorage } from "./file-storage.ts";
@@ -378,7 +380,7 @@ export const publicBookingService = {
    */
   async book(slug: string, input: unknown): Promise<BookingConfirmation> {
     const data = parseInput(publicBookingSchema, input);
-    return transaction(async (db) => {
+    const { confirmation, alert } = await transaction(async (db) => {
       const found = await findActiveBusiness(db, slug);
       if (!found) throw new AppError("not_found", "Esta página de reservas no está disponible.");
       const { business, professionals } = found;
@@ -416,16 +418,20 @@ export const publicBookingService = {
           "select 1 from notifications where appointment_id = $1 and type in ('booking_created', 'appointment_confirmed') and status <> 'failed'",
           [appointment.id],
         );
-        return toConfirmation(appointment, {
-          business,
-          service,
-          professional:
-            professionals.find((option) => option.id === appointment.professionalId) ??
-            (await findProfessional(db, business.id, appointment.professionalId)),
-          clientEmail: shownEmail(clientEmail, data.email),
-          emailSent: Boolean(emailSent),
-          repeated: true,
-        });
+        return {
+          confirmation: toConfirmation(appointment, {
+            business,
+            service,
+            professional:
+              professionals.find((option) => option.id === appointment.professionalId) ??
+              (await findProfessional(db, business.id, appointment.professionalId)),
+            clientEmail: shownEmail(clientEmail, data.email),
+            emailSent: Boolean(emailSent),
+            repeated: true,
+          }),
+          // Ya se avisó la primera vez.
+          alert: null,
+        };
       }
       await assertOnlineBookingLimit(db, business.id);
 
@@ -459,6 +465,7 @@ export const publicBookingService = {
       const documentError = documentIdError(data.documentId, business.timezone);
       if (documentError) throw new AppError("validation", documentError);
       let client = await findClientByDocument(db, business.id, data.documentId);
+      let newClient = false;
       if (client && !sameContact(client, data, business.timezone)) {
         throw new AppError("forbidden", UNCONFIRMED_IDENTITY_MESSAGE);
       }
@@ -489,6 +496,7 @@ export const publicBookingService = {
              returning ${clientColumns()}`,
             [business.id, data.name, data.documentId, data.email, data.phone, data.homeVisit?.address ?? ""],
           ))!;
+          newClient = true;
         }
       }
       await assertClientDailyLimit(db, business, client.id, data.date);
@@ -529,14 +537,21 @@ export const publicBookingService = {
         summary: `Nueva reserva online de ${await describeAppointment(db, appointment)}`,
       });
 
-      return toConfirmation(appointment, {
-        business,
-        service,
-        professional,
-        clientEmail: shownEmail(client.email, data.email),
-        emailSent,
-        repeated: false,
-      });
+      const booking = await loadOnlineBooking(db, appointment, newClient);
+      return {
+        confirmation: toConfirmation(appointment, {
+          business,
+          service,
+          professional,
+          clientEmail: shownEmail(client.email, data.email),
+          emailSent,
+          repeated: false,
+        }),
+        alert: booking && onlineBookingAlert(booking),
+      };
     });
+    // Sólo con la reserva ya guardada: si la transacción falla, no hay aviso.
+    if (alert) sendAlert(alert);
+    return confirmation;
   },
 };

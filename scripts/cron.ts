@@ -4,7 +4,8 @@
  * recordatorios de citas, reintenta los correos que la API no pudo enviar al momento y limpia lo
  * caducado. Avisa por ntfy de los correos enviados o de cualquier fallo; si no hubo correos ni
  * errores, no avisa. Los registros de Actions son públicos: sólo cifras, nunca datos de clientes.
- * Los avisos de ntfy tampoco llevan pacientes (ni nombre ni email): cifras, negocio y hora.
+ * Los avisos de ntfy dicen a quién salió cada correo, a medias (decisión del usuario, 2026-10-12):
+ * "Juan P." y "ju***@gmail.com", con la copia al profesional en la misma línea (ver masking.ts).
  *
  * Variables: DATABASE_URL, DATABASE_SSL, GMAIL_USER, GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET,
  * GMAIL_REFRESH_TOKEN, GMAIL_FROM_NAME, FRONTEND_URL (enlaces de los emails), NODE_ENV=production
@@ -53,33 +54,56 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
 /** "mar 7 oct 10:00" */
 const when = (email: SentEmail) => (email.date ? `${formatShortDate(email.date)}${email.startTime ? ` ${email.startTime}` : ""}` : null);
 
+/** Emails al paciente sobre su cita: los que llevan copia al profesional (ver notifications.ts). */
+const COPIED_TYPES = new Set<EmailType>(["booking_created", "appointment_confirmed", "appointment_updated", "appointment_cancelled"]);
+
 /**
- * Una línea por email: de qué negocio y, si es de una cita, cuándo. Sin el paciente (ni nombre ni
- * email): un tema de ntfy lo lee cualquiera que conozca su nombre. null: no hay nada que decir
- * aparte del total del grupo (p. ej. los emails de la plataforma).
+ * Una línea por email: de qué negocio, de qué cita (cuándo y de quién) y a quién salió, con la copia
+ * al profesional si la hubo: "• Mente Abierta · mar 14 oct 16:30 · Juan P. → ju***@gmail.com · copia: pr***@gmail.com".
  */
-function describeEmail(email: SentEmail): string | null {
+function describeEmail(email: SentEmail, copies: string[] = []): string {
   const appointment = when(email);
-  const detail = email.type === "booking_received" && appointment ? `reserva para el ${appointment}` : appointment;
-  const parts = [email.businessName, detail].filter(Boolean);
-  return parts.length > 0 ? `• ${parts.join(" · ")}` : null;
+  const detail =
+    email.type === "booking_received" && appointment
+      ? `reserva${email.clientName ? ` de ${email.clientName}` : ""} para el ${appointment}`
+      : [appointment, email.clientName].filter(Boolean).join(" · ");
+  const about = [email.businessName, detail].filter(Boolean).join(" · ");
+  const copy = copies.length > 0 ? ` · copia: ${copies.join(", ")}` : "";
+  return `• ${about ? `${about} → ` : ""}${email.to}${copy}`;
 }
 
 /**
- * Los emails enviados agrupados por tipo ("Recordatorios de cita · 3" y uno por línea). Si hubo
- * más de los que trae el detalle, se dice cuántos faltan.
+ * Los emails enviados agrupados por tipo ("Recordatorios de cita · 3" y uno por línea). Cada copia al
+ * profesional va en la línea del email al paciente del que es copia (el siguiente de la misma cita);
+ * sólo las que salieron sin él en esta tanda van aparte. Si hubo más de los que trae el detalle, se
+ * dice cuántos faltan.
  */
 export function describeSentEmails(sent: SentEmail[], total: number): string[] {
+  const pendingCopies = new Map<string, SentEmail[]>();
+  for (const email of sent) {
+    if (email.type !== "appointment_copy" || !email.appointmentId) continue;
+    pendingCopies.set(email.appointmentId, [...(pendingCopies.get(email.appointmentId) ?? []), email]);
+  }
+  const copiesOf = new Map<SentEmail, string[]>();
+  const paired = new Set<SentEmail>();
+  for (const email of sent) {
+    if (!COPIED_TYPES.has(email.type) || !email.appointmentId) continue;
+    const copy = pendingCopies.get(email.appointmentId)?.shift();
+    if (!copy) continue;
+    copiesOf.set(email, [copy.to]);
+    paired.add(copy);
+  }
+
   const groups = new Map<EmailType, SentEmail[]>();
   for (const type of Object.keys(EMAIL_GROUPS) as EmailType[]) {
-    const ofType = sent.filter((email) => email.type === type);
+    const ofType = sent.filter((email) => email.type === type && !paired.has(email));
     if (ofType.length > 0) groups.set(type, ofType);
   }
   const lines: string[] = [];
   for (const [type, ofType] of groups) {
     const [one, many] = EMAIL_GROUPS[type];
     if (lines.length > 0) lines.push("");
-    lines.push(`${ofType.length === 1 ? one : many} · ${ofType.length}`, ...ofType.map(describeEmail).filter((line) => line !== null));
+    lines.push(`${ofType.length === 1 ? one : many} · ${ofType.length}`, ...ofType.map((email) => describeEmail(email, copiesOf.get(email))));
   }
   if (total > sent.length) lines.push("", `…y ${total - sent.length} más (detalle en el panel: Actividad → Emails).`);
   return lines;

@@ -5,6 +5,7 @@ import { deleteStalePendingAttachments } from "../services/clinical-attachment-s
 import { deleteUnusedImageUploads } from "../services/image-service.ts";
 import { deleteStalePendingReceipts, purgeOldReceipts } from "../services/payment-service.ts";
 import { processEmailQueue, scrubEmails, type EmailQueueReport } from "../services/mailer.ts";
+import { maskEmail, shortName } from "../services/masking.ts";
 import { runDailyAgendaJob, runReminderJob } from "../services/notifications.ts";
 import type { EmailType } from "../shared/types/index.ts";
 
@@ -95,13 +96,16 @@ export interface ScheduledTasksReport {
 }
 
 /**
- * Un email enviado, tal como sale en el aviso de ntfy: el destinatario con el email enmascarado y
- * el nombre abreviado ("María L."), sin más datos personales.
+ * Un email enviado, tal como sale en el aviso de ntfy: el destinatario con el email enmascarado y,
+ * si es de una cita, el paciente con el nombre abreviado ("María L."), sin más datos personales.
  */
 export interface SentEmail {
   type: EmailType;
   to: string;
   businessName: string | null;
+  /** La cita del email: con ella se junta el email al paciente con su copia al profesional. */
+  appointmentId: string | null;
+  clientName: string | null;
   date: string | null;
   startTime: string | null;
 }
@@ -118,12 +122,6 @@ export interface LoginAlert {
 /** Intentos fallidos que hacen saltar la alerta, dentro de la última hora. */
 const LOGIN_ALERT_ATTEMPTS = 10;
 
-/** "an***@gmail.com" */
-export function maskEmail(value: string): string {
-  const [local, domain] = value.split("@");
-  const visible = `${local.slice(0, 2)}***`;
-  return domain ? `${visible}@${domain}` : visible;
-}
 
 /**
  * Cuentas (o emails sin cuenta) con LOGIN_ALERT_ATTEMPTS o más intentos fallidos en la última
@@ -200,13 +198,14 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   );
   const sent = await many<SentEmail>(
     pool,
-    `select n.type, n.to_email as "to", b.name as "businessName",
+    `select n.type, n.to_email as "to", b.name as "businessName", a.id as "appointmentId", c.name as "clientName",
             to_char(a.date, 'YYYY-MM-DD') as date, to_char(a.start_time, 'HH24:MI') as "startTime"
        from notifications n
        left join businesses b on b.id = n.business_id
        left join appointments a on a.id = n.appointment_id
+       left join clients c on c.id = a.client_id
       where n.status = 'sent' and n.sent_at > coalesce($1::timestamptz, now() - interval '1 day') and n.sent_at <= $2
-      order by n.sent_at
+      order by n.sent_at, n.created_at
       limit $3`,
     [previous?.ranAt ?? null, totals?.at ?? new Date().toISOString(), MAX_SENT_DETAILS],
   );
@@ -218,6 +217,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     sentEmails: sent.map((email) => ({
       ...email,
       to: maskEmail(email.to),
+      clientName: email.clientName ? shortName(email.clientName) : null,
     })),
     since: previous?.ranAt ?? null,
     pending: totals?.pending ?? 0,

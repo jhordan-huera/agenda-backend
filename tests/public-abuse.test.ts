@@ -189,12 +189,19 @@ try {
     ok(r.status === 201, "el registro se hace", r.body);
     ok(sql("select status from notifications where to_email = 'victima.spam@correo.ec' and type = 'welcome'") === "failed", "pero la bienvenida (a una dirección sin comprobar) también se frena");
     await bookJhordan(person("tope-email-3"), limitedVisitor);
-    for (let i = 0; i < 30 && ntfy.received.length === 0; i++) await sleep(100);
+    // Cada reserva por la página trae además su propio aviso («Nueva reserva»): aquí sólo cuentan los del tope.
+    const capAlerts = () => ntfy.received.filter((alert) => /tope diario/i.test(alert.title));
+    for (let i = 0; i < 30 && capAlerts().length === 0; i++) await sleep(100);
     await sleep(300);
     ok(
-      ntfy.received.length === 1 && ntfy.received[0].topic === "agenda-pruebas" && /tope diario/i.test(ntfy.received[0].title),
+      capAlerts().length === 1 && capAlerts()[0].topic === "agenda-pruebas",
       "un solo aviso por ntfy al llegar al tope (no uno por email)",
       ntfy.received,
+    );
+    ok(
+      ntfy.received.some((alert) => /^Nueva reserva/.test(alert.title) && /• Al paciente → to\*\*\*@correo\.ec \(no sale: /.test(alert.message)),
+      "y el aviso de la reserva dice que el email al paciente no sale por el tope",
+      ntfy.received.map((alert) => alert.message),
     );
     ok(/Tope de \d+ emails a terceros/.test(limited.output()), "y queda en el registro de la API", limited.output().slice(-400));
     ntfy.server.close();
