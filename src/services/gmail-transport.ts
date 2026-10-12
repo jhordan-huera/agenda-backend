@@ -44,11 +44,18 @@ const SEND_URL = "https://gmail.googleapis.com/upload/gmail/v1/users/me/messages
 const TOKEN_MARGIN_MS = 60_000;
 
 /**
+ * El compositor de nodemailer, tal como se usa aquí. Al ejecutarse, la importación por defecto es
+ * siempre la clase; pero la compilación de Vercel (Express) lee los tipos de la versión CommonJS de
+ * nodemailer, donde la importación por defecto es el módulo entero, y fallaba la comprobación de tipos.
+ */
+type MailComposerClass = new (mail: Mail.Options) => { compile(): { keepBcc: boolean; build(): Promise<Buffer> } };
+
+/**
  * El email tal como sale (RFC 822), compuesto por nodemailer igual que lo haría por SMTP. Gmail lee
  * los destinatarios de las cabeceras, así que se conserva Bcc (Gmail la quita al enviar).
  */
 export async function buildRawMessage(mail: Mail.Options): Promise<Buffer> {
-  const message = new MailComposer(mail).compile();
+  const message = new (MailComposer as unknown as MailComposerClass)(mail).compile();
   message.keepBcc = true;
   return message.build();
 }
