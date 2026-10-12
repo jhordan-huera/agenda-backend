@@ -20,6 +20,10 @@ export const pool = new pg.Pool({
   // Cifrada y comprobando el certificado: el de Supabase, con su CA raíz (ver tls.ts).
   ssl: databaseTls(config.databaseUrl, config.databaseSsl),
   max: config.databasePoolMax,
+  // Desde un equipo propio (dev:prod) cada conexión nueva a Supabase cuesta 1–4 s (TLS y
+  // autenticación a ~180 ms por ida y vuelta): se mantienen abiertas 5 min en vez de cerrarlas a
+  // los 10 s sin uso. En Vercel y Lambda, el valor por defecto.
+  ...(config.hosted ? {} : { idleTimeoutMillis: 5 * 60_000, keepAlive: true }),
 });
 
 pool.on("error", (error) => console.error("Error en una conexión inactiva de PostgreSQL:", error.message));
