@@ -687,7 +687,7 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | CAPTCHA de la página de reservas y del registro (Cloudflare → Turnstile → Add widget, hostname del frontend, modo *Managed*). Sin ellas, `/api/health` dice `captcha: false` |
    | `TURNSTILE_HOSTNAMES` | Opcional: otros dominios del frontend, separados por comas (ya valen los de `FRONTEND_URL` y `APP_URL`) |
    | `THIRD_PARTY_EMAILS_PER_DAY` | Opcional: tope de emails a pacientes y bienvenidas en 24 h (por defecto 400; súbelo con Google Workspace) |
-   | `NTFY_TOPIC` | Opcional: el del cron, para que la API avise al llegar al tope de emails |
+   | `NTFY_TOPIC` | Opcional: el del cron, para que la API avise al momento de cada reserva por la página y al llegar al tope de emails |
 
 3. **Proyecto del frontend** (agenda-front): variables `API_URL` (URL de este proyecto, p. ej.
    `https://agenda-backend.vercel.app`) y `PROXY_SECRET`.
