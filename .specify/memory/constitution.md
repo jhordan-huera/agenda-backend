@@ -111,6 +111,9 @@ Las funciones nuevas y los cambios grandes siguen Spec Kit:
    constitución. El dueño del producto lo aprueba antes de escribir código.
 4. `/speckit-tasks` (y `/speckit-analyze` si el cambio es grande).
 5. `/speckit-implement`, y `/speckit-converge` para cerrar lo que falte.
+6. `/speckit-reporte`: el reporte final (`reporte.md`) con lo entregado, la comprobación de cada
+   requisito con su prueba, los cambios respecto al plan, los commits y cómo publicarlo. Una
+   función no está terminada sin su reporte.
 
 Reglas del flujo:
 
@@ -120,6 +123,11 @@ Reglas del flujo:
 - Arreglos pequeños y directos (un error, un texto, un estilo puntual) no necesitan spec.
 - Se trabaja en la rama `dev` (sin rama por función). Publicar es un PR `dev` → `main`, sólo
   cuando el dueño del producto lo pide.
+- La descripción de cada PR a `main` nombra las funciones que incluye con el enlace a su
+  `reporte.md` y avisa si hay migración. Al fusionarse, el reporte pasa a "Publicada" con la fecha
+  y el número de PR.
+- No se usan ramas por función ni issues de GitHub: el avance se sigue en `tasks.md` y el cierre
+  en `reporte.md`.
 - Los commits y PR no llevan firma de herramientas de IA (sin `Co-Authored-By`).
 - Los comandos que se le pasan al dueño del producto van sin comentarios `#`.
 - Los servidores de prueba se detienen por puerto o PID, nunca por patrón; los puertos 4000, 5173
@@ -134,4 +142,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.0.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-13
+**Versión**: 1.1.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-13
