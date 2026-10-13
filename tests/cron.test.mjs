@@ -81,7 +81,7 @@ const remindersAfter = Number(sql("select count(*) from notifications where type
 ok(run.code === 0 && first?.report.since === null, "primera ejecución: termina bien y queda en cron_runs", run.output.slice(-300));
 ok(first?.report.reminders > 0 && first.report.reminders === remindersAfter - remindersBefore, "pone en cola los recordatorios de las citas próximas", [first?.report.reminders, remindersAfter - remindersBefore]);
 ok(Number(sql("select count(*) from notifications where status = 'queued'")) === queuedBefore + first.report.reminders, "sin Gmail no envía nada: todo sigue en cola");
-ok(/Recordatorios: \d+ · enviados/.test(run.output) && !/@/.test(run.output), "el registro (público en GitHub) sólo lleva cifras, ningún email", run.output.slice(-300));
+ok(/Recordatorios: \d+ · reservas por la página: \d+ · enviados/.test(run.output) && !/@/.test(run.output), "el registro (público en GitHub) sólo lleva cifras, ningún email", run.output.slice(-300));
 ok(received.length === 1 && received[0].priority === 4 && /no tiene acceso a Gmail/.test(received[0].title), "avisa que faltan las credenciales de Gmail", received[0]);
 run = await runScript();
 let second = lastRun();
@@ -121,11 +121,19 @@ ntfy.close();
 console.log("Aviso de ntfy");
 const base = { reminders: 0, sentSinceLastRun: 0, sentEmails: [], since: null, pending: 0, durationMs: 10 };
 const emails = (patch) => ({ sent: 0, retrying: 0, failed: 0, skipped: 0, errors: [], ...patch });
-const sentEmail = (type, to, clientName = null, date = null, startTime = null, businessName = "Dra. Nadia") => ({ type, to, clientName, date, startTime, businessName });
+const sentEmail = (type, to, clientName = null, date = null, startTime = null, businessName = "Dra. Nadia", appointmentId = null) => ({
+  type,
+  to,
+  clientName,
+  date,
+  startTime,
+  businessName,
+  appointmentId,
+});
 const sample = [
-  sentEmail("appointment_reminder", "ma***@gmail.com", "María L.", "2026-10-07", "10:00"),
-  sentEmail("booking_received", "dr***@gmail.com", "Carlos M.", "2026-10-10", "09:00"),
-  sentEmail("appointment_reminder", "ju***@hotmail.com", "Juan P.", "2026-10-07", "11:30"),
+  sentEmail("appointment_reminder", "ma***@gmail.com", "María L.", "2026-10-07", "10:00", "Dra. Nadia", "a1"),
+  sentEmail("booking_received", "dr***@gmail.com", "Carlos M.", "2026-10-10", "09:00", "Dra. Nadia", "a2"),
+  sentEmail("appointment_reminder", "ju***@hotmail.com", "Juan P.", "2026-10-07", "11:30", "Dra. Nadia", "a3"),
   sentEmail("plan_change_requested", "jh***@gmail.com", null, null, null, null),
 ];
 ok(buildNotice({ ...base, emails: emails() }) === null, "sin novedades no avisa");
@@ -133,17 +141,39 @@ let notice = buildNotice({ ...base, reminders: 2, sentSinceLastRun: 4, sentEmail
 ok(notice?.priority === 2 && notice.title === "Agenda360: 4 correos enviados" && notice.click === "/admin/activity", "correos enviados: aviso discreto que abre la actividad", notice);
 const message = notice?.message ?? "";
 ok(
-  message.startsWith("Recordatorios de cita · 2\n• Dra. Nadia · mié 7 oct 10:00\n• Dra. Nadia · mié 7 oct 11:30"),
-  "agrupa por tipo (primero los recordatorios) con de qué negocio y cuándo",
+  message.startsWith(
+    "Recordatorios de cita · 2\n• Dra. Nadia · mié 7 oct 10:00 · María L. → ma***@gmail.com\n• Dra. Nadia · mié 7 oct 11:30 · Juan P. → ju***@hotmail.com",
+  ),
+  "agrupa por tipo (primero los recordatorios): negocio, cuándo, de quién y a qué correo salió",
   message,
 );
 ok(
-  message.includes("Aviso de nueva reserva (al negocio) · 1\n• Dra. Nadia · reserva para el sáb 10 oct 09:00") &&
-    /Solicitud de cambio de plan · 1(\n|$)/.test(message),
-  "cada tipo con su descripción",
+  message.includes("Aviso de nueva reserva (al negocio) · 1\n• Dra. Nadia · reserva de Carlos M. para el sáb 10 oct 09:00 → dr***@gmail.com") &&
+    message.includes("Solicitud de cambio de plan · 1\n• jh***@gmail.com"),
+  "cada tipo con su descripción y su destinatario",
   message,
 );
-ok(!/María|Carlos|Juan|@/.test(message), "sin pacientes: ni nombres ni emails (ntfy no es sitio para datos personales)", message);
+ok(!/[^*]@/.test(message) && !/María L[a-z]|Juan P[a-z]/.test(message), "los datos de los pacientes, a medias (ntfy lo lee quien conozca el tema)", message);
+
+const withCopies = [
+  sentEmail("appointment_confirmed", "pa***@gmail.com", "Pablo R.", "2026-10-14", "16:30", "Mente Abierta", "c1"),
+  sentEmail("appointment_copy", "dr***@gmail.com", "Pablo R.", "2026-10-14", "16:30", "Mente Abierta", "c1"),
+  sentEmail("appointment_cancelled", "pa***@gmail.com", "Pablo R.", "2026-10-14", "16:30", "Mente Abierta", "c1"),
+  sentEmail("appointment_copy", "dr***@gmail.com", "Pablo R.", "2026-10-14", "16:30", "Mente Abierta", "c1"),
+  sentEmail("appointment_copy", "dr***@gmail.com", "Ana T.", "2026-10-15", "09:00", "Mente Abierta", "c2"),
+];
+const copyLines = describeSentEmails(withCopies, 5).join("\n");
+ok(
+  copyLines.includes("Cita confirmada · 1\n• Mente Abierta · mié 14 oct 16:30 · Pablo R. → pa***@gmail.com · copia: dr***@gmail.com") &&
+    copyLines.includes("Cita cancelada · 1\n• Mente Abierta · mié 14 oct 16:30 · Pablo R. → pa***@gmail.com · copia: dr***@gmail.com"),
+  "la copia al profesional va en la línea del email al paciente (cada una con el suyo)",
+  copyLines,
+);
+ok(
+  copyLines.includes("Copia al profesional · 1\n• Mente Abierta · jue 15 oct 09:00 · Ana T. → dr***@gmail.com") && !/Copias al profesional/.test(copyLines),
+  "sólo va aparte la copia cuyo email al paciente no está en esta tanda",
+  copyLines,
+);
 ok(
   describeSentEmails(sample.slice(0, 1), 45).at(-1) === "…y 44 más (detalle en el panel: Actividad → Emails).",
   "si son muchos, dice cuántos faltan",

@@ -507,7 +507,9 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
 - **Registros sin datos personales:** un error inesperado se registra sólo con su nombre, código,
   tabla, restricción, mensaje y pila (`errorForLog` en `src/http/errors.ts`), nunca entero: los de
   PostgreSQL traen en `detail` la fila con los datos del paciente. Los avisos de ntfy del cron
-  llevan cifras, negocio y hora, sin pacientes (ni nombre ni email).
+  (resumen de correos y uno por cada reserva desde la página) llevan a los pacientes a medias
+  ("Juan P.", "ju***@gmail.com", "099***5555", ver `src/services/masking.ts`), y el registro
+  público de Actions sólo el título y cifras.
 - **API local sólo en este equipo** (`127.0.0.1`) y almacenamiento local encerrado en su carpeta
   (ver "Almacenamiento"): nadie de la misma Wi-Fi puede pedir `/api/files/public/…/..%2F..%2F.env`.
 - **GitHub Actions:** cada acción fijada por el SHA de su commit (con la versión en un comentario) y
