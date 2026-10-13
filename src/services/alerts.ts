@@ -13,8 +13,6 @@ export interface Alert {
   /** Escala de ntfy: 3 normal, 4 alta, 5 urgente. */
   priority: 3 | 4 | 5;
   tags: string[];
-  /** Página del panel que abre el aviso (por defecto, la actividad de la plataforma). */
-  click?: string;
 }
 
 const pending = new Set<Promise<void>>();
@@ -30,21 +28,16 @@ async function post(alert: Alert): Promise<void> {
       message: alert.message,
       priority: alert.priority,
       tags: alert.tags,
-      click: `${config.appUrl}${alert.click ?? "/admin/activity"}`,
+      click: `${config.appUrl}/admin/activity`,
     }),
     signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) throw new Error(`ntfy respondió ${response.status}`);
 }
 
-/**
- * Registra el aviso y lo envía a ntfy sin esperar (en Vercel, waitUntil; en Lambda, flushAlerts). Los
- * avisos normales (p. ej. una reserva) quedan en el registro sólo con el título: el detalle lleva datos
- * de pacientes, aunque sea a medias.
- */
+/** Registra el aviso y lo envía a ntfy sin esperar (en Vercel, waitUntil; en Lambda, flushAlerts). */
 export function sendAlert(alert: Alert): void {
-  if (alert.priority >= 4) console.error(`[aviso] ${alert.title}: ${alert.message}`);
-  else console.info(`[aviso] ${alert.title}`);
+  console.error(`[aviso] ${alert.title}: ${alert.message}`);
   if (!config.ntfy) return;
   const sending = post(alert)
     .catch((error: unknown) => console.error("[aviso] No se pudo enviar a ntfy:", error instanceof Error ? error.message : error))

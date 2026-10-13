@@ -81,7 +81,7 @@ const remindersAfter = Number(sql("select count(*) from notifications where type
 ok(run.code === 0 && first?.report.since === null, "primera ejecución: termina bien y queda en cron_runs", run.output.slice(-300));
 ok(first?.report.reminders > 0 && first.report.reminders === remindersAfter - remindersBefore, "pone en cola los recordatorios de las citas próximas", [first?.report.reminders, remindersAfter - remindersBefore]);
 ok(Number(sql("select count(*) from notifications where status = 'queued'")) === queuedBefore + first.report.reminders, "sin Gmail no envía nada: todo sigue en cola");
-ok(/Recordatorios: \d+ · enviados/.test(run.output) && !/@/.test(run.output), "el registro (público en GitHub) sólo lleva cifras, ningún email", run.output.slice(-300));
+ok(/Recordatorios: \d+ · reservas por la página: \d+ · enviados/.test(run.output) && !/@/.test(run.output), "el registro (público en GitHub) sólo lleva cifras, ningún email", run.output.slice(-300));
 ok(received.length === 1 && received[0].priority === 4 && /no tiene acceso a Gmail/.test(received[0].title), "avisa que faltan las credenciales de Gmail", received[0]);
 run = await runScript();
 let second = lastRun();

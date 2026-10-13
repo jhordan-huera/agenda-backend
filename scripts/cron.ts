@@ -166,6 +166,25 @@ export function buildNotice(report: ScheduledTasksReport, options: { gmailConfig
   return null;
 }
 
+/**
+ * Un aviso por cada reserva desde la página pública (ver booking-alerts.ts) y, si hubo más de las que
+ * se detallan, otro con cuántas faltan.
+ */
+export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
+  const notices: Notice[] = [...(report.bookingNotices ?? [])];
+  const rest = (report.onlineBookings ?? 0) - notices.length;
+  if (rest > 0) {
+    notices.push({
+      title: "Agenda360: más reservas",
+      message: `…y ${plural(rest, "reserva más", "reservas más")} por la página (detalle en el panel de cada negocio).`,
+      priority: 3,
+      tags: ["calendar"],
+      click: "/admin/businesses",
+    });
+  }
+  return notices;
+}
+
 /** Alerta de seguridad: cuentas con muchos intentos fallidos de inicio de sesión. */
 export function buildSecurityNotice(report: ScheduledTasksReport): Notice | null {
   if (report.security.length === 0) return null;
@@ -221,16 +240,19 @@ async function main(): Promise<void> {
     }
 
     console.info(
-      `Recordatorios: ${report.reminders} · enviados desde la anterior: ${report.sentSinceLastRun} · ` +
+      `Recordatorios: ${report.reminders} · reservas por la página: ${report.onlineBookings ?? 0} · ` +
+        `enviados desde la anterior: ${report.sentSinceLastRun} · ` +
         `negocios con error: ${report.reminderFailures} · ` +
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +
         `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ` +
         `emails sin contenido (más de 90 días): ${report.emailContentPurged} · ` +
         `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"} · ${report.durationMs} ms`,
     );
-    const notices = [buildNotice(report, { gmailConfigured: Boolean(config.gmail) }), buildSecurityNotice(report)].filter(
-      (notice) => notice !== null,
-    );
+    const notices = [
+      ...buildBookingNotices(report),
+      buildNotice(report, { gmailConfigured: Boolean(config.gmail) }),
+      buildSecurityNotice(report),
+    ].filter((notice) => notice !== null);
     for (const notice of notices) await notify(notice);
     if (notices.length === 0) console.info("Sin correos, errores ni alertas: no se envía aviso.");
   } finally {

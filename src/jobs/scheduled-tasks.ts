@@ -1,6 +1,7 @@
 import { many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { deleteExpiredRateLimits } from "../http/rate-limit-store.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
+import { findOnlineBookings, onlineBookingNotice, type BookingNotice } from "../services/booking-alerts.ts";
 import { deleteStalePendingAttachments } from "../services/clinical-attachment-service.ts";
 import { deleteUnusedImageUploads } from "../services/image-service.ts";
 import { deleteStalePendingReceipts, purgeOldReceipts } from "../services/payment-service.ts";
@@ -76,6 +77,10 @@ export interface ScheduledTasksReport {
   sentSinceLastRun: number;
   /** Detalle de esos emails (hasta MAX_SENT_DETAILS) para el aviso de ntfy. */
   sentEmails: SentEmail[];
+  /** Reservas desde la página pública desde la ejecución anterior. */
+  onlineBookings?: number;
+  /** El aviso de cada una (hasta MAX_BOOKING_NOTICES), con los datos del paciente a medias. */
+  bookingNotices?: BookingNotice[];
   /** Fecha de la ejecución anterior (null si es la primera). */
   since: string | null;
   /** Emails que siguen en cola al terminar (reintentos o lote máximo alcanzado). */
@@ -209,6 +214,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
       limit $3`,
     [previous?.ranAt ?? null, totals?.at ?? new Date().toISOString(), MAX_SENT_DETAILS],
   );
+  // Después de enviar la cola: el aviso dice si los emails de cada reserva ya salieron.
+  const online = await findOnlineBookings(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
     reminderFailures: reminders.failures,
@@ -219,6 +226,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
       to: maskEmail(email.to),
       clientName: email.clientName ? shortName(email.clientName) : null,
     })),
+    onlineBookings: online.total,
+    bookingNotices: online.bookings.map(onlineBookingNotice),
     since: previous?.ranAt ?? null,
     pending: totals?.pending ?? 0,
     security,

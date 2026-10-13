@@ -1,14 +1,17 @@
-// Aviso por ntfy de cada reserva desde la página pública: una API propia con un ntfy de mentira.
+// Aviso por ntfy de cada reserva desde la página pública: lo envía el cron (scripts/cron.ts) en su
+// pasada, contra la base de pruebas y un ntfy de mentira.
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { cedulaFor } from "./helpers/cedula.mjs";
+import { buildBookingNotices } from "../scripts/cron.ts";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
 import type { PublicBusinessProfile } from "../src/shared/types/index.ts";
-import { onlineBookingAlert, type OnlineBooking } from "../src/services/booking-alerts.ts";
+import { onlineBookingNotice, type OnlineBooking } from "../src/services/booking-alerts.ts";
 import { maskEmail, maskPhone, shortName } from "../src/services/masking.ts";
 
+const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
 const ok = (cond: unknown, label: string, extra?: unknown) => {
   if (cond) console.log("  ✓", label);
@@ -41,45 +44,50 @@ const booking: OnlineBooking = {
   newClient: true,
   client: { name: "Juan Pérez", email: "juan.perez@gmail.com", phone: "0994445555" },
   emails: [
-    { type: "booking_created", to: "juan.perez@gmail.com", held: null },
-    { type: "appointment_copy", to: "ana.torres@gmail.com", held: null },
-    { type: "booking_received", to: "consultorio@gmail.com", held: null },
+    { type: "booking_created", to: "juan.perez@gmail.com", status: "sent", reason: null },
+    { type: "appointment_copy", to: "ana.torres@gmail.com", status: "sent", reason: null },
+    { type: "booking_received", to: "consultorio@gmail.com", status: "queued", reason: null },
   ],
 };
-let alert = onlineBookingAlert(booking);
-ok(alert.title === "Nueva reserva · Mente Abierta" && alert.priority === 3 && alert.click === "/admin/businesses/b1", "título, prioridad y enlace a la ficha del negocio", alert);
+let notice = onlineBookingNotice(booking);
 ok(
-  alert.message ===
+  notice.title === "Agenda360: nueva reserva" && notice.priority === 3 && notice.click === "/admin/businesses/b1",
+  "título sin el negocio (el registro de Actions es público) y enlace a la ficha del negocio",
+  notice,
+);
+ok(
+  notice.message ===
     [
+      "Mente Abierta · mié 14 oct 16:30",
       "Paciente nuevo: Juan P. · ju***@gmail.com · 099***5555",
       "Consulta inicial · 60 min · $15",
-      "Con Dra. Ana Torres · mié 14 oct 16:30 · en el local",
+      "Con Dra. Ana Torres · en el local",
       "Pendiente de confirmar",
       "",
       "Emails:",
       "• Al paciente → ju***@gmail.com",
       "• Copia al profesional → an***@gmail.com",
-      "• Aviso al negocio → co***@gmail.com",
+      "• Aviso al negocio → co***@gmail.com (en cola)",
     ].join("\n"),
-  "lo importante de la cita y a quién salen los emails",
-  alert.message,
+  "lo importante de la cita y a quién salieron los emails",
+  notice.message,
 );
-alert = onlineBookingAlert({
+notice = onlineBookingNotice({
   ...booking,
   newClient: false,
   price: 0,
   place: "home",
-  emails: [{ type: "booking_created", to: "juan.perez@gmail.com", held: "No enviado: se alcanzó el tope de 300 emails a terceros en 24 h." }],
+  emails: [{ type: "booking_created", to: "juan.perez@gmail.com", status: "failed", reason: "No enviado: se alcanzó el tope de 300 emails a terceros en 24 h." }],
 });
-ok(
-  /^Ya era paciente: /.test(alert.message) && /· gratis\n/.test(alert.message) && /· a domicilio\n/.test(alert.message),
-  "paciente que ya existía, cita gratis y a domicilio",
-  alert.message,
-);
-ok(/• Al paciente → ju\*\*\*@gmail\.com \(no sale: se alcanzó el tope/.test(alert.message), "un email frenado por un tope dice que no sale y por qué", alert.message);
+ok(/\nYa era paciente: /.test(notice.message) && /· gratis\n/.test(notice.message) && /· a domicilio\n/.test(notice.message), "paciente que ya existía, gratis y a domicilio", notice.message);
+ok(/• Al paciente → ju\*\*\*@gmail\.com \(no salió: se alcanzó el tope/.test(notice.message), "un email que no salió dice por qué", notice.message);
+notice = onlineBookingNotice({ ...booking, emails: [{ type: "booking_created", to: "juan.perez@gmail.com", status: "failed", reason: "550 juan.perez@gmail.com no existe" }] });
+ok(!notice.message.includes("juan.perez@gmail.com"), "sin el email completo aunque venga en el error de Gmail", notice.message);
+const more = buildBookingNotices({ onlineBookings: 13, bookingNotices: Array.from({ length: 10 }, () => onlineBookingNotice(booking)) } as never);
+ok(more.length === 11 && /…y 3 reservas más/.test(more[10].message), "con muchas, detalla 10 y dice cuántas faltan", more.at(-1));
 
-console.log("Al reservar por la página");
-const received: { topic: string; title: string; message: string; priority: number; click: string }[] = [];
+console.log("En la pasada del cron");
+const received: { topic: string; title: string; message: string; priority: number; click?: string }[] = [];
 const ntfy = createServer((req, res) => {
   let body = "";
   req.on("data", (chunk) => (body += chunk));
@@ -89,24 +97,28 @@ const ntfy = createServer((req, res) => {
   });
 });
 await new Promise<void>((resolve) => ntfy.listen(0, "127.0.0.1", resolve));
-const freePort = () =>
-  new Promise<number>((resolve) => {
-    const probe = createServer().listen(0, "127.0.0.1", () => {
-      const { port } = probe.address() as AddressInfo;
-      probe.close(() => resolve(port));
+const runCron = () =>
+  new Promise<{ code: number | null; output: string }>((resolve) => {
+    let output = "";
+    const child = spawn(process.execPath, ["scripts/cron.ts"], {
+      env: {
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+        NODE_ENV: "test",
+        DATABASE_URL: process.env.TEST_DATABASE_URL,
+        DATABASE_SSL: "false",
+        FRONTEND_URL: "https://agendo.example",
+        LOCAL_STORAGE_DIR: process.env.LOCAL_STORAGE_DIR,
+        NTFY_TOPIC: "agendo-pruebas",
+        NTFY_SERVER: `http://127.0.0.1:${(ntfy.address() as AddressInfo).port}`,
+        APP_URL: "https://agendo.example",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
     });
+    child.stdout!.on("data", (chunk) => (output += chunk));
+    child.stderr!.on("data", (chunk) => (output += chunk));
+    child.on("exit", (code) => resolve({ code, output }));
   });
-const port = await freePort();
-const api = spawn(process.execPath, ["src/server.ts"], {
-  env: { ...process.env, PORT: String(port), NTFY_TOPIC: "agenda-pruebas", NTFY_SERVER: `http://127.0.0.1:${(ntfy.address() as AddressInfo).port}` },
-  stdio: ["ignore", "pipe", "pipe"],
-});
-const apiOutput: string[] = [];
-api.stdout!.on("data", (chunk) => apiOutput.push(String(chunk)));
-api.stderr!.on("data", (chunk) => apiOutput.push(String(chunk)));
-const BASE = `http://127.0.0.1:${port}/api`;
-for (let i = 0; i < 100 && !(await fetch(`${BASE}/health`).then((r) => r.ok, () => false)); i++) await new Promise((r) => setTimeout(r, 100));
-
 const call = async (method: string, path: string, body?: unknown) => {
   const res = await fetch(BASE + path, {
     method,
@@ -116,18 +128,19 @@ const call = async (method: string, path: string, body?: unknown) => {
   const text = await res.text();
   return { status: res.status, body: text ? JSON.parse(text) : undefined };
 };
-const waitFor = async (count: number) => {
-  for (let i = 0; i < 50 && received.length < count; i++) await new Promise((r) => setTimeout(r, 100));
-};
 
 try {
+  // Lo de antes ya contado: la prueba sólo mira las reservas que hace ella.
+  await runCron();
+  received.length = 0;
+
   const profile: PublicBusinessProfile = (await call("GET", `/public/businesses/jhordan?t=${Date.now()}`)).body;
   const now = getZonedNow(profile.business.timezone);
   const context = { ...profile, settings: profile.business.bookingSettings, now };
   const service = profile.services.find((s) => s.modes.includes("business"))!;
   const agenda = profile.professionals[0];
   const slots: { date: string; time: string }[] = [];
-  for (let d = 2; d < 60 && slots.length < 2; d++) {
+  for (let d = 3; d < 60 && slots.length < 2; d++) {
     const date = addDaysISO(now.date, d);
     const [time] = getAvailableSlots(date, service.durationMinutes, scopeToProfessional(context, agenda.id));
     if (time) slots.push({ date, time });
@@ -139,29 +152,33 @@ try {
 
   let r = await book(slots[0]);
   ok(r.status === 200, "reserva por la página", r.body);
-  await waitFor(1);
+  ok(received.length === 0, "la API no avisa: no necesita NTFY_TOPIC en Vercel ni en Lambda", received);
+  let run = await runCron();
   const owner = sql("select u.email from users u join businesses b on b.owner_id = u.id where b.slug = 'jhordan'");
-  const first = received.at(-1);
-  ok(received.length === 1 && first?.topic === "agenda-pruebas" && /^Nueva reserva · /.test(first.title), "llega un aviso a ntfy al momento", received);
-  ok(/^Paciente nuevo: Paciente A\. · al\*\*\*@example\.com · \+593\*\*\*5555\n/.test(first?.message ?? ""), "paciente nuevo, con sus datos a medias", first?.message);
+  const mine = () => received.filter((n) => n.title === "Agenda360: nueva reserva" && n.message.includes("Paciente A."));
+  const first = mine()[0];
+  ok(run.code === 0 && mine().length === 1, "el cron manda un aviso por la reserva", { code: run.code, received });
+  ok(new RegExp(`^${profile.business.name} · `).test(first?.message ?? ""), "empieza por el negocio y cuándo es", first?.message);
+  ok(/\nPaciente nuevo: Paciente A\. · al\*\*\*@example\.com · \+593\*\*\*5555\n/.test(first?.message ?? ""), "paciente nuevo, con sus datos a medias", first?.message);
   ok(
-    (first?.message ?? "").includes(`• Al paciente → al***@example.com`) && (first?.message ?? "").includes(`• Copia al profesional → ${maskEmail(owner)}`),
-    "dice a qué correo sale y a cuál la copia",
+    (first?.message ?? "").includes("• Al paciente → al***@example.com") && (first?.message ?? "").includes(`• Copia al profesional → ${maskEmail(owner)}`),
+    "dice a qué correo salió y a cuál la copia",
     first?.message,
   );
   ok(!(first?.message ?? "").includes(email) && !(first?.message ?? "").includes(owner) && !(first?.message ?? "").includes("444 5555"), "nunca los datos completos", first?.message);
-  ok(first?.click.endsWith(`/admin/businesses/${profile.business.id}`), "abre la ficha del negocio", first?.click);
-  ok(!apiOutput.join("").includes(email), "el registro de la API no lleva al paciente", apiOutput.join("").slice(-500));
+  ok(first?.click === `https://agendo.example/admin/businesses/${profile.business.id}`, "abre la ficha del negocio", first?.click);
+  ok(!run.output.includes("@") && !run.output.includes(profile.business.name) && /reservas por la página: 1/.test(run.output), "el registro público sólo lleva cifras", run.output.slice(-600));
 
   r = await book(slots[0]);
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  ok(r.status === 200 && received.length === 1, "el reintento de la misma reserva no avisa otra vez", { status: r.status, avisos: received.length });
+  run = await runCron();
+  ok(r.status === 200 && mine().length === 1, "el reintento de la misma reserva no avisa otra vez", mine().length);
 
   r = await book(slots[1]);
-  await waitFor(2);
-  ok(r.status === 200 && /^Ya era paciente: Paciente A\./.test(received.at(-1)?.message ?? ""), "otra cita del mismo paciente: «Ya era paciente»", received.at(-1)?.message);
+  await runCron();
+  ok(r.status === 200 && mine().length === 2 && /\nYa era paciente: Paciente A\./.test(mine()[1]?.message ?? ""), "otra cita del mismo paciente: «Ya era paciente»", mine()[1]?.message);
+  await runCron();
+  ok(mine().length === 2, "cada reserva se avisa una sola vez", mine().length);
 } finally {
-  api.kill("SIGTERM");
   ntfy.close();
 }
 

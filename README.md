@@ -507,7 +507,9 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
 - **Registros sin datos personales:** un error inesperado se registra sólo con su nombre, código,
   tabla, restricción, mensaje y pila (`errorForLog` en `src/http/errors.ts`), nunca entero: los de
   PostgreSQL traen en `detail` la fila con los datos del paciente. Los avisos de ntfy del cron
-  llevan cifras, negocio y hora, sin pacientes (ni nombre ni email).
+  (resumen de correos y uno por cada reserva desde la página) llevan a los pacientes a medias
+  ("Juan P.", "ju***@gmail.com", "099***5555", ver `src/services/masking.ts`), y el registro
+  público de Actions sólo el título y cifras.
 - **API local sólo en este equipo** (`127.0.0.1`) y almacenamiento local encerrado en su carpeta
   (ver "Almacenamiento"): nadie de la misma Wi-Fi puede pedir `/api/files/public/…/..%2F..%2F.env`.
 - **GitHub Actions:** cada acción fijada por el SHA de su commit (con la versión en un comentario) y
@@ -687,7 +689,7 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | CAPTCHA de la página de reservas y del registro (Cloudflare → Turnstile → Add widget, hostname del frontend, modo *Managed*). Sin ellas, `/api/health` dice `captcha: false` |
    | `TURNSTILE_HOSTNAMES` | Opcional: otros dominios del frontend, separados por comas (ya valen los de `FRONTEND_URL` y `APP_URL`) |
    | `THIRD_PARTY_EMAILS_PER_DAY` | Opcional: tope de emails a pacientes y bienvenidas en 24 h (por defecto 400; súbelo con Google Workspace) |
-   | `NTFY_TOPIC` | Opcional: el del cron, para que la API avise al momento de cada reserva por la página y al llegar al tope de emails |
+   | `NTFY_TOPIC` | Opcional: el del cron, para que la API avise al llegar al tope de emails |
 
 3. **Proyecto del frontend** (agenda-front): variables `API_URL` (URL de este proyecto, p. ej.
    `https://agenda-backend.vercel.app`) y `PROXY_SECRET`.
