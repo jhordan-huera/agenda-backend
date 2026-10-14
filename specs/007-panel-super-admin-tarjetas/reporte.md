@@ -103,7 +103,7 @@ mismos datos. Salen **iguales píxel por píxel**.
 | Repo | Commit | Mensaje |
 |---|---|---|
 | agenda-backend | 8ce1765 | Spec 007: colores del panel por cuenta de super admin (backend) |
-| agenda-front | a5a2906 | Spec 007: panel del super admin en tarjetas y con colores propios |
+| agenda-front | 35df4b7 | Spec 007: panel del super admin en tarjetas y con colores propios |
 
 ## Cómo publicarlo
 
