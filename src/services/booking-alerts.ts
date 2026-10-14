@@ -192,20 +192,26 @@ export interface PanelClient {
   email: string;
   phone: string;
   /** Quién lo registró (null: no se sabe, p. ej. su usuario ya no existe). */
-  createdBy: { name: string; role: BusinessRole | null; superAdmin: boolean } | null;
+  createdBy: PanelActor;
 }
 
+/** Quién hizo algo desde el panel (no es dato del paciente): " por Ana T. (Profesional)". */
+type PanelActor = { name: string; role: BusinessRole | null; superAdmin: boolean } | null;
+
+function byWhom(by: PanelActor): string {
+  if (!by) return "";
+  if (by.superAdmin && !by.role) return " por el super admin (modo soporte)";
+  return ` por ${shortName(by.name)}${by.role ? ` (${ROLE_LABELS[by.role]})` : ""}`;
+}
+
+/** El paciente a medias: "Juan P. · ju***@gmail.com · 099***5555". */
+const maskedPatient = (client: { name: string; email: string; phone: string }) =>
+  [shortName(client.name), client.email && maskEmail(client.email), maskPhone(client.phone)].filter(Boolean).join(" · ");
+
 export function newClientNotice(client: PanelClient): BookingNotice {
-  const patient = [shortName(client.name), client.email && maskEmail(client.email), maskPhone(client.phone)].filter(Boolean).join(" · ");
-  const by = client.createdBy;
-  const who = !by
-    ? ""
-    : by.superAdmin && !by.role
-      ? " por el super admin (modo soporte)"
-      : ` por ${shortName(by.name)}${by.role ? ` (${ROLE_LABELS[by.role]})` : ""}`;
   return {
     title: "Agenda360: nuevo paciente",
-    message: [client.businessName, `Paciente nuevo: ${patient}`, `Registrado desde el panel${who}`].join("\n"),
+    message: [client.businessName, `Paciente nuevo: ${maskedPatient(client)}`, `Registrado desde el panel${byWhom(client.createdBy)}`].join("\n"),
     priority: 3,
     tags: ["bust_in_silhouette"],
     click: `/admin/businesses/${client.businessId}`,
@@ -262,4 +268,142 @@ export async function findPanelClients(
     })),
     total: rows[0].total,
   };
+}
+
+/* ------------------------------------------------ Citas agendadas del panel -- */
+
+/**
+ * Aviso por ntfy de cada cita que se agenda desde el panel (lo pidió el usuario, 2026-10-13): lo
+ * mismo que el de una reserva por la página, con quién la agendó. Las de la página ya tienen el suyo.
+ */
+export const MAX_APPOINTMENT_NOTICES = 10;
+
+export interface PanelAppointment extends Omit<OnlineBooking, "clients"> {
+  /** Los pacientes de la cita: el principal primero y, en una sesión en pareja o en familia, los demás. */
+  clients: { name: string; email: string; phone: string }[];
+  /** Quién la agendó (null: no se sabe). */
+  createdBy: PanelActor;
+}
+
+const STATUS_LINES: Record<Appointment["status"], string> = {
+  pending: "Pendiente de confirmar",
+  confirmed: "Confirmada",
+  completed: "Completada",
+  no_show: "No asistió",
+  cancelled: "Ya cancelada",
+};
+
+export function panelAppointmentNotice(appointment: PanelAppointment): BookingNotice {
+  const emails = appointment.emails
+    .filter((email) => EMAIL_ROLES[email.type])
+    .map((email) => `• ${EMAIL_ROLES[email.type]} → ${maskEmail(email.to)}${describeEmailStatus(email)}`);
+  return {
+    title: "Agenda360: nueva cita",
+    message: [
+      `${appointment.businessName} · ${formatShortDate(appointment.date)} ${appointment.startTime}`,
+      ...appointment.clients.map((client) => `Paciente: ${maskedPatient(client)}`),
+      `${appointment.serviceName} · ${appointment.durationMinutes} min · ${appointment.price > 0 ? formatPrice(appointment.price, appointment.currency) : "gratis"}`,
+      [appointment.professionalName && `Con ${appointment.professionalName}`, PLACE_LABELS[appointment.place]].filter(Boolean).join(" · "),
+      STATUS_LINES[appointment.status],
+      `Agendada desde el panel${byWhom(appointment.createdBy)}`,
+      "",
+      ...(emails.length > 0 ? ["Emails:", ...emails] : ["Sin emails (el paciente no tiene email o el negocio tiene apagados esos avisos)."]),
+    ].join("\n"),
+    priority: 3,
+    tags: ["date"],
+    click: `/admin/businesses/${appointment.businessId}`,
+  };
+}
+
+/**
+ * Las citas agendadas desde el panel en (since, until], las más antiguas primero (hasta `limit`), y
+ * cuántas son en total. Sin `since` (la primera pasada), las del último día. Quién la agendó sale de
+ * su registro de actividad (appointment.created).
+ */
+export async function findPanelAppointments(
+  db: Db,
+  since: string | null,
+  until: string,
+  limit = MAX_APPOINTMENT_NOTICES,
+): Promise<{ appointments: PanelAppointment[]; total: number }> {
+  const rows = await many<{
+    id: string;
+    total: number;
+    businessId: string;
+    businessName: string;
+    currency: string;
+    serviceName: string;
+    durationMinutes: number;
+    price: string;
+    professionalName: string | null;
+    date: string;
+    startTime: string;
+    isVirtual: boolean;
+    homeVisit: boolean;
+    status: Appointment["status"];
+    clientName: string;
+    clientEmail: string;
+    clientPhone: string;
+    extraClients: PanelAppointment["clients"];
+    creatorName: string | null;
+    creatorRole: BusinessRole | null;
+    superAdmin: boolean | null;
+  }>(
+    db,
+    `select a.id, count(*) over ()::int as total, b.id as "businessId", b.name as "businessName", b.currency,
+            s.name as "serviceName", s.duration_minutes as "durationMinutes", a.price, p.display_name as "professionalName",
+            to_char(a.date, 'YYYY-MM-DD') as date, to_char(a.start_time, 'HH24:MI') as "startTime",
+            a.is_virtual as "isVirtual", a.home_visit is not null as "homeVisit", a.status,
+            c.name as "clientName", c.email as "clientEmail", c.phone as "clientPhone",
+            coalesce((select json_agg(json_build_object('name', ec.name, 'email', ec.email, 'phone', ec.phone)
+                                      order by ac.created_at, ac.client_id)
+                        from appointment_clients ac join clients ec on ec.id = ac.client_id
+                       where ac.appointment_id = a.id), '[]') as "extraClients",
+            nullif(trim(u.first_name || ' ' || u.last_name), '') as "creatorName", bu.role as "creatorRole",
+            u.platform_role = 'super_admin' as "superAdmin"
+       from appointments a
+       join businesses b on b.id = a.business_id
+       join services s on s.id = a.service_id
+       join clients c on c.id = a.client_id
+       left join professionals p on p.id = a.professional_id
+       left join lateral (select l.actor_id from audit_logs l
+                           where l.business_id = a.business_id and l.entity_id = a.id and l.action = 'appointment.created'
+                           order by l.created_at limit 1) created on true
+       left join users u on u.id = created.actor_id
+       left join business_users bu on bu.business_id = a.business_id and bu.user_id = created.actor_id
+      where a.source = 'dashboard'
+        and a.created_at > coalesce($1::timestamptz, now() - interval '1 day') and a.created_at <= $2
+      order by a.created_at
+      limit $3`,
+    [since, until, limit],
+  );
+  if (rows.length === 0) return { appointments: [], total: 0 };
+  const emails = await many<{ appointmentId: string } & OnlineBooking["emails"][number]>(
+    db,
+    `select appointment_id as "appointmentId", type, to_email as "to", status, case when status = 'failed' then last_error end as reason
+       from notifications where appointment_id = any($1::uuid[]) order by created_at`,
+    [rows.map((row) => row.id)],
+  );
+  const appointments = rows.map(
+    (row): PanelAppointment => ({
+      businessId: row.businessId,
+      businessName: row.businessName,
+      currency: row.currency,
+      serviceName: row.serviceName,
+      durationMinutes: row.durationMinutes,
+      price: Number(row.price),
+      professionalName: row.professionalName,
+      date: row.date,
+      startTime: row.startTime,
+      place: row.isVirtual ? "virtual" : row.homeVisit ? "home" : "business",
+      status: row.status,
+      clients: [{ name: row.clientName, email: row.clientEmail, phone: row.clientPhone }, ...row.extraClients],
+      createdBy:
+        row.creatorName === null && !row.superAdmin
+          ? null
+          : { name: row.creatorName ?? "", role: row.creatorRole, superAdmin: Boolean(row.superAdmin) },
+      emails: emails.filter((email) => email.appointmentId === row.id).map(({ appointmentId: _id, ...email }) => email),
+    }),
+  );
+  return { appointments, total: rows[0].total };
 }

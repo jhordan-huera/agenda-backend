@@ -8,7 +8,7 @@ import { buildBookingNotices } from "../scripts/cron.ts";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
 import type { PublicBusinessProfile } from "../src/shared/types/index.ts";
-import { newClientNotice, onlineBookingNotice, type OnlineBooking } from "../src/services/booking-alerts.ts";
+import { newClientNotice, onlineBookingNotice, panelAppointmentNotice, type OnlineBooking } from "../src/services/booking-alerts.ts";
 import { maskEmail, maskPhone, shortName } from "../src/services/masking.ts";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
@@ -118,6 +118,49 @@ ok(clientNotice.message.endsWith("\nRegistrado desde el panel"), "sin saber qui�
 const manyClients = buildBookingNotices({ panelClients: 12, clientNotices: Array.from({ length: 10 }, () => newClientNotice(panelClient)) } as never);
 ok(manyClients.length === 11 && /…y 2 pacientes nuevos más/.test(manyClients[10].message), "con muchos, detalla 10 y dice cuántos faltan", manyClients.at(-1));
 
+console.log("Citas agendadas desde el panel");
+const { clients: _clients, ...bookingBase } = booking;
+const panelAppointment = {
+  ...bookingBase,
+  status: "confirmed" as const,
+  clients: [
+    { name: "Juan Pérez", email: "juan.perez@gmail.com", phone: "0994445555" },
+    { name: "María López Vera", email: "", phone: "0991112222" },
+  ],
+  createdBy: { name: "Laura Gómez", role: "staff" as const, superAdmin: false },
+  emails: [
+    { type: "appointment_confirmed" as const, to: "juan.perez@gmail.com", status: "sent" as const, reason: null },
+    { type: "appointment_copy" as const, to: "ana.torres@gmail.com", status: "queued" as const, reason: null },
+  ],
+};
+const appointmentNotice = panelAppointmentNotice(panelAppointment);
+ok(
+  appointmentNotice.title === "Agenda360: nueva cita" &&
+    appointmentNotice.click === "/admin/businesses/b1" &&
+    appointmentNotice.message ===
+      [
+        "Mente Abierta · mié 14 oct 16:30",
+        "Paciente: Juan P. · ju***@gmail.com · 099***5555",
+        "Paciente: María L. · 099***2222",
+        "Consulta inicial · 60 min · $15",
+        "Con Dra. Ana Torres · en el local",
+        "Confirmada",
+        "Agendada desde el panel por Laura G. (Recepción)",
+        "",
+        "Emails:",
+        "• Al paciente → ju***@gmail.com",
+        "• Copia al profesional → an***@gmail.com (en cola)",
+      ].join("\n"),
+  "la cita, sus pacientes a medias, quién la agendó y a quién salieron los emails",
+  appointmentNotice.message,
+);
+ok(
+  /\nCompletada\nAgendada desde el panel\n\nSin emails/.test(panelAppointmentNotice({ ...panelAppointment, status: "completed", createdBy: null, emails: [] }).message),
+  "una cita ya atendida, sin saber quién y sin emails",
+);
+const manyAppointments = buildBookingNotices({ panelAppointments: 11, appointmentNotices: Array.from({ length: 10 }, () => appointmentNotice) } as never);
+ok(manyAppointments.length === 11 && /…y 1 cita más agendadas desde el panel/.test(manyAppointments[10].message), "con muchas, detalla 10 y dice cuántas faltan", manyAppointments.at(-1));
+
 console.log("En la pasada del cron");
 const received: { topic: string; title: string; message: string; priority: number; click?: string }[] = [];
 const ntfy = createServer((req, res) => {
@@ -226,6 +269,7 @@ try {
     isActive: true,
   });
   ok(r.status === 200, "el propietario registra un paciente desde el panel", r.body);
+  const panelClientId = r.body.id;
   run = await runCron();
   const panelNotices = () => received.filter((n) => n.title === "Agenda360: nuevo paciente" && n.message.includes("Paciente P."));
   const panelNotice = panelNotices()[0];
@@ -239,6 +283,43 @@ try {
   ok(!received.some((n) => n.title === "Agenda360: nuevo paciente" && n.message.includes("Paciente A.")), "los de la página no se repiten: ya salen en su reserva");
   await runCron();
   ok(panelNotices().length === 1, "cada paciente se avisa una sola vez", panelNotices().length);
+
+  // Una cita agendada desde el panel para ese paciente.
+  let panelSlot: { date: string; time: string } | null = null;
+  for (let d = 10; d < 90 && !panelSlot; d++) {
+    const date = addDaysISO(now.date, d);
+    const [time] = getAvailableSlots(date, service.durationMinutes, scopeToProfessional(context, agenda.id));
+    if (time) panelSlot = { date, time };
+  }
+  r = await call("POST", `/businesses/${profile.business.id}/appointments`, {
+    clientId: panelClientId,
+    serviceId: service.id,
+    professionalId: agenda.id,
+    date: panelSlot!.date,
+    startTime: panelSlot!.time,
+    durationMinutes: service.durationMinutes,
+    price: 15,
+    status: "confirmed",
+    notes: "",
+    homeVisit: null,
+    isVirtual: false,
+  });
+  ok(r.status === 200, "el propietario agenda una cita desde el panel", r.body);
+  run = await runCron();
+  const appointmentNotices = () => received.filter((n) => n.title === "Agenda360: nueva cita" && n.message.includes("Paciente: Paciente P."));
+  const appointmentNoticeSent = appointmentNotices()[0]?.message ?? "";
+  ok(run.code === 0 && appointmentNotices().length === 1, "el cron avisa de la cita agendada desde el panel", received.map((n) => n.title));
+  ok(
+    appointmentNoticeSent.startsWith(`${profile.business.name} · `) &&
+      appointmentNoticeSent.includes("\nPaciente: Paciente P. · pa***@example.com · +593***2211\n") &&
+      appointmentNoticeSent.includes("\nConfirmada\nAgendada desde el panel por Jhordan H. (Propietario)\n"),
+    "con el paciente a medias y quién la agendó",
+    appointmentNoticeSent,
+  );
+  ok(!appointmentNoticeSent.includes(panelEmail) && /citas del panel: 1/.test(run.output), "nunca el email completo; el registro público, sólo la cifra", run.output.slice(-400));
+  ok(!received.some((n) => n.title === "Agenda360: nueva cita" && n.message.includes("Paciente A.")), "las reservas de la página no se repiten como citas del panel");
+  await runCron();
+  ok(appointmentNotices().length === 1, "cada cita se avisa una sola vez", appointmentNotices().length);
 } finally {
   ntfy.close();
 }

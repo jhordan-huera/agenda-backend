@@ -244,6 +244,35 @@ async function databaseSize(databaseUrl: string): Promise<number | null> {
   }
 }
 
+/** Días que se guardan las copias registradas (las muestra el inicio del super admin, spec 006). */
+const BACKUP_RUNS_DAYS = 365;
+
+/**
+ * Deja anotada la copia, buena o fallida, en backup_runs (migración 034) para el inicio del super
+ * admin. Nunca falla: si no se puede anotar, la copia no se pierde por eso (queda en el registro, sin
+ * la URL de la base). `error`, ya limpio (scrub).
+ */
+async function recordBackup(databaseUrl: string | undefined, run: { ok: boolean; sizeBytes: number | null; error: string }): Promise<void> {
+  if (!databaseUrl) return;
+  const client = new pg.Client({
+    connectionString: databaseUrl,
+    ssl: databaseTls(databaseUrl, env("DATABASE_SSL") !== "false"),
+    connectionTimeoutMillis: 5_000,
+  });
+  try {
+    await client.connect();
+    await client.query("insert into backup_runs (ok, size_bytes, error) values ($1, $2, $3)", [run.ok, run.sizeBytes, run.error.slice(0, 500)]);
+    await client.query("delete from backup_runs where ran_at < now() - make_interval(days => $1)", [BACKUP_RUNS_DAYS]);
+  } catch (error) {
+    console.warn(`No se pudo anotar la copia en la base: ${scrub(error instanceof Error ? error.message : String(error))}`);
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+/** La base donde se anotan las copias: la de la aplicación (la del volcado puede ser otra conexión). */
+const recordUrl = () => env("DATABASE_URL") ?? env("BACKUP_DATABASE_URL");
+
 async function main(): Promise<void> {
   const outIndex = process.argv.indexOf("--out");
   const outDir = outIndex === -1 ? null : process.argv[outIndex + 1];
@@ -309,6 +338,7 @@ async function main(): Promise<void> {
       true,
     );
   }
+  await recordBackup(recordUrl(), { ok: true, sizeBytes: file.length, error: "" });
   await notify({
     title: "Agenda360: copia de seguridad hecha",
     message: [
@@ -333,6 +363,7 @@ if (import.meta.main) {
     const reason = scrub(error instanceof Error ? error.message : String(error));
     console.error(`✗ ${reason}`);
     const delivered = error instanceof BackupError && error.delivered;
+    await recordBackup(recordUrl(), { ok: false, sizeBytes: null, error: reason });
     await notify({
       title: delivered ? "Agenda360: la copia de seguridad tiene problemas" : "Agenda360: la copia de seguridad falló",
       message: `${reason}\n\n${delivered ? "" : "Hoy no hay copia nueva. "}Revisa la ejecución en GitHub → Actions → Copia de seguridad.`,

@@ -42,6 +42,12 @@ try {
   let r = backup({ RESTORE_CHECK_URL: checkUrl });
   const firstRun = r.stdout;
   ok(r.status === 0 && /restauración comprobada/.test(r.stdout), "hace la copia y la restaura en una base vacía de prueba", r.stdout + r.stderr);
+  const lastRun = async () =>
+    (await db.query("select ok, size_bytes::int as size, error from backup_runs order by ran_at desc, id desc limit 1")).rows[0] as
+      | { ok: boolean; size: number | null; error: string }
+      | undefined;
+  let run = await lastRun();
+  ok(run?.ok === true && (run.size ?? 0) > 0 && run.error === "", "queda anotada en la base, con su tamaño (inicio del super admin)", run);
   ok(!/postgres(ql)?:\/\//.test(r.stdout + r.stderr), "el registro no muestra la URL de la base");
   const files = readdirSync(dir).filter((name) => name.endsWith(".sql.gz.enc"));
   ok(files.length === 1 && /^agenda360-\d{4}-\d{2}-\d{2}\.sql\.gz\.enc$/.test(files[0]), "archivo con la fecha", files);
@@ -109,6 +115,9 @@ try {
   ok(r.status === 1 && /credenciales de Gmail/.test(r.stderr), "sin --out la envía por Gmail (y avisa si faltan las credenciales)", r.stderr);
   r = backup({ DATABASE_URL: "postgresql://postgres:secreta@db.abcdefgh.supabase.co:5432/postgres", PG_DUMP: "pg_dump" });
   ok(r.status === 1 && !/secreta|abcdefgh/.test(r.stdout + r.stderr), "si pg_dump falla, el error no muestra la URL ni el proyecto", r.stderr);
+  r = backup({ BACKUP_PASSPHRASE: "corta", DATABASE_URL: source });
+  run = await lastRun();
+  ok(r.status === 1 && run?.ok === false && run.size === null && /BACKUP_PASSPHRASE/.test(run.error), "una copia que falla también queda anotada, con el motivo", run);
 
   // Un psql que da un error y no restaura nada: la copia se guarda igual, pero el trabajo falla.
   const fakePsql = join(dir, "psql-roto.sh");

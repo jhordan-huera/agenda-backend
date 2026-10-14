@@ -181,7 +181,7 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
 | Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status`) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
 | Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) |
-| Super admin | `/admin/stats` · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` |
+| Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, último cron, última copia e intentos fallidos; spec 006) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` |
 | Estado | `GET /health` |
 
 ## Contraseñas, modo soporte e historia clínica
@@ -626,6 +626,8 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
     señal de vida a healthchecks.io. Cada ejecución queda en la tabla `cron_runs` (30 días).
   - **Avisos por ntfy de pacientes** (`src/services/booking-alerts.ts`), con los datos a medias:
     - **cada reserva por la página:** dice de cada persona si es «Paciente nuevo» o «Ya era paciente»;
+    - **cada cita agendada desde el panel:** lo mismo que una reserva, con quién la agendó y su rol
+      (sale del registro de actividad `appointment.created`);
     - **cada paciente registrado desde el panel:** dice quién lo registró y con qué rol.
 
     Hasta 10 de cada tipo por pasada; del resto sólo se dice cuántos son.
@@ -684,6 +686,9 @@ momento: **Actions → Copia de seguridad → Run workflow**.
    sin la clave nadie puede abrirla, tampoco Google.
 4. La envía como adjunto a `BACKUP_EMAIL` por Gmail y avisa por ntfy (sin sonido si salió bien,
    urgente si falló). Opcional: `BACKUP_HEALTHCHECK_URL` (healthchecks.io avisa si una semana no llega; periodo 7 días).
+5. **La anota en `backup_runs`** (migración 034), buena o fallida, con el tamaño del archivo cifrado o
+   el motivo limpio (sin la URL de la base). El inicio del super admin muestra la última. Si no se
+   puede anotar, la copia sigue igual. Las anotaciones de más de un año se borran.
 
 No incluye los archivos de la historia clínica (Supabase Storage), sólo la base de datos. Si la
 copia cifrada se acerca a 10 MB, el aviso recomienda pasar a otro almacenamiento (Gmail admite

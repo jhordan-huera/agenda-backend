@@ -105,15 +105,37 @@ async function findUser(db: Db, userId: string, lock = false): Promise<User> {
 }
 
 /**
- * Resumen de negocios (con propietario, suscripción, uso del plan y última actividad).
- * El mes en curso se calcula en la zona horaria de cada negocio.
+ * Los dos periodos que compara el inicio del super admin (spec 006), en la zona del panel de
+ * plataforma (`$tz`): desde el inicio del mes hasta ahora (`month_start`) y el mismo tiempo desde el
+ * inicio del mes pasado (`prev_start` a `prev_end`, sin pasar del inicio de este mes: el 31 de marzo
+ * se compara con febrero entero). Una CTE `periods` para un `with`.
+ */
+const growthPeriodsSql = (tz: string) => `periods as (
+    select m.month_start, m.prev_start, least(m.prev_start + (now() - m.month_start), m.month_start) as prev_end
+      from (select date_trunc('month', now() at time zone ${tz}) at time zone ${tz} as month_start,
+                   (date_trunc('month', now() at time zone ${tz}) - interval '1 month') at time zone ${tz} as prev_start) m
+  )`;
+
+/**
+ * Resumen de negocios (con propietario, suscripción, uso del plan, última actividad y crecimiento:
+ * citas agendadas en lo que va del mes frente a los mismos días del mes pasado, ver growthPeriodsSql).
+ * El mes en curso del uso del plan se calcula en la zona horaria de cada negocio.
  */
 async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBusinessSummary[]> {
   const rows = await many<
-    Business & { appointmentsThisMonth: number; clients: number; users: number; professionals: number; lastActivityAt: string | null }
+    Business & {
+      appointmentsThisMonth: number;
+      clients: number;
+      users: number;
+      professionals: number;
+      lastActivityAt: string | null;
+      growthCurrent: number;
+      growthPrevious: number;
+    }
   >(
     db,
-    `select ${businessColumns("b")},
+    `with ${growthPeriodsSql("$2")}
+     select ${businessColumns("b")},
             (select count(*) from appointments a
               where a.business_id = b.id and a.status <> 'cancelled'
                 and a.date >= date_trunc('month', now() at time zone b.timezone)::date
@@ -122,11 +144,16 @@ async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBu
             (select count(*) from clients c where c.business_id = b.id) as clients,
             (select count(*) from business_users bu where bu.business_id = b.id) as users,
             (select count(*) from professionals p where p.business_id = b.id and p.is_active) as professionals,
-            (select max(l.created_at) from audit_logs l where l.business_id = b.id) as "lastActivityAt"
-       from businesses b
+            (select max(l.created_at) from audit_logs l where l.business_id = b.id) as "lastActivityAt",
+            (select count(*) from appointments a
+              where a.business_id = b.id and a.status <> 'cancelled' and a.created_at >= p.month_start and a.created_at <= now())::int as "growthCurrent",
+            (select count(*) from appointments a
+              where a.business_id = b.id and a.status <> 'cancelled'
+                and a.created_at >= p.prev_start and a.created_at < p.prev_end)::int as "growthPrevious"
+       from businesses b cross join periods p
       where ($1::uuid is null or b.id = $1::uuid)
       order by b.created_at desc`,
-    [businessId ?? null],
+    [businessId ?? null, DEFAULT_TIMEZONE],
   );
   const ids = rows.map((row) => row.id);
   const [owners, subscriptions] = await Promise.all([
@@ -134,7 +161,7 @@ async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBu
     many<Subscription>(db, `select ${subscriptionColumns()} from subscriptions where business_id = any($1::uuid[])`, [ids]),
   ]);
 
-  return rows.map(({ appointmentsThisMonth, clients, users, professionals, lastActivityAt, ...business }) => {
+  return rows.map(({ appointmentsThisMonth, clients, users, professionals, lastActivityAt, growthCurrent, growthPrevious, ...business }) => {
     const owner = owners.find((user) => user.id === business.ownerId);
     const subscription = subscriptions.find((s) => s.businessId === business.id) ?? null;
     const plan = getPlan(subscription?.plan ?? "free");
@@ -151,8 +178,157 @@ async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBu
         professionals,
       },
       lastActivityAt,
+      growth: { current: growthCurrent, previous: growthPrevious },
     };
   });
+}
+
+/**
+ * Crecimiento de la plataforma (spec 006): citas agendadas (creadas, sin las canceladas), reservas
+ * online, pacientes y negocios nuevos, en los dos periodos de growthPeriodsSql.
+ */
+async function platformGrowth(): Promise<PlatformStats["growth"]> {
+  const row = (await one<Record<string, string | number>>(
+    pool,
+    `with ${growthPeriodsSql("$1")}
+     select to_char(p.month_start at time zone $1, 'YYYY-MM-DD') as "from",
+            to_char(now() at time zone $1, 'YYYY-MM-DD') as "to",
+            to_char(p.prev_start at time zone $1, 'YYYY-MM-DD') as "previousFrom",
+            to_char(p.prev_end at time zone $1, 'YYYY-MM-DD') as "previousTo",
+            (select count(*) from appointments a where a.status <> 'cancelled' and a.created_at >= p.month_start and a.created_at <= now())::int as "appointmentsCurrent",
+            (select count(*) from appointments a where a.status <> 'cancelled'
+               and a.created_at >= p.prev_start and a.created_at < p.prev_end)::int as "appointmentsPrevious",
+            (select count(*) from appointments a where a.status <> 'cancelled' and a.source = 'booking_page'
+               and a.created_at >= p.month_start and a.created_at <= now())::int as "onlineCurrent",
+            (select count(*) from appointments a where a.status <> 'cancelled' and a.source = 'booking_page'
+               and a.created_at >= p.prev_start and a.created_at < p.prev_end)::int as "onlinePrevious",
+            (select count(*) from clients c where c.created_at >= p.month_start and c.created_at <= now())::int as "clientsCurrent",
+            (select count(*) from clients c where c.created_at >= p.prev_start and c.created_at < p.prev_end)::int as "clientsPrevious",
+            (select count(*) from businesses b where b.created_at >= p.month_start and b.created_at <= now())::int as "businessesCurrent",
+            (select count(*) from businesses b where b.created_at >= p.prev_start and b.created_at < p.prev_end)::int as "businessesPrevious"
+       from periods p`,
+    [DEFAULT_TIMEZONE],
+  ))!;
+  const pair = (name: string) => ({ current: Number(row[`${name}Current`]), previous: Number(row[`${name}Previous`]) });
+  // Día a día desde el inicio del mes pasado (para el gráfico), por la fecha en Ecuador.
+  const days = await many<{ date: string; appointments: number; online: number; clients: number }>(
+    pool,
+    `with start as (select (date_trunc('month', now() at time zone $1) - interval '1 month') at time zone $1 as at),
+          a as (select to_char(created_at at time zone $1, 'YYYY-MM-DD') as date, count(*)::int as appointments,
+                       count(*) filter (where source = 'booking_page')::int as online
+                  from appointments, start where status <> 'cancelled' and created_at >= start.at and created_at <= now() group by 1),
+          c as (select to_char(created_at at time zone $1, 'YYYY-MM-DD') as date, count(*)::int as clients
+                  from clients, start where created_at >= start.at and created_at <= now() group by 1)
+     select coalesce(a.date, c.date) as date, coalesce(a.appointments, 0) as appointments, coalesce(a.online, 0) as online,
+            coalesce(c.clients, 0) as clients
+       from a full join c on c.date = a.date`,
+    [DEFAULT_TIMEZONE],
+  );
+  const byDate = new Map(days.map((day) => [day.date, day]));
+  const countsOn = (date: string) => {
+    const day = byDate.get(date);
+    return { appointments: day?.appointments ?? 0, onlineBookings: day?.online ?? 0, newClients: day?.clients ?? 0 };
+  };
+  const today = Number(String(row.to).slice(8));
+  const previousMonth = String(row.previousFrom).slice(0, 7);
+  const [year, month] = previousMonth.split("-").map(Number);
+  const previousDays = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const currentMonth = String(row.from).slice(0, 7);
+  const dayOf = (yearMonth: string, day: number) => `${yearMonth}-${String(day).padStart(2, "0")}`;
+  const daily = Array.from({ length: Math.max(today, previousDays) }, (_, index) => {
+    const day = index + 1;
+    return {
+      day,
+      current: day <= today ? countsOn(dayOf(currentMonth, day)) : null,
+      previous: day <= previousDays ? countsOn(dayOf(previousMonth, day)) : null,
+    };
+  });
+  return {
+    from: String(row.from),
+    to: String(row.to),
+    previousFrom: String(row.previousFrom),
+    previousTo: String(row.previousTo),
+    appointments: pair("appointments"),
+    onlineBookings: pair("online"),
+    newClients: pair("clients"),
+    newBusinesses: pair("businesses"),
+    daily,
+  };
+}
+
+/** Días del gráfico de emails del inicio del super admin. */
+const EMAIL_CHART_DAYS = 14;
+
+/** Emails enviados y fallidos (sin los descartados a propósito) de los últimos 14 días, en Ecuador. */
+async function emailsByDay(): Promise<PlatformStats["health"]["emailsByDay"]> {
+  const rows = await many<{ date: string; sent: number; failed: number }>(
+    pool,
+    `with days as (select generate_series((now() at time zone $1)::date - ($2::int - 1), (now() at time zone $1)::date, interval '1 day')::date as day),
+          since as (select ((now() at time zone $1)::date - ($2::int - 1))::timestamp at time zone $1 as at)
+     select to_char(d.day, 'YYYY-MM-DD') as date,
+            (select count(*) from notifications n, since
+              where n.status = 'sent' and n.sent_at >= since.at and (n.sent_at at time zone $1)::date = d.day)::int as sent,
+            (select count(*) from notifications n, since
+              where n.status = 'failed' and n.created_at >= since.at and (n.created_at at time zone $1)::date = d.day
+                and coalesce(n.last_error, '') not like 'Recordatorio descartado%'
+                and coalesce(n.last_error, '') not like 'Dirección de demostración%')::int as failed
+       from days d order by d.day`,
+    [DEFAULT_TIMEZONE, EMAIL_CHART_DAYS],
+  );
+  return rows;
+}
+
+/** Intentos fallidos de inicio de sesión de una cuenta en una hora que cuentan como alerta (como el cron). */
+const LOGIN_ALERT_ATTEMPTS = 10;
+
+/**
+ * Salud del sistema (spec 006), sólo con cifras: emails de hoy (enviados, fallidos sin los descartados
+ * a propósito y los que siguen en cola), la última pasada del cron y sus errores, la última copia de
+ * seguridad registrada y los intentos fallidos de inicio de sesión.
+ */
+async function systemHealth(): Promise<PlatformStats["health"]> {
+  const [row, backup, emailDays] = await Promise.all([
+    one<{
+      sent: number;
+      failed: number;
+      queued: number;
+      cronAt: string | null;
+      cronFailures: number | null;
+      failedLogins: number;
+      accountsOnAlert: number;
+    }>(
+      pool,
+      `with today as (select date_trunc('day', now() at time zone $1) at time zone $1 as start)
+       select (select count(*) from notifications n, today t where n.status = 'sent' and n.sent_at >= t.start)::int as sent,
+              (select count(*) from notifications n, today t
+                where n.status = 'failed' and n.created_at >= t.start
+                  and coalesce(n.last_error, '') not like 'Recordatorio descartado%'
+                  and coalesce(n.last_error, '') not like 'Dirección de demostración%')::int as failed,
+              (select count(*) from notifications where status = 'queued')::int as queued,
+              (select ran_at from cron_runs order by ran_at desc limit 1) as "cronAt",
+              (select coalesce((report->>'reminderFailures')::int, 0) + coalesce((report->'emails'->>'failed')::int, 0)
+                 from cron_runs order by ran_at desc limit 1) as "cronFailures",
+              (select count(*) from audit_logs
+                where action = 'session.login_failed' and created_at > now() - interval '24 hours')::int as "failedLogins",
+              (select count(*) from (select 1 from audit_logs l
+                                      where l.action = 'session.login_failed' and l.created_at > now() - interval '1 hour'
+                                      group by coalesce(l.actor_id::text, lower(l.actor_name))
+                                     having count(*) >= $2) alerts)::int as "accountsOnAlert"`,
+      [DEFAULT_TIMEZONE, LOGIN_ALERT_ATTEMPTS],
+    ),
+    one<{ ranAt: string; ok: boolean; sizeBytes: number | null; error: string }>(
+      pool,
+      `select ran_at as "ranAt", ok, size_bytes as "sizeBytes", error from backup_runs order by ran_at desc limit 1`,
+    ),
+    emailsByDay(),
+  ]);
+  return {
+    emailsToday: { sent: row!.sent, failed: row!.failed, queued: row!.queued },
+    cron: { lastRunAt: row!.cronAt, failures: row!.cronFailures ?? 0 },
+    backup: backup ?? null,
+    security: { failedLogins24h: row!.failedLogins, accountsOnAlert: row!.accountsOnAlert },
+    emailsByDay: emailDays,
+  };
 }
 
 async function findPendingRequest(db: Db, requestId: string): Promise<PlanChangeRequest> {
@@ -203,8 +379,8 @@ export const adminService = {
   async getStats(ctx: RequestContext): Promise<PlatformStats> {
     authorizeSuperAdmin(ctx);
     const month = getZonedNow(DEFAULT_TIMEZONE).date.slice(0, 7);
-    // Las dos consultas a la vez: cada ida y vuelta a la base cuenta (sobre todo desde dev:prod).
-    const [businesses, counts] = await Promise.all([
+    // Las consultas a la vez: cada ida y vuelta a la base cuenta (sobre todo desde dev:prod).
+    const [businesses, counts, growth, health] = await Promise.all([
       many<{ status: BusinessStatus; createdAt: string; plan: PlanId | null; subscriptionStatus: string | null }>(
         pool,
         `select b.status, b.created_at as "createdAt", s.plan, s.status as "subscriptionStatus"
@@ -219,6 +395,8 @@ export const adminService = {
           where status <> 'cancelled' and date >= $1::date and date < ($1::date + interval '1 month')`,
         [`${month}-01`],
       ).then((row) => row!),
+      platformGrowth(),
+      systemHealth(),
     ]);
     const businessesByPlan = Object.fromEntries(PLANS.map((plan) => [plan.id, 0])) as Record<PlanId, number>;
     for (const business of businesses) businessesByPlan[getPlan(business.plan ?? "free").id]++;
@@ -238,6 +416,8 @@ export const adminService = {
         month: m,
         count: businesses.filter((b) => b.createdAt.startsWith(m)).length,
       })),
+      growth,
+      health,
     };
   },
 
