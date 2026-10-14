@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-14
 
-**Estado**: Borrador
+**Estado**: Implementada (2026-10-14)
 
 **Repos**: agenda-front (principal: las 8 pantallas de `/admin`), agenda-backend (guardar los
 colores en la cuenta del super admin, migración 035) y la beta.
