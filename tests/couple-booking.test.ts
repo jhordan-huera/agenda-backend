@@ -255,9 +255,19 @@ ok(
   "la otra persona queda «Por verificar», aparte de la ficha de Gina",
 );
 ok(!emailsOf(r.body.appointmentId).some((m) => m.endsWith(`|${gina.email}`)), "y a la ficha de Gina no le llega nada", emailsOf(r.body.appointmentId));
+// Unir a la ficha a la otra persona de la sesión (spec 009): la ficha de Gina ocupa su lugar en la cita.
+const ginaAppointment = r.body.appointmentId;
+const provisionalGina = sql(`select c.id from appointment_clients ac join clients c on c.id = ac.client_id where ac.appointment_id = '${ginaAppointment}' and c.claimed_client_id = '${gina.id}'`);
+const merged = await ricardo("POST", `${B}/clients/${provisionalGina}/confirm-claim`, { updatePhone: true });
+ok(merged.status === 200 && merged.body.id === gina.id, "el negocio une a la otra persona a la ficha de Gina", merged.body);
+ok(
+  sql(`select string_agg(client_id::text, ',') from appointment_clients where appointment_id = '${ginaAppointment}'`) === gina.id &&
+    count(`select count(*) from clients where id = '${provisionalGina}'`) === 0,
+  "Gina ocupa su lugar en la sesión y el paciente aparte desaparece",
+);
 // Fuera de los topes del día (pacientes nuevos y reservas online): las pruebas de abajo cuentan con ellos.
-sql(`update clients set created_at = now() - interval '2 days' where business_id = '${businessId}' and created_at = (select created_at from appointments where id = '${r.body.appointmentId}')`);
-sql(`update appointments set created_at = now() - interval '2 days' where id = '${r.body.appointmentId}'`);
+sql(`update clients set created_at = now() - interval '2 days' where business_id = '${businessId}' and created_at = (select created_at from appointments where id = '${ginaAppointment}')`);
+sql(`update appointments set created_at = now() - interval '2 days' where id = '${ginaAppointment}'`);
 const repeatedDoc = person("Ivan Repetido");
 r = await book(couple.id, await freeSlot(couple.id, ricardoAgenda.id), repeatedDoc, [{ ...person("Juana Repetida"), documentId: repeatedDoc.documentId }]);
 ok(r.status === 400 && /propia cédula/.test(r.body?.error?.message ?? JSON.stringify(r.body)), "la misma cédula dos veces no", r.body);
