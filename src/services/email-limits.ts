@@ -23,7 +23,22 @@ export const THIRD_PARTY_EMAIL_TYPES: readonly EmailType[] = [
   "appointment_updated",
   "appointment_cancelled",
   "appointment_reminder",
+  "appointment_pending",
+  "appointment_completed",
+  "appointment_no_show",
 ];
+
+/**
+ * Emails a terceros que provoca alguien de fuera, sin cuenta (spec 009): la bienvenida de un registro
+ * y los de una cita reservada en la página, puestos en cola en la misma transacción que la creó. Tienen
+ * su propio tope (config.publicEmailsPerDay) dentro del total: quien llene el tope con reservas falsas
+ * no deja a los negocios sin recordatorios ni avisos de sus citas. El total no sube: la cuenta de Gmail
+ * tiene su propio tope diario (unos 500 envíos).
+ */
+const PUBLIC_ORIGIN = (alias: string) =>
+  `(${alias}.type = 'welcome'
+    or exists (select 1 from appointments pa
+                where pa.id = ${alias}.appointment_id and pa.source = 'booking_page' and pa.created_at = ${alias}.created_at))`;
 
 /** Emails de la página de reservas a pacientes nuevos (creados por ella hace menos de 24 h) por negocio en 24 h. */
 export const NEW_PATIENT_EMAILS_PER_DAY = 20;
@@ -45,8 +60,10 @@ async function alertOnce(key: string, alert: Alert): Promise<void> {
  * Motivo por el que este email no debe salir (tope diario de emails a terceros entre todos los
  * negocios), o null si puede salir.
  */
-export async function thirdPartyEmailHold(db: Db, type: EmailType): Promise<string | null> {
+export async function thirdPartyEmailHold(db: Db, type: EmailType, appointmentId: string | null = null): Promise<string | null> {
   if (!THIRD_PARTY_EMAIL_TYPES.includes(type)) return null;
+  const publicHold = await publicEmailHold(db, type, appointmentId);
+  if (publicHold) return publicHold;
   const limit = config.thirdPartyEmailsPerDay;
   const row = await one<{ count: number }>(
     db,
@@ -66,6 +83,39 @@ export async function thirdPartyEmailHold(db: Db, type: EmailType): Promise<stri
     tags: ["warning"],
   });
   return `No enviado: se alcanzó el tope de ${limit} emails a terceros en 24 h.`;
+}
+
+/**
+ * Tope de los emails que provoca el público (reservas online y registros) en 24 h, entre todos los
+ * negocios. El email va en la misma transacción que la reserva (now() es su instante): así se sabe
+ * si es de una reserva que se está creando.
+ */
+async function publicEmailHold(db: Db, type: EmailType, appointmentId: string | null): Promise<string | null> {
+  const isPublic =
+    type === "welcome" ||
+    (appointmentId !== null &&
+      Boolean(await one(db, "select 1 from appointments where id = $1 and source = 'booking_page' and created_at = now()", [appointmentId])));
+  if (!isPublic) return null;
+  const limit = config.publicEmailsPerDay;
+  const row = await one<{ count: number }>(
+    db,
+    `select count(*)::int as count from notifications n
+      where n.created_at between now() - interval '24 hours' and now() and n.type = any($1::text[])
+        and ${PUBLIC_ORIGIN("n")} and ${COUNTED}`,
+    [THIRD_PARTY_EMAIL_TYPES],
+  );
+  if ((row?.count ?? 0) < limit) return null;
+  console.warn(`[emails] Tope de ${limit} emails de reservas online y registros en 24 h: no se envía un email "${type}".`);
+  await alertOnce("tope-emails-publico", {
+    title: "Agenda360: tope diario de emails de reservas online",
+    message:
+      `Se enviaron ${limit} emails por reservas online y registros en las últimas 24 h (PUBLIC_EMAILS_PER_DAY). ` +
+      "Los de las reservas siguientes quedan sin enviar; los recordatorios y los avisos de los negocios siguen saliendo. " +
+      "Si no es un ataque, sube el tope. Detalle en Actividad → Emails.",
+    priority: 4,
+    tags: ["warning"],
+  });
+  return `No enviado: se alcanzó el tope de ${limit} emails de reservas online y registros en 24 h.`;
 }
 
 /**

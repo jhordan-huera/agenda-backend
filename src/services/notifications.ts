@@ -46,7 +46,7 @@ export async function queueEmail(
     hold?: string | null;
   } & EmailContent,
 ): Promise<boolean> {
-  const hold = message.hold ?? (await thirdPartyEmailHold(db, message.type));
+  const hold = message.hold ?? (await thirdPartyEmailHold(db, message.type, message.appointmentId ?? null));
   const result = await db.query(
     `insert into notifications
        (business_id, type, to_email, subject, body, html, appointment_id, status, secret, dedupe_key, last_error)
@@ -76,6 +76,8 @@ interface Recipient {
   clientId: string;
   name: string;
   email: string;
+  /** Paciente «Por verificar» (spec 009): escribió la cédula de otra ficha con otros datos. */
+  toVerify: boolean;
 }
 
 interface AppointmentContext {
@@ -108,7 +110,7 @@ async function loadAppointmentContext(db: Db, appointment: Appointment): Promise
     appointment.businessId,
   ]);
   const ids = appointmentClientIds(appointment);
-  const rows = await many<Recipient>(db, `select id as "clientId", name, email from clients where id = any($1::uuid[])`, [ids]);
+  const rows = await many<Recipient>(db, `select id as "clientId", name, email, claimed_client_id is not null as "toVerify" from clients where id = any($1::uuid[])`, [ids]);
   const recipients = ids.flatMap((id) => rows.filter((row) => row.clientId === id));
   const details = await one<Omit<AppointmentContext, "business" | "recipients" | "clientName">>(
     db,
@@ -382,7 +384,8 @@ export async function notifyAppointmentChange(
       type: "booking_received",
       to: business.email,
       appointmentId: after.id,
-      ...emailTemplates.bookingReceived(data),
+      // Por verificar: el negocio tiene que revisarla y, si es la misma persona, unirla a su ficha.
+      ...emailTemplates.bookingReceived({ ...data, toVerify: context.recipients.some((recipient) => recipient.toVerify) }),
     });
   }
   await notifyProfessional(db, context, before, after, origin, actorUserId, copiedTo);

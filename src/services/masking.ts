@@ -17,9 +17,12 @@ export function shortName(value: string): string {
   return second ? `${first} ${second.charAt(0).toUpperCase()}.` : (first ?? "");
 }
 
-/** "0994445555" → "099***5555"; "+593 99 444 5555" → "+593***5555"; "" si no hay teléfono. */
+/**
+ * "0994445555" → "***5555"; "+593 99 444 5555" → "***5555"; "" si no hay teléfono. Sólo los últimos 4
+ * dígitos (spec 009): con el prefijo, en Ecuador ("09…") quedaban sólo 1.000 números posibles.
+ */
 export function maskPhone(value: string): string {
   const digits = value.replace(/\D/g, "");
   if (digits.length < 7) return digits ? "***" : "";
-  return `${value.trim().startsWith("+") ? "+" : ""}${digits.slice(0, 3)}***${digits.slice(-4)}`;
+  return `***${digits.slice(-4)}`;
 }

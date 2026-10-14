@@ -26,7 +26,7 @@ const sql = (query: string) =>
 console.log("Datos a medias");
 ok(maskEmail("juan.perez@gmail.com") === "ju***@gmail.com", "email", maskEmail("juan.perez@gmail.com"));
 ok(shortName(" Juan  pérez López ") === "Juan P." && shortName("Juan") === "Juan", "nombre", shortName(" Juan  pérez López "));
-ok(maskPhone("0994445555") === "099***5555" && maskPhone("+593 99 444 5555") === "+593***5555" && maskPhone("") === "", "teléfono", maskPhone("+593 99 444 5555"));
+ok(maskPhone("0994445555") === "***5555" && maskPhone("+593 99 444 5555") === "***5555" && maskPhone("") === "", "teléfono: sólo los últimos 4 dígitos (spec 009)", maskPhone("+593 99 444 5555"));
 
 console.log("Texto del aviso");
 const booking: OnlineBooking = {
@@ -58,7 +58,7 @@ ok(
   notice.message ===
     [
       "Mente Abierta · mié 14 oct 16:30",
-      "Paciente nuevo: Juan P. · ju***@gmail.com · 099***5555",
+      "Paciente nuevo: Juan P. · ju***@gmail.com · ***5555",
       "Consulta inicial · 60 min · $15",
       "Con Dra. Ana Torres · en el local",
       "Pendiente de confirmar",
@@ -87,7 +87,7 @@ notice = onlineBookingNotice({
   clients: [...booking.clients, { name: "María López Vera", email: "maria.lopez@gmail.com", phone: "0991112222", newClient: false }],
 });
 ok(
-  notice.message.includes("\nPaciente nuevo: Juan P. · ju***@gmail.com · 099***5555\nYa era paciente: María L. · ma***@gmail.com · 099***2222\n"),
+  notice.message.includes("\nPaciente nuevo: Juan P. · ju***@gmail.com · ***5555\nYa era paciente: María L. · ma***@gmail.com · ***2222\n"),
   "sesión en pareja: una línea por persona, quien reservó primero y todo a medias",
   notice.message,
 );
@@ -107,12 +107,12 @@ let clientNotice = newClientNotice(panelClient);
 ok(
   clientNotice.title === "Agenda360: nuevo paciente" &&
     clientNotice.click === "/admin/businesses/b1" &&
-    clientNotice.message === ["Mente Abierta", "Paciente nuevo: Lucía A. · lu***@gmail.com · 099***4567", "Registrado desde el panel por Ana T. (Profesional)"].join("\n"),
+    clientNotice.message === ["Mente Abierta", "Paciente nuevo: Lucía A. · lu***@gmail.com · ***4567", "Registrado desde el panel por Ana T. (Profesional)"].join("\n"),
   "el negocio, el paciente a medias y quién lo registró (título sin el negocio)",
   clientNotice,
 );
 clientNotice = newClientNotice({ ...panelClient, email: "", createdBy: { name: "Soporte", role: null, superAdmin: true } });
-ok(/Paciente nuevo: Lucía A\. · 099\*\*\*4567\nRegistrado desde el panel por el super admin \(modo soporte\)$/.test(clientNotice.message), "sin email, y registrado por el super admin", clientNotice.message);
+ok(/Paciente nuevo: Lucía A\. · \*\*\*4567\nRegistrado desde el panel por el super admin \(modo soporte\)$/.test(clientNotice.message), "sin email, y registrado por el super admin", clientNotice.message);
 clientNotice = newClientNotice({ ...panelClient, createdBy: null });
 ok(clientNotice.message.endsWith("\nRegistrado desde el panel"), "sin saber quién", clientNotice.message);
 const manyClients = buildBookingNotices({ panelClients: 12, clientNotices: Array.from({ length: 10 }, () => newClientNotice(panelClient)) } as never);
@@ -140,8 +140,8 @@ ok(
     appointmentNotice.message ===
       [
         "Mente Abierta · mié 14 oct 16:30",
-        "Paciente: Juan P. · ju***@gmail.com · 099***5555",
-        "Paciente: María L. · 099***2222",
+        "Paciente: Juan P. · ju***@gmail.com · ***5555",
+        "Paciente: María L. · ***2222",
         "Consulta inicial · 60 min · $15",
         "Con Dra. Ana Torres · en el local",
         "Confirmada",
@@ -184,7 +184,7 @@ ok(
     notice.message ===
       [
         "Mente Abierta · mié 14 oct 16:30",
-        "Paciente: Juan P. · ju***@gmail.com · 099***5555",
+        "Paciente: Juan P. · ju***@gmail.com · ***5555",
         "Consulta inicial",
         "De Confirmada a Cancelada",
         "Cambiado desde el panel por Elena S. (Recepción)",
@@ -280,7 +280,7 @@ try {
   const first = mine()[0];
   ok(run.code === 0 && mine().length === 1, "el cron manda un aviso por la reserva", { code: run.code, received });
   ok(new RegExp(`^${profile.business.name} · `).test(first?.message ?? ""), "empieza por el negocio y cuándo es", first?.message);
-  ok(/\nPaciente nuevo: Paciente A\. · al\*\*\*@example\.com · \+593\*\*\*5555\n/.test(first?.message ?? ""), "paciente nuevo, con sus datos a medias", first?.message);
+  ok(/\nPaciente nuevo: Paciente A\. · al\*\*\*@example\.com · \*\*\*5555\n/.test(first?.message ?? ""), "paciente nuevo, con sus datos a medias", first?.message);
   ok(
     (first?.message ?? "").includes("• Al paciente → al***@example.com") && (first?.message ?? "").includes(`• Copia al profesional → ${maskEmail(owner)}`),
     "dice a qué correo salió y a cuál la copia",
@@ -319,7 +319,7 @@ try {
   const panelNotice = panelNotices()[0];
   ok(run.code === 0 && panelNotices().length === 1, "el cron avisa del paciente nuevo del panel", received.map((n) => n.title));
   ok(
-    panelNotice?.message === [profile.business.name, "Paciente nuevo: Paciente P. · pa***@example.com · +593***2211", "Registrado desde el panel por Jhordan H. (Propietario)"].join("\n"),
+    panelNotice?.message === [profile.business.name, "Paciente nuevo: Paciente P. · pa***@example.com · ***2211", "Registrado desde el panel por Jhordan H. (Propietario)"].join("\n"),
     "con quién lo registró y sus datos a medias",
     panelNotice?.message,
   );
@@ -356,7 +356,7 @@ try {
   ok(run.code === 0 && appointmentNotices().length === 1, "el cron avisa de la cita agendada desde el panel", received.map((n) => n.title));
   ok(
     appointmentNoticeSent.startsWith(`${profile.business.name} · `) &&
-      appointmentNoticeSent.includes("\nPaciente: Paciente P. · pa***@example.com · +593***2211\n") &&
+      appointmentNoticeSent.includes("\nPaciente: Paciente P. · pa***@example.com · ***2211\n") &&
       appointmentNoticeSent.includes("\nConfirmada\nAgendada desde el panel por Jhordan H. (Propietario)\n"),
     "con el paciente a medias y quién la agendó",
     appointmentNoticeSent,

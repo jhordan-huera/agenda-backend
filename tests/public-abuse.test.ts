@@ -402,7 +402,14 @@ try {
 
   console.log("AWS Lambda: la Function URL sólo atiende al proxy del frontend");
   {
-    const lambda = await startApi({ AWS_LAMBDA_FUNCTION_NAME: "agenda-pruebas" });
+    // En la nube la API exige el CAPTCHA y la clave del cifrado (spec 009): aquí, de prueba.
+    const cloud = {
+      AWS_LAMBDA_FUNCTION_NAME: "agenda-pruebas",
+      TURNSTILE_SITE_KEY: "clave-del-sitio",
+      TURNSTILE_SECRET_KEY: "clave-secreta",
+      TWO_FACTOR_KEY: "clave-de-pruebas-del-cifrado-de-la-verificacion",
+    };
+    const lambda = await startApi(cloud);
     const raw = (path: string, headers: Record<string, string> = {}) =>
       fetch(`${lambda.base}${path}`, { headers: { "X-Requested-With": "fetch", ...headers } }).then((res) => res.status);
     ok((await raw("/health")) === 200, "/api/health responde sin el secreto (comprobación tras publicar)");
@@ -415,9 +422,9 @@ try {
       body: JSON.stringify({ email: "jhordan@demo.com", password: "demo1234", remember: true }),
     });
     ok(login.status === 403, "ni el inicio de sesión directo", login.status);
-    const open = await startApi({ AWS_LAMBDA_FUNCTION_NAME: "agenda-pruebas", PROXY_SECRET: "" });
-    ok((await fetch(`${open.base}/public/categories`)).status === 200, "sin PROXY_SECRET no rechaza…");
-    ok(/Lambda sin PROXY_SECRET/.test(open.output()), "…pero avisa en el registro", open.output().slice(0, 400));
+    const open = await startApi({ ...cloud, PROXY_SECRET: "" });
+    ok(!(await fetch(`${open.base}/health`).then(() => true, () => false)), "sin PROXY_SECRET ya no arranca (spec 009)…");
+    ok(/Configuración insegura para la nube: falta PROXY_SECRET/.test(open.output()), "…y el registro dice qué falta", open.output().slice(0, 400));
     const local = await fetch(`${BASE}/public/categories`);
     ok(local.status === 200, "fuera de Lambda no se aplica", local.status);
   }

@@ -49,3 +49,14 @@ export function clientSchemaFor(required: ClientRequiredFields) {
 
 export type ClientInput = z.infer<ReturnType<typeof clientSchemaFor>>;
 export type ClientRequiredFieldsInput = z.infer<typeof clientRequiredFieldsSchema>;
+
+/**
+ * «Es el mismo paciente»: unir un paciente «Por verificar» a la ficha cuya cédula escribió al reservar
+ * (spec 009). Con `updateEmail` / `updatePhone`, la ficha se queda con el email o el teléfono nuevos.
+ */
+export const confirmClaimSchema = z.object({
+  updateEmail: z.boolean().default(false),
+  updatePhone: z.boolean().default(false),
+});
+
+export type ConfirmClaimInput = z.infer<typeof confirmClaimSchema>;

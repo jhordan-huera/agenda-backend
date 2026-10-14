@@ -41,7 +41,9 @@ import { findProfessional, listProfessionals } from "./professional-service.ts";
  *
  * Nada de la página dice si una cédula es de un paciente del negocio (la cédula es casi pública: de
  * un psicólogo, eso ya es un dato sensible). El paciente escribe siempre todos sus datos y la reserva
- * sólo se une a una ficha existente si coinciden su email o su teléfono.
+ * sólo se une a una ficha existente si coinciden su email o su teléfono. Si no coinciden, la reserva
+ * sale igual que con una cédula nueva y queda «Por verificar» (spec 009): ni la respuesta, ni los
+ * emails, ni los topes, ni la hora ocupada dejan saber que la cédula ya era de alguien.
  */
 
 /**
@@ -54,8 +56,6 @@ export const ONLINE_NEW_CLIENTS_PER_DAY = 15;
 
 const ONLINE_DAILY_LIMIT_MESSAGE =
   "Este negocio no puede recibir más reservas online por hoy. Escríbele por WhatsApp para agendar tu cita.";
-/** La cédula es de una ficha cuyo email y teléfono no coinciden: no se dice nada más (ni que existe la ficha). */
-const UNCONFIRMED_IDENTITY_MESSAGE = "No pudimos confirmar tus datos. Revisa tu email y teléfono o escríbenos por WhatsApp.";
 
 /**
  * Un negocio suspendido no se distingue de uno inexistente (no se expone su estado). Sólo cuentan
@@ -183,9 +183,13 @@ export function comparablePhone(phone: string, timezone: string): string {
 function sameContact(stored: { email: string; phone: string }, typed: { email: string; phone: string }, timezone: string): boolean {
   const email = stored.email.trim().toLowerCase();
   if (email !== "" && email === typed.email.trim().toLowerCase()) return true;
-  const phone = comparablePhone(stored.phone, timezone);
-  // Al menos 7 dígitos además del prefijo: un teléfono vacío nunca coincide.
-  return phone.length >= getTimezoneInfo(timezone).callingCode.length + 7 && phone === comparablePhone(typed.phone, timezone);
+  return samePhone(stored.phone, typed.phone, timezone);
+}
+
+/** El mismo teléfono, escrito como sea. Al menos 7 dígitos además del prefijo: uno vacío nunca coincide. */
+function samePhone(stored: string, typed: string, timezone: string): boolean {
+  const phone = comparablePhone(stored, timezone);
+  return phone.length >= getTimezoneInfo(timezone).callingCode.length + 7 && phone === comparablePhone(typed, timezone);
 }
 
 /** El email de la ficha sólo vuelve en la confirmación si es el que acaba de escribir el paciente. */
@@ -222,6 +226,14 @@ async function assertOnlineNewClientLimit(db: Db, businessId: string): Promise<v
   if ((row?.count ?? 0) >= ONLINE_NEW_CLIENTS_PER_DAY) throw new AppError("rate_limited", ONLINE_DAILY_LIMIT_MESSAGE);
 }
 
+/**
+ * La cédula con la que se reservó: la del paciente o, si está «Por verificar» (sin cédula propia), la
+ * de la ficha que reclama. Así el reintento de una reserva por verificar se reconoce igual que el de
+ * una con cédula nueva (spec 009).
+ */
+const EFFECTIVE_DOCUMENT = (alias: string) =>
+  `coalesce(nullif(${alias}.document_id, ''), (select claimed.document_id from clients claimed where claimed.id = ${alias}.claimed_client_id), '')`;
+
 /** Cuánto después de una reserva se reconoce su reintento (ver findRepeatedBooking). */
 const REPEATED_BOOKING_MINUTES = 30;
 
@@ -251,13 +263,13 @@ async function findRepeatedBooking(
     db,
     `select ${appointmentColumns("a")}, c.email as "clientEmail", c.phone as "clientPhone"
        from appointments a join clients c on c.id = a.client_id
-      where a.business_id = $1 and c.document_id = $2 and c.document_id <> ''
+      where a.business_id = $1 and ${EFFECTIVE_DOCUMENT("c")} = $2
         and a.service_id = $3 and a.date = $4 and a.start_time = $5
         and a.status in ('pending', 'confirmed') and a.source = 'booking_page'
         and a.is_virtual = $6 and (a.home_visit is not null) = $7
         and ($8::text is null or a.professional_id::text = $8)
         and a.created_at > now() - make_interval(mins => $9)
-        and coalesce((select array_agg(ec.document_id order by ec.document_id)
+        and coalesce((select array_agg(${EFFECTIVE_DOCUMENT("ec")} order by ${EFFECTIVE_DOCUMENT("ec")})
                         from appointment_clients ac join clients ec on ec.id = ac.client_id
                        where ac.appointment_id = a.id), '{}')
             = coalesce((select array_agg(doc order by doc) from unnest($10::text[]) doc), '{}')
@@ -280,10 +292,12 @@ async function findRepeatedBooking(
 
 /**
  * La persona de la reserva por su cédula, como siempre: si ya existe en el negocio, sólo se reutiliza
- * (sin tocar sus datos de contacto) si coinciden su email o su teléfono; con la cédula de otra persona
- * no se reserva a su nombre ni se sabe nada de ella. Si no existe, se crea (con los topes de pacientes
- * nuevos del día y del plan). Vale igual para quien reserva y para las otras personas de una sesión en
- * pareja o en familia (`otherName`: cómo la escribió quien reserva; null: quien reserva).
+ * (sin tocar sus datos de contacto) si coinciden su email o su teléfono. Si no coinciden, la reserva
+ * sigue como la de una cédula nueva, pero con un paciente «Por verificar» aparte (ver
+ * resolveClaimingClient): nadie de fuera sabe que la cédula ya era de alguien, ni llega nada a esa
+ * ficha. Si la cédula no existe, se crea (con los topes de pacientes nuevos del día y del plan). Vale
+ * igual para quien reserva y para las otras personas de una sesión en pareja o en familia
+ * (`otherName`: cómo la escribió quien reserva; null: quien reserva).
  */
 async function resolveBookingClient(
   db: Db,
@@ -297,37 +311,67 @@ async function resolveBookingClient(
   const found = await findClientByDocument(db, business.id, person.documentId);
   if (found) {
     if (sameContact(found, person, business.timezone)) return found;
-    throw new AppError(
-      "forbidden",
-      otherName === null
-        ? UNCONFIRMED_IDENTITY_MESSAGE
-        : `No pudimos confirmar los datos de ${otherName}. Revisa su email y su teléfono o escríbenos por WhatsApp.`,
-    );
+    return resolveClaimingClient(db, business, found, person, options.address);
   }
-  // Cliente antiguo sin cédula con el mismo email y el mismo nombre: se le añade la cédula en lugar
+  // Cliente antiguo sin cédula con el mismo nombre, email y teléfono: se le añade la cédula en lugar
   // de duplicarlo. Con otro nombre es otra persona (una madre y su hijo con un solo email): se crea
-  // aparte, para no mezclar sus citas ni sus historias clínicas.
+  // aparte, para no mezclar sus citas ni sus historias clínicas. Sin el teléfono, quien conociera su
+  // email y su nombre le pondría una cédula inventada (spec 009). Los «Por verificar» no cuentan.
   const legacy = (
     await many<Client>(
       db,
-      `select ${clientColumns()} from clients where business_id = $1 and lower(email) = $2 and document_id = ''`,
+      `select ${clientColumns()} from clients
+        where business_id = $1 and lower(email) = $2 and document_id = '' and claimed_client_id is null`,
       [business.id, person.email],
     )
-  ).filter((candidate) => normalizePersonName(candidate.name) === normalizePersonName(person.name));
+  ).filter(
+    (candidate) =>
+      normalizePersonName(candidate.name) === normalizePersonName(person.name) && samePhone(candidate.phone, person.phone, business.timezone),
+  );
   if (legacy.length === 1) {
     return (await one<Client>(db, `update clients set document_id = $2 where id = $1 returning ${clientColumns()}`, [
       legacy[0].id,
       person.documentId,
     ]))!;
   }
+  return insertBookingClient(db, business, person, { documentId: person.documentId, address: options.address, claimedClientId: null });
+}
+
+/**
+ * «Por verificar» (spec 009): la cédula es de `claimed`, pero no coinciden ni su email ni su teléfono.
+ * Antes se rechazaba la reserva, y ese rechazo decía que la cédula era de un paciente (de un
+ * psicólogo, eso ya es un dato de salud). Ahora la reserva sale como la de una cédula nueva, con un
+ * paciente aparte: sin cédula, con los datos que se escribieron y apuntando a la ficha, que no se toca
+ * ni recibe nada. Los mismos topes de pacientes nuevos; si la misma persona vuelve a reservar con los
+ * mismos datos, el mismo paciente aparte (como se reutiliza la ficha de una cédula nueva). El negocio
+ * lo une a la ficha o cancela la cita (clientService.confirmClaim).
+ */
+async function resolveClaimingClient(db: Db, business: Business, claimed: Client, person: BookingPerson, address: string): Promise<Client> {
+  const previous = (
+    await many<Client>(db, `select ${clientColumns()} from clients where business_id = $1 and claimed_client_id = $2 order by created_at`, [
+      business.id,
+      claimed.id,
+    ])
+  ).find((candidate) => sameContact(candidate, person, business.timezone));
+  if (previous) return previous;
+  return insertBookingClient(db, business, person, { documentId: "", address, claimedClientId: claimed.id });
+}
+
+/** Paciente nuevo de la página de reservas, con los topes de pacientes nuevos del día y del plan. */
+async function insertBookingClient(
+  db: Db,
+  business: Business,
+  person: BookingPerson,
+  options: { documentId: string; address: string; claimedClientId: string | null },
+): Promise<Client> {
   await assertOnlineNewClientLimit(db, business.id);
   await withPublicLimitMessage(() => assertClientLimit(db, business.id));
   return (await one<Client>(
     db,
-    `insert into clients (business_id, name, document_id, email, phone, address, source)
-     values ($1, $2, $3, $4, $5, $6, 'booking_page')
+    `insert into clients (business_id, name, document_id, email, phone, address, source, claimed_client_id)
+     values ($1, $2, $3, $4, $5, $6, 'booking_page', $7)
      returning ${clientColumns()}`,
-    [business.id, person.name, person.documentId, person.email, person.phone, options.address],
+    [business.id, person.name, options.documentId, person.email, person.phone, options.address, options.claimedClientId],
   ))!;
 }
 

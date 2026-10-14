@@ -21,7 +21,7 @@ Agenda360 guarda datos de salud (historia clínica, citas, contacto de pacientes
 - Los repositorios y los registros de GitHub Actions son públicos: nunca se imprimen emails,
   teléfonos, cédulas ni nombres completos de pacientes en logs, títulos de avisos ni commits.
 - Los avisos por ntfy llevan al paciente sólo a medias (`masking.ts`: "Juan P.", "ju***@gmail.com",
-  "099***5555").
+  "***5555", sólo los últimos 4 dígitos del teléfono desde el 2026-10-14).
 - La analítica (Vercel Analytics / Speed Insights) recibe rutas sin identificadores ni tokens y sin
   parámetros.
 - Las páginas públicas (reservas, pago) no exponen datos internos del negocio ni de otros pacientes.
@@ -45,6 +45,13 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - Los pacientes se identifican por cédula (sólo números) dentro de cada negocio. La reserva
   online no reconoce al paciente por la cédula ni muestra sus datos: siempre pide nombre, email y
   teléfono.
+- Si la cédula de una reserva online es de un paciente y no coinciden ni su email ni su teléfono, la
+  reserva se acepta igual que con una cédula nueva (nadie de fuera nota la diferencia) y queda «Por
+  verificar»: un paciente aparte, sin cédula, que no da acceso a la ficha. El negocio la une a la
+  ficha o la cancela; el rol Profesional no la une. Vale para cada persona de una sesión
+  (2026-10-14).
+- Las sesiones con «Recordarme» duran como mucho 30 días desde que se inician, y 7 las del super
+  admin (2026-10-14).
 - Las fechas de consentimiento y de las evoluciones clínicas las pone el sistema.
 - Cada email al paciente sobre su cita, también los recordatorios, sale con copia al profesional
   (los recordatorios, desde el 2026-10-13).
@@ -53,7 +60,7 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   copia al profesional sale una vez y la hora se ocupa una sola vez (2026-10-13).
 - Con ese interruptor, un servicio puede ser para 2 o 3 personas. La página de reservas pide los
   datos de cada una y reconoce a cada persona por su cédula como a quien reserva (si no coinciden
-  su email o su teléfono, no se usa su ficha); las que no existen se registran como nuevas. Quien
+  su email o su teléfono, no se usa su ficha y queda «Por verificar»); las que no existen se registran como nuevas. Quien
   reserva es el paciente principal y sólo él recibe los datos de pago. En el panel, si faltan
   pacientes, se avisa sin bloquear (2026-10-13).
 - El panel del super admin va en tarjetas, con botón para pasar a lista en Negocios y Usuarios, y
@@ -113,8 +120,11 @@ Tipos, validaciones, constantes y plantillas de email se editan sólo en agenda-
   siempre lo dice como paso aparte.
 - Emails por Gmail con cola en la tabla `notifications`; los secretos (contraseñas) no quedan en el
   registro de emails.
-- Seguridad vigente: bloqueo de login por intentos, CAPTCHA (Turnstile) en reservas y registro,
-  registros de auditoría no editables, cabeceras y CSP en `vercel.json`.
+- Seguridad vigente: bloqueo de login por intentos (contado antes de comprobar, exacto también con
+  intentos simultáneos), CAPTCHA (Turnstile) en reservas y registro, registros de auditoría no
+  editables, cabeceras y CSP en `vercel.json`, la IP del proxy firmada con caducidad y el secreto
+  de la verificación en dos pasos cifrado. En la nube la API no arranca si falta algo que la protege
+  (claves del CAPTCHA, `PROXY_SECRET`, TLS a la base, `TWO_FACTOR_KEY`).
 - La beta (`agenda-beta`, datos de prueba, sin git) no sigue este flujo: si un cambio debe pasar
   también a la beta, el plan lo dice.
 
@@ -160,4 +170,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.5.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-14
+**Versión**: 1.6.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-14

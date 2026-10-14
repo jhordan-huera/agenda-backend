@@ -101,6 +101,7 @@ export const clientColumns = columns({
   notes: "notes",
   isActive: "is_active",
   createdAt: "created_at",
+  claimedClientId: "claimed_client_id",
 });
 
 export const serviceColumns = columns({

@@ -11,7 +11,16 @@ import { hashPassword, verifyPassword } from "./accounts.ts";
 import { parseInput, requireUser, type RequestContext } from "./context.ts";
 import { queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
-import { isLockedOut, lockedOutError, logSessionEvent, type ClientConnection } from "./session-security.ts";
+import { queueAccountSecurityEmail } from "./account-alerts.ts";
+import {
+  isLockedOut,
+  lockedOutError,
+  logSessionEvent,
+  recordFailedSessionCheck,
+  reserveAttempt,
+  startSessionCheck,
+  type ClientConnection,
+} from "./session-security.ts";
 import {
   createLoginChallenge,
   findLoginChallenge,
@@ -52,11 +61,16 @@ export interface IssuedSession {
 }
 
 /**
- * Caducidad de las sesiones. Con «Recordarme», REMEMBER_DAYS sin usarla (se renueva con el uso). Sin
- * él, IDLE_HOURS sin usarla y, como mucho, MAX_SESSION_HOURS desde que se inició (la cookie, además,
- * se borra al cerrar el navegador). El último uso se anota como mucho cada RENEW_EVERY_MINUTES.
+ * Caducidad de las sesiones. Con «Recordarme», REMEMBER_DAYS sin usarla (se renueva con el uso) y,
+ * como mucho, REMEMBER_MAX_DAYS desde que se inició (SUPER_ADMIN_REMEMBER_DAYS la del super admin: su
+ * cuenta llega a todos los negocios). Antes no tenía tope y una cookie robada valía mientras se usara
+ * (spec 009). Sin «Recordarme», IDLE_HOURS sin usarla y, como mucho, MAX_SESSION_HOURS desde que se
+ * inició (la cookie, además, se borra al cerrar el navegador). El último uso se anota como mucho cada
+ * RENEW_EVERY_MINUTES.
  */
 const REMEMBER_DAYS = 14;
+const REMEMBER_MAX_DAYS = 30;
+const SUPER_ADMIN_REMEMBER_DAYS = 7;
 const IDLE_HOURS = 12;
 const MAX_SESSION_HOURS = 24;
 const RENEW_EVERY_MINUTES = 5;
@@ -88,14 +102,18 @@ async function blockInactive(user: User, connection: ClientConnection): Promise<
 
 async function createSession(db: Db, userId: string, remember: boolean): Promise<IssuedSession> {
   const token = randomBytes(32).toString("base64url");
-  const expiresAt = new Date(Date.now() + (remember ? REMEMBER_DAYS * 86_400_000 : IDLE_HOURS * 3_600_000));
-  await db.query("insert into sessions (user_id, token_hash, expires_at, remember) values ($1, $2, $3, $4)", [
-    userId,
-    sha256(token),
-    expiresAt,
-    remember,
-  ]);
-  return { token, expiresAt, persistent: remember };
+  const row = (await one<{ expiresAt: string }>(
+    db,
+    `insert into sessions (user_id, token_hash, expires_at, remember)
+     select u.id, $2,
+            case when $3::boolean then now() + make_interval(days => least($4::int, case when u.platform_role = 'super_admin' then $5::int else $6::int end))
+                 else now() + make_interval(hours => $7) end,
+            $3
+       from users u where u.id = $1
+     returning expires_at as "expiresAt"`,
+    [userId, sha256(token), remember, REMEMBER_DAYS, SUPER_ADMIN_REMEMBER_DAYS, REMEMBER_MAX_DAYS, IDLE_HOURS],
+  ))!;
+  return { token, expiresAt: new Date(row.expiresAt), persistent: remember };
 }
 
 /** Sesión de la cookie y, si se acaba de renovar una con «Recordarme», su caducidad nueva (para la cookie). */
@@ -119,11 +137,16 @@ export async function findSessionByToken(token: string): Promise<FoundSession | 
          from sessions s
          join users u on u.id = s.user_id
         where s.token_hash = $1 and s.expires_at > now()
+          -- Tope de «Recordarme» desde que se inició: también las sesiones abiertas antes de existir.
+          and (not s.remember
+               or s.created_at > now() - make_interval(days => case when u.platform_role = 'super_admin' then $6::int else $7::int end))
      ), renewed as (
        update sessions s
           set last_seen_at = now(),
               expires_at = case
-                when s.remember then now() + make_interval(days => $3)
+                when s.remember then least(
+                  s.created_at + make_interval(days => case when f."platformRole" = 'super_admin' then $6::int else $7::int end),
+                  now() + make_interval(days => $3))
                 else least(s.created_at + make_interval(hours => $4), now() + make_interval(hours => $5))
               end
          from found f
@@ -131,7 +154,7 @@ export async function findSessionByToken(token: string): Promise<FoundSession | 
        returning s.expires_at
      )
      select f.*, (select r.expires_at from renewed r) as "renewedUntil" from found f`,
-    [sha256(token), RENEW_EVERY_MINUTES, REMEMBER_DAYS, MAX_SESSION_HOURS, IDLE_HOURS],
+    [sha256(token), RENEW_EVERY_MINUTES, REMEMBER_DAYS, MAX_SESSION_HOURS, IDLE_HOURS, SUPER_ADMIN_REMEMBER_DAYS, REMEMBER_MAX_DAYS],
   );
   if (!row) return null;
   const { sessionId, remember, twoFactorEnabled, renewedUntil, stale: _stale, ...user } = row;
@@ -191,8 +214,11 @@ export const authService = {
       [email],
     );
     const user = row ? withoutSecrets(row) : null;
-    // Bloqueada: ni se comprueba la contraseña (aunque sea la correcta) hasta que pase el tiempo.
-    if (await isLockedOut(user?.id ?? null, email, connection.ip)) {
+    // Bloqueada: ni se comprueba la contraseña (aunque sea la correcta) hasta que pase el tiempo. El
+    // intento se aparta antes de comprobarla: con muchos a la vez, sólo pasan los del tope (spec 009).
+    const locked = await isLockedOut(user?.id ?? null, email, connection.ip);
+    const attempt = locked ? null : await reserveAttempt(email, connection.ip, user?.id ?? null);
+    if (!attempt || attempt.locked) {
       await logSessionEvent(
         user,
         {
@@ -222,6 +248,7 @@ export const authService = {
     }
     const issued = await createSession(pool, user.id, remember);
     await logSessionEvent(user, { action: "session.login", summary: "Inició sesión" }, connection);
+    await attempt.succeeded();
     return { session: (await resolveSession(pool, user, false))!, issued };
   },
 
@@ -238,7 +265,9 @@ export const authService = {
       await pool.query("delete from login_challenges where user_id = $1", [user.id]);
       return blockInactive(user, connection);
     }
-    if (await isLockedOut(user.id, user.email, connection.ip)) {
+    const locked = await isLockedOut(user.id, user.email, connection.ip);
+    const attempt = locked ? null : await reserveAttempt(user.email, connection.ip, user.id);
+    if (!attempt || attempt.locked) {
       await pool.query("delete from login_challenges where id = $1", [challenge.id]);
       await logSessionEvent(
         user,
@@ -247,12 +276,23 @@ export const authService = {
       );
       throw lockedOutError();
     }
+    // El intento del paso intermedio se suma antes de comprobar el código, de forma atómica: con
+    // muchos códigos a la vez sólo se comprueban MAX_CHALLENGE_ATTEMPTS (spec 009).
+    const slot = await one<{ attempts: number }>(
+      pool,
+      `update login_challenges set attempts = attempts + 1
+        where id = $1 and attempts < $2 and expires_at > now() returning attempts`,
+      [challenge.id, MAX_CHALLENGE_ATTEMPTS],
+    );
+    if (!slot) {
+      await pool.query("delete from login_challenges where id = $1", [challenge.id]);
+      throw new AppError("unauthorized", "Demasiados códigos incorrectos. Vuelve a escribir tu contraseña.");
+    }
 
     const result = await verifySecondFactor(pool, user.id, code);
     if (!result) {
-      const attempts = challenge.attempts + 1;
+      const { attempts } = slot;
       if (attempts >= MAX_CHALLENGE_ATTEMPTS) await pool.query("delete from login_challenges where id = $1", [challenge.id]);
-      else await pool.query("update login_challenges set attempts = $2 where id = $1", [challenge.id, attempts]);
       await logSessionEvent(
         user,
         { action: "session.login_failed", summary: "Intento de inicio de sesión fallido: código de verificación incorrecto" },
@@ -268,6 +308,7 @@ export const authService = {
     const consumed = await one(pool, "delete from login_challenges where id = $1 returning id", [challenge.id]);
     if (!consumed) throw new AppError("unauthorized", "Pasó demasiado tiempo. Vuelve a escribir tu contraseña.");
     const issued = await createSession(pool, user.id, challenge.remember);
+    await attempt.succeeded();
     await logSessionEvent(
       user,
       {
@@ -323,18 +364,23 @@ export const authService = {
    * Cambia la propia contraseña y cierra las demás sesiones. Sólo el super admin: las
    * contraseñas de los usuarios las pone él (para poder entrar en su cuenta si le piden ayuda).
    */
-  async changePassword(ctx: RequestContext, input: unknown): Promise<void> {
+  async changePassword(ctx: RequestContext, input: unknown, connection: ClientConnection): Promise<void> {
     const user = requireUser(ctx);
     if (user.platformRole !== "super_admin") {
       throw new AppError("forbidden", "Tu contraseña la gestiona el soporte de la plataforma. Escríbele si necesitas cambiarla.");
     }
     const data = parseInput(changePasswordSchema, input);
+    const attempt = await startSessionCheck(user, connection);
     if (!(await isCurrentPassword(user.id, data.currentPassword))) {
+      await recordFailedSessionCheck(user, connection, "Contraseña actual incorrecta al cambiar la contraseña");
       throw new AppError("validation", "La contraseña actual no es correcta.");
     }
+    await attempt.succeeded();
     await transaction(async (db) => {
       await db.query("update users set password_hash = $2 where id = $1", [user.id, await hashPassword(data.newPassword)]);
       await db.query("delete from sessions where user_id = $1 and id <> $2", [user.id, ctx.sessionId]);
+      await logSessionEvent(user, { action: "session.password_changed", summary: "Cambió su contraseña" }, connection, db);
+      await queueAccountSecurityEmail(db, user, "Cambió su contraseña", connection);
     });
   },
 };

@@ -150,9 +150,21 @@ const agendaImageFolders = (businessId: string, userId: string | null) => [
 ];
 
 export const professionalService = {
+  /**
+   * Las agendas del negocio. El rol Profesional sólo ve las suyas enteras: de las demás, lo que necesita
+   * la agenda (nombre, foto, color, especialidad, servicios), sin su email, su sala de videollamada ni
+   * sus cuentas bancarias (spec 009). Recepción sí las recibe: manda por WhatsApp los datos de pago y el
+   * enlace de la consulta de cualquier agenda.
+   */
   async list(ctx: RequestContext, businessId: string): Promise<Professional[]> {
-    await authorize(pool, ctx, businessId);
-    return listProfessionals(pool, businessId);
+    const actor = await authorize(pool, ctx, businessId);
+    const professionals = await listProfessionals(pool, businessId);
+    if (actor.role !== "professional") return professionals;
+    return professionals.map((professional) =>
+      professional.userId === actor.userId
+        ? professional
+        : { ...professional, email: "", meetingUrl: "", bankAccounts: [], bankAccount: null },
+    );
   },
 
   /** Agenda nueva con el horario del primer profesional como punto de partida. */

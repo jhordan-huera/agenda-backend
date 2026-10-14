@@ -50,6 +50,12 @@ const envSchema = z.object({
   // Emails a personas de fuera de la plataforma (pacientes, bienvenidas) en 24 h, entre todos los
   // negocios: frena el spam desde la cuenta de Gmail (que tiene su propio tope diario).
   THIRD_PARTY_EMAILS_PER_DAY: z.coerce.number().int().min(1).default(400),
+  // De ésos, los que provoca alguien de fuera (reservas online y registros) en 24 h: así quien llene
+  // el tope con reservas falsas no deja sin recordatorios ni avisos a los negocios (spec 009).
+  PUBLIC_EMAILS_PER_DAY: z.coerce.number().int().min(1).default(150),
+  // Clave para cifrar el secreto de la verificación en dos pasos en la base (spec 009). Obligatoria
+  // en la nube; con una base local se usa una clave fija de desarrollo.
+  TWO_FACTOR_KEY: z.string().trim().min(32, "TWO_FACTOR_KEY debe tener al menos 32 caracteres").optional(),
   // Avisos al celular por ntfy desde la API (p. ej. al llegar al tope de emails). Sin NTFY_TOPIC,
   // el aviso sólo queda en el registro.
   NTFY_TOPIC: z.string().trim().optional(),
@@ -93,6 +99,29 @@ const hosted = onVercel || onLambda;
  * real, pero las tareas de fondo (cola de emails, recordatorios) siguen a cargo del cron de GitHub.
  */
 const productionDbFromHere = !hosted && !isLocalDatabaseUrl(env.DATABASE_URL);
+
+/**
+ * En la nube la API no arranca sin lo que la protege (spec 009). Sin estas variables funcionaría,
+ * pero sin CAPTCHA, con la IP del proxy para todos los visitantes, sin cifrar la conexión a la base o
+ * sin poder leer la verificación en dos pasos. El registro dice qué falta, nunca un valor.
+ */
+if (hosted) {
+  const problems = [
+    !(env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY) && "faltan TURNSTILE_SITE_KEY y TURNSTILE_SECRET_KEY",
+    !env.PROXY_SECRET && "falta PROXY_SECRET",
+    // Una base en este mismo equipo no viaja por la red (sólo pasa en las pruebas que imitan la nube).
+    !isLocalDatabaseUrl(env.DATABASE_URL) && env.DATABASE_SSL !== "true" && "DATABASE_SSL debe valer true",
+    /[?&]sslmode=/i.test(env.DATABASE_URL) && "DATABASE_URL no debe llevar sslmode (el cifrado lo pone DATABASE_SSL)",
+    !env.TWO_FACTOR_KEY && "falta TWO_FACTOR_KEY",
+  ].filter(Boolean);
+  if (problems.length > 0) {
+    console.error(`Configuración insegura para la nube: ${problems.join("; ")}.`);
+    process.exit(1);
+  }
+}
+
+/** Sólo con una base local (demo y pruebas): nunca cifra nada real. */
+const DEVELOPMENT_TWO_FACTOR_KEY = "agenda360-clave-de-desarrollo-solo-para-la-base-local";
 
 const gmail =
   env.GMAIL_USER && env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET && env.GMAIL_REFRESH_TOKEN
@@ -160,6 +189,13 @@ export const config = {
   turnstile,
   /** Tope de emails a personas de fuera de la plataforma en 24 h (ver src/services/email-limits.ts). */
   thirdPartyEmailsPerDay: env.THIRD_PARTY_EMAILS_PER_DAY,
+  /** De ésos, los que provoca el público: reservas online y registros (ver email-limits.ts). */
+  publicEmailsPerDay: env.PUBLIC_EMAILS_PER_DAY,
+  /**
+   * Clave del cifrado del secreto de la verificación en dos pasos (ver services/secret-box.ts). null:
+   * la base no es local y falta TWO_FACTOR_KEY (en la nube la API ni arranca).
+   */
+  twoFactorKey: env.TWO_FACTOR_KEY ?? (!hosted && !productionDbFromHere ? DEVELOPMENT_TWO_FACTOR_KEY : null),
   /** Avisos por ntfy desde la API (null: sólo en el registro). */
   ntfy: env.NTFY_TOPIC ? { topic: env.NTFY_TOPIC, server: env.NTFY_SERVER.replace(/\/+$/, "") } : null,
   /**

@@ -9,7 +9,7 @@ import { formatNumericDate, formatTimeRange, joinNames } from "../shared/lib/for
 import { documentIdError } from "../shared/lib/identity.ts";
 import { addMinutesToTime, getZonedNow, minutesToTime } from "../shared/lib/time.ts";
 import { appointmentSchema, appointmentStatusSchema, whatsAppNoticeSchema } from "../shared/lib/validations/appointment.ts";
-import { clientSchemaFor } from "../shared/lib/validations/client.ts";
+import { clientSchemaFor, confirmClaimSchema } from "../shared/lib/validations/client.ts";
 import { dateField } from "../shared/lib/validations/fields.ts";
 import { blockedTimeSchema, weeklyScheduleSchema } from "../shared/lib/validations/schedule.ts";
 import { serviceSchema } from "../shared/lib/validations/service.ts";
@@ -247,9 +247,12 @@ export const clientService = {
       const scope = await agendaScope(db, actor, businessId);
       await assertClientInScope(db, scope, clientId);
       await assertValidClientDocument(db, scope, businessId, data.documentId, clientId);
+      // Un paciente «Por verificar» al que el negocio le escribe su propia cédula es otra persona: deja
+      // de estar por verificar (spec 009).
       const client = (await one<Client>(
         db,
-        `update clients set name = $2, document_id = $3, email = $4, phone = $5, address = $6, notes = $7, is_active = $8
+        `update clients set name = $2, document_id = $3, email = $4, phone = $5, address = $6, notes = $7, is_active = $8,
+                claimed_client_id = case when $3 <> '' then null else claimed_client_id end
           where id = $1
           returning ${clientColumns()}`,
         [clientId, data.name, data.documentId, data.email, data.phone, data.address, data.notes, data.isActive],
@@ -300,6 +303,89 @@ export const clientService = {
       return receipts;
     });
     await removeReceiptFiles(receipts);
+  },
+
+  /**
+   * «Es el mismo paciente: unir a su ficha» (spec 009). Un paciente «Por verificar» lo creó una
+   * reserva online con la cédula de `claimedClientId` pero con otro email y otro teléfono. Sus citas
+   * pasan a la ficha (también como otra persona de una sesión) y, si se pide, la ficha se queda con su
+   * email o su teléfono; el paciente aparte desaparece. Devuelve la ficha.
+   * - No lo hace el rol Profesional: la cita le daría acceso a esa ficha sin que recepción lo confirme
+   *   (el acceso de las reservas online a fichas existentes lo libera recepción: ver agenda-scope.ts).
+   * - Si el paciente aparte ya tiene historia clínica, no se une: no se mueven datos clínicos sin que
+   *   alguien los revise.
+   */
+  async confirmClaim(ctx: RequestContext, businessId: string, clientId: string, input: unknown): Promise<Client> {
+    const { updateEmail, updatePhone } = parseInput(confirmClaimSchema, input ?? {});
+    return transaction(async (db) => {
+      const actor = await authorize(db, ctx, businessId, "clients.manage", { lock: true });
+      if (actor.role === "professional") {
+        throw new AppError("forbidden", "Pide a recepción o al propietario que revise esta reserva y la una a la ficha.");
+      }
+      const provisional = await findOwned<Client>(db, "clients", clientColumns(), businessId, clientId, "Cliente no encontrado.");
+      await assertClientInScope(db, await agendaScope(db, actor, businessId), clientId);
+      if (!provisional.claimedClientId) throw new AppError("conflict", "Este paciente no está por verificar.");
+      const claimed = await one<Client>(db, `select ${clientColumns()} from clients where id = $1 and business_id = $2`, [
+        provisional.claimedClientId,
+        businessId,
+      ]);
+      if (!claimed) throw new AppError("conflict", "La ficha de esa cédula ya no existe: edita este paciente y escribe su cédula.");
+      const hasClinicalRecord = await one(
+        db,
+        `select 1 where exists (select 1 from clinical_notes where client_id = $1)
+                     or exists (select 1 from clinical_profiles where client_id = $1)
+                     or exists (select 1 from clinical_attachments where client_id = $1)`,
+        [clientId],
+      );
+      if (hasClinicalRecord) {
+        throw new AppError(
+          "conflict",
+          "Este paciente ya tiene historia clínica: no se puede unir a la ficha. Pasa sus notas a mano antes de unirlo.",
+        );
+      }
+      // Como otra persona de una sesión: si la ficha ya está en esa cita, sobra; si no, la ocupa ella
+      // (se borra y se vuelve a añadir: el límite de 3 personas lo comprueba el trigger al añadir).
+      await db.query(
+        `delete from appointment_clients ac using appointments a
+          where ac.appointment_id = a.id and ac.client_id = $1
+            and (a.client_id = $2 or exists (select 1 from appointment_clients other where other.appointment_id = a.id and other.client_id = $2))`,
+        [clientId, claimed.id],
+      );
+      const extras = await many<{ appointmentId: string; createdAt: string }>(
+        db,
+        'delete from appointment_clients where client_id = $1 returning appointment_id as "appointmentId", created_at as "createdAt"',
+        [clientId],
+      );
+      for (const extra of extras) {
+        await db.query("insert into appointment_clients (appointment_id, client_id, business_id, created_at) values ($1, $2, $3, $4)", [
+          extra.appointmentId,
+          claimed.id,
+          businessId,
+          extra.createdAt,
+        ]);
+      }
+      // Como principal (si la ficha era otra persona de esa cita, el trigger de la 032 la quita de ahí).
+      const moved = await db.query("update appointments set client_id = $2 where client_id = $1", [clientId, claimed.id]);
+      const updated = (await one<Client>(
+        db,
+        `update clients set email = case when $2::boolean then $3 else email end, phone = case when $4::boolean then $5 else phone end
+          where id = $1
+          returning ${clientColumns()}`,
+        [claimed.id, updateEmail, provisional.email, updatePhone, provisional.phone],
+      ))!;
+      await db.query("delete from clients where id = $1", [clientId]);
+      const appointments = (moved.rowCount ?? 0) + extras.length;
+      await logAudit(db, {
+        businessId,
+        actor,
+        action: "client.claim_confirmed",
+        entityType: "client",
+        entityId: claimed.id,
+        summary: `Unió a la ficha de ${claimed.name} la reserva por verificar de ${provisional.name} (${appointments} cita${appointments === 1 ? "" : "s"})`,
+        changes: diffChanges(claimed, updated, CLIENT_FIELDS),
+      });
+      return updated;
+    });
   },
 };
 

@@ -1,6 +1,6 @@
 // Copia de agenda-front/src/lib/validations/booking.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
-import { dateField, documentIdField, emailField, homeVisitSchema, optionalText, requiredPhoneField, requiredText, timeField } from "./fields.ts";
+import { dateField, documentIdField, emailField, homeVisitSchema, optionalText, personNameField, requiredPhoneField, timeField } from "./fields.ts";
 
 /**
  * Otra persona de una sesión en pareja o en familia (servicio de 2 o 3 personas): los mismos datos
@@ -8,7 +8,7 @@ import { dateField, documentIdField, emailField, homeVisitSchema, optionalText, 
  */
 export const bookingPersonSchema = z.object({
   documentId: documentIdField,
-  name: requiredText("Su nombre"),
+  name: personNameField("Su nombre"),
   email: emailField,
   phone: requiredPhoneField,
 });
@@ -16,7 +16,8 @@ export const bookingPersonSchema = z.object({
 /**
  * Reserva desde la página pública. El paciente escribe siempre su cédula, nombre, email y teléfono:
  * la página no dice si la cédula ya es de un cliente del negocio. Si lo es, la API sólo une la
- * reserva a esa ficha cuando coinciden el email o el teléfono guardados. En un servicio para varias
+ * reserva a esa ficha cuando coinciden el email o el teléfono guardados; si no, la reserva sale igual
+ * y queda «Por verificar» para que el negocio la revise. En un servicio para varias
  * personas, quien reserva es el paciente principal y las demás van en `extraPatients`.
  */
 export const publicBookingSchema = z
@@ -25,7 +26,7 @@ export const publicBookingSchema = z
     date: dateField,
     startTime: timeField,
     documentId: documentIdField,
-    name: requiredText("Tu nombre"),
+    name: personNameField("Tu nombre"),
     email: emailField,
     phone: requiredPhoneField,
     /** Las demás personas de la sesión (servicio de 2 o 3 personas); [] en una cita individual. */

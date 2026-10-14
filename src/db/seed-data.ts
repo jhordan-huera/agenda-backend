@@ -613,6 +613,7 @@ function seedTenant(
     address,
     notes,
     isActive,
+    claimedClientId: null,
     createdAt: daysAgoISO(Math.max(1, age - 20 - index * 5)),
   }));
   db.clients.push(...clients);

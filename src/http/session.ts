@@ -9,7 +9,8 @@ const COOKIE_NAME = "agendo_session";
 function cookieOptions(): CookieOptions {
   return {
     httpOnly: true, // el JavaScript del navegador no puede leerla (protege ante XSS)
-    secure: config.isProduction || config.cookieSameSite === "none",
+    // En la nube siempre, aunque falte NODE_ENV=production (spec 009): sólo viaja por HTTPS.
+    secure: config.isProduction || config.hosted || config.cookieSameSite === "none",
     sameSite: config.cookieSameSite,
     path: "/",
   };

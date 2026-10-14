@@ -78,24 +78,31 @@ for (let d = 2; d < 60 && freeSlots.length < 6; d++) {
   if (startTime) freeSlots.push({ date, startTime });
 }
 const countClients = async () => (await owner("GET", `${B}/clients`)).body.length;
-const before = await countClients();
+let before = await countClients();
 const booking = (slot, extra) => ({ serviceId: service.id, ...slot, name: "", email: "", phone: "", notes: "", ...extra });
 const mariaFull = (await owner("GET", `${B}/clients/${maria.id}`)).body;
 
 r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[0], { documentId: maria.documentId }));
 ok(r.status === 400, "sólo con la cédula ya no se reserva: nombre, email y teléfono son obligatorios", r.body);
-r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[0], { documentId: maria.documentId, name: "Alguien Más", email: "otra.persona@correo.ec", phone: "+593 98 000 1111" }));
+// Con la cédula de María y otro email y otro teléfono, la reserva sale como la de una cédula nueva
+// y queda «Por verificar» (spec 009): antes un 403 decía que la cédula era de una paciente.
+r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[5], { documentId: maria.documentId, name: "Alguien Más", email: "otra.persona@correo.ec", phone: "+593 98 000 1111" }));
 ok(
-  r.status === 403 && r.body.error.message === "No pudimos confirmar tus datos. Revisa tu email y teléfono o escríbenos por WhatsApp.",
-  "con la cédula de María y otro email y otro teléfono → error genérico",
+  r.status === 200 && r.body.clientEmail === "otra.persona@correo.ec",
+  "con la cédula de María y otro email y otro teléfono → la reserva sale como con una cédula nueva",
   r.body,
 );
-ok(!JSON.stringify(r.body).includes("María") && !JSON.stringify(r.body).includes("@example.com"), "el error no dice nada de María", r.body);
-ok((await countClients()) === before, "ni se crea un duplicado con su cédula");
+ok(!JSON.stringify(r.body).includes("María") && !JSON.stringify(r.body).includes("@example.com"), "la respuesta no dice nada de María", r.body);
 ok(
-  Number(sql(`select count(*) from appointments where client_id = '${maria.id}' and date = '${freeSlots[0].date}'`)) === 0,
-  "ni una cita a su nombre",
+  sql(`select count(*) || ':' || min(document_id) from clients where claimed_client_id = '${maria.id}'`) === "1:",
+  "queda un paciente aparte «Por verificar», sin cédula, que apunta a la ficha de María",
 );
+ok(
+  Number(sql(`select count(*) from appointments where client_id = '${maria.id}' and date = '${freeSlots[5].date}'`)) === 0,
+  "y ninguna cita a nombre de María",
+);
+ok((await countClients()) === before + 1, "ni otra ficha con su cédula: sólo el paciente aparte");
+before += 1;
 r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[0], { documentId: maria.documentId, name: "María", email: ` ${mariaFull.email.toUpperCase()} `, phone: "+593 98 000 1111" }));
 ok(r.status === 200 && r.body.clientEmail === mariaFull.email, "María reserva con su cédula y su email (sin importar mayúsculas)", r.body);
 ok((await countClients()) === before, "no se crea otro cliente");
@@ -120,11 +127,11 @@ const hijo = cedulaFor("hijo-1");
 r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[3], { documentId: hijo, name: "Hijo Nuevo", email: "pedro.nuevo@example.com", phone: "+593 99 555 0003" }));
 ok(r.status === 200 && (await countClients()) === before + 2, "otra persona con el mismo email (familia) es otro cliente", r.body);
 
-const legacyId = sql(`insert into clients (business_id, name, email) values ('${os.businessId}', 'Cliente Antiguo', 'antiguo@example.com') returning id`).split("\n")[0];
+const legacyId = sql(`insert into clients (business_id, name, email, phone) values ('${os.businessId}', 'Cliente Antiguo', 'antiguo@example.com', '0995550004') returning id`).split("\n")[0];
 const antiguo = cedulaFor("antiguo");
 r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[4], { documentId: antiguo, name: "Cliente Antiguo", email: "antiguo@example.com", phone: "+593 99 555 0004" }));
 const legacy = (await owner("GET", `${B}/clients/${legacyId}`)).body;
-ok(r.status === 200 && legacy.documentId === antiguo && (await countClients()) === before + 3, "un cliente antiguo sin cédula (mismo email) recibe la cédula en vez de duplicarse", legacy);
+ok(r.status === 200 && legacy.documentId === antiguo && (await countClients()) === before + 3, "un cliente antiguo sin cédula (mismo nombre, email y teléfono) recibe la cédula en vez de duplicarse", legacy);
 
 console.log("Panel");
 r = await owner("POST", `${B}/clients`, { name: "Duplicado", documentId: maria.documentId, email: "dup@example.com", phone: "", address: "", notes: "", isActive: true });

@@ -52,6 +52,7 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   plan_changed: ["Cambio de plan", "Cambios de plan"],
   plan_change_rejected: ["Cambio de plan rechazado", "Cambios de plan rechazados"],
   platform_admin_added: ["Alta de super admin", "Altas de super admin"],
+  account_security_changed: ["Cambio de seguridad de una cuenta", "Cambios de seguridad de cuentas"],
 };
 
 /** "mar 7 oct 10:00" */
@@ -225,6 +226,25 @@ export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
   return notices;
 }
 
+/**
+ * Un aviso por cada cambio de seguridad en una cuenta de super admin (verificación en dos pasos o
+ * contraseña, spec 009) y, si hubo más de los que se detallan, otro con cuántos faltan.
+ */
+export function buildAccountNotices(report: ScheduledTasksReport): Notice[] {
+  const notices: Notice[] = [...(report.accountNotices ?? [])];
+  const rest = (report.accountChanges ?? 0) - notices.length;
+  if (rest > 0) {
+    notices.push({
+      title: "Agenda360: más cambios en cuentas de super admin",
+      message: `…y ${plural(rest, "cambio más", "cambios más")} de seguridad en cuentas de super admin (detalle en Actividad → Seguridad).`,
+      priority: 4,
+      tags: ["key"],
+      click: "/admin/activity",
+    });
+  }
+  return notices;
+}
+
 /** Alerta de seguridad: cuentas con muchos intentos fallidos de inicio de sesión. */
 export function buildSecurityNotice(report: ScheduledTasksReport): Notice | null {
   if (report.security.length === 0) return null;
@@ -282,7 +302,7 @@ async function main(): Promise<void> {
     console.info(
       `Recordatorios: ${report.reminders} · reservas por la página: ${report.onlineBookings ?? 0} · ` +
         `pacientes nuevos del panel: ${report.panelClients ?? 0} · citas del panel: ${report.panelAppointments ?? 0} · ` +
-        `cambios de estado: ${report.statusChanges ?? 0} · ` +
+        `cambios de estado: ${report.statusChanges ?? 0} · cambios de cuenta: ${report.accountChanges ?? 0} · ` +
         `enviados desde la anterior: ${report.sentSinceLastRun} · ` +
         `negocios con error: ${report.reminderFailures} · ` +
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +
@@ -294,6 +314,7 @@ async function main(): Promise<void> {
       ...buildBookingNotices(report),
       buildNotice(report, { gmailConfigured: Boolean(config.gmail) }),
       buildSecurityNotice(report),
+      ...buildAccountNotices(report),
     ].filter((notice) => notice !== null);
     for (const notice of notices) await notify(notice);
     if (notices.length === 0) console.info("Sin correos, errores ni alertas: no se envía aviso.");

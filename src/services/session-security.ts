@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
+import { ipKeyGenerator } from "express-rate-limit";
 import { one, pool, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
+import { incrementCounter } from "../http/rate-limit-store.ts";
 import { getFullName } from "../shared/lib/format.ts";
 import type { User } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
@@ -103,6 +106,89 @@ export async function isLockedOut(userId: string | null, email: string, ip: stri
     row.ip >= MAX_FAILURES_PER_IP ||
     (row.account >= MAX_FAILURES_PER_ACCOUNT && !row.knownIp)
   );
+}
+
+/**
+ * Intento de acceso (contraseña o código) apartado ANTES de comprobarlo (spec 009). isLockedOut lee
+ * los fallos ya anotados: con muchos intentos a la vez, todos lo pasaban antes de que se anotara el
+ * primero. Estos contadores se suman de forma atómica (tabla rate_limits, compartida por todas las
+ * instancias), así que de cien intentos simultáneos sólo pasan los que permite el tope. Los topes son
+ * los mismos que los de isLockedOut, que se sigue comprobando igual.
+ */
+export interface AttemptReservation {
+  /** Pasó de algún tope: no se comprueba nada y se responde lockedOutError(). */
+  locked: boolean;
+  /**
+   * Inició sesión o acertó la contraseña: los fallos de la cuenta vuelven a cero (como isLockedOut,
+   * que cuenta desde el último inicio de sesión) y este intento deja de contar para la conexión. Con
+   * la verificación en dos pasos, sólo al acertar también el código: si no, quien sepa la contraseña
+   * volvería a tener todos los intentos de código cada vez que la escribe.
+   */
+  succeeded(): Promise<void>;
+}
+
+/** Huella del email para las claves de los contadores (no se guardan emails en rate_limits). */
+const accountKey = (email: string) => createHash("sha256").update(email.trim().toLowerCase()).digest("hex").slice(0, 32);
+
+export async function reserveAttempt(email: string, ip: string, userId: string | null): Promise<AttemptReservation> {
+  const account = accountKey(email);
+  // La misma clave de conexión que los límites de peticiones: IPv4 una a una e IPv6 por subred /64.
+  const connection = ipKeyGenerator(ip, 64);
+  const keys = {
+    accountFromIp: `acceso:cuenta-ip:${account}:${connection}`,
+    ip: `acceso:ip:${connection}`,
+    account: `acceso:cuenta:${account}`,
+  };
+  // Desde una conexión donde la cuenta ya inició sesión no cuenta el tope repartido entre muchas IP.
+  const knownIp = userId
+    ? Boolean(
+        await one(
+          pool,
+          "select 1 from audit_logs where entity_type = 'session' and action = 'session.login' and actor_id = $1 and ip = $2 limit 1",
+          [userId, ip],
+        ),
+      )
+    : false;
+  const windowMs = LOCKOUT_MINUTES * 60_000;
+  const locked: AttemptReservation = { locked: true, succeeded: async () => undefined };
+  // De lo más estrecho a lo más amplio, y parando en el primer tope: lo que ya frenó la conexión no
+  // suma en la cuenta. Si no, desde una sola IP se podría dejar fuera al dueño en sus conexiones
+  // nuevas, y el bloqueo es para la conexión que falla, no para la cuenta.
+  if ((await incrementCounter(pool, keys.accountFromIp, windowMs)).hits > MAX_FAILURES_PER_ACCOUNT_AND_IP) return locked;
+  if ((await incrementCounter(pool, keys.ip, windowMs)).hits > MAX_FAILURES_PER_IP) return locked;
+  if (!knownIp && (await incrementCounter(pool, keys.account, windowMs)).hits > MAX_FAILURES_PER_ACCOUNT) return locked;
+  return {
+    locked: false,
+    async succeeded() {
+      await pool.query("delete from rate_limits where key = any($1::text[])", [[keys.accountFromIp, keys.account]]);
+      await pool.query("update rate_limits set hits = greatest(hits - 1, 0) where key = $1", [keys.ip]);
+    },
+  };
+}
+
+/**
+ * Contraseña o código pedidos con la sesión abierta (cambiar el email o la contraseña, desactivar la
+ * verificación, códigos de recuperación nuevos): cuentan para el mismo bloqueo que el inicio de
+ * sesión, así que con una sesión robada tampoco se puede adivinar la contraseña (spec 009). Bloqueada,
+ * lanza lockedOutError() sin comprobar nada; si no, devuelve el intento apartado.
+ */
+export async function startSessionCheck(user: User, connection: ClientConnection): Promise<AttemptReservation> {
+  const locked = await isLockedOut(user.id, user.email, connection.ip);
+  const attempt = locked ? null : await reserveAttempt(user.email, connection.ip, user.id);
+  if (!attempt || attempt.locked) {
+    await logSessionEvent(
+      user,
+      { action: "session.login_locked", summary: "Comprobación de la contraseña bloqueada temporalmente por demasiados intentos fallidos" },
+      connection,
+    );
+    throw lockedOutError();
+  }
+  return attempt;
+}
+
+/** El fallo de una comprobación con la sesión abierta, en los eventos de sesión (cuenta para el bloqueo). */
+export async function recordFailedSessionCheck(user: User, connection: ClientConnection, summary: string): Promise<void> {
+  await logSessionEvent(user, { action: "session.login_failed", summary }, connection);
 }
 
 /** Error de cuenta o conexión bloqueada (mismo mensaje exista o no la cuenta). */

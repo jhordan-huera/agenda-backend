@@ -87,18 +87,23 @@ export async function queryAuditLogs<T extends AuditLog>(
   return { entries, nextCursor: rows.length > filters.limit ? entries[entries.length - 1].id : null };
 }
 
+/** Emails de un negocio que van al equipo de la plataforma, no al negocio. */
+const PLATFORM_TEAM_EMAIL_TYPES = ["plan_change_requested"];
+
 export const notificationService = {
   /** Emails del negocio y emails de cuenta del propio usuario (bandeja de salida). */
   async list(ctx: RequestContext, businessId: string): Promise<EmailNotification[]> {
     await authorize(pool, ctx, businessId, "business.manage");
-    // Los emails de cuenta (sin negocio: bienvenida, contraseñas) sólo los ve su destinatario.
+    // Los emails de cuenta (sin negocio: bienvenida, contraseñas) sólo los ve su destinatario. Los del
+    // negocio dirigidos al equipo de la plataforma (la solicitud de cambio de plan a los super admin)
+    // no: dirían a quién se envían (spec 009).
     return many<EmailNotification>(
       pool,
       `select ${notificationColumns()} from notifications
-        where business_id = $1 or (business_id is null and to_email = $2)
+        where (business_id = $1 and type <> all($3::text[])) or (business_id is null and to_email = $2)
         order by created_at desc
         limit 100`,
-      [businessId, ctx.user!.email],
+      [businessId, ctx.user!.email, PLATFORM_TEAM_EMAIL_TYPES],
     );
   },
 };

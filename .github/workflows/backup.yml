@@ -92,7 +92,9 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           DATABASE_SSL: "true"
           BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
-          BACKUP_EMAIL: ${{ vars.BACKUP_EMAIL }}
+          # Secreto (spec 009): el registro de Actions es público y muestra el valor de las variables. La
+          # variable de antes vale mientras exista; al pasarla a secreto, se borra la variable.
+          BACKUP_EMAIL: ${{ secrets.BACKUP_EMAIL || vars.BACKUP_EMAIL }}
           RESTORE_CHECK_URL: postgresql://postgres:comprobacion@localhost:5432/postgres
           PG_DUMP: /usr/lib/postgresql/17/bin/pg_dump
           PSQL: /usr/lib/postgresql/17/bin/psql

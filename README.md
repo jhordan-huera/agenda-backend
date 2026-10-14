@@ -213,12 +213,18 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   **siempre** cédula, nombre, email y teléfono: la página no dice si la cédula ya es de un cliente
   (con la de un paciente de un psicólogo, eso ya sería un dato sensible). Si la cédula existe en el
   negocio, la reserva sólo se une a esa ficha si coinciden el email o el teléfono guardados (sin
-  mayúsculas ni formato: `099 123 4567` = `+593 99 123 4567`) y no cambia sus datos; si no
-  coinciden, responde 403 con un mensaje genérico ("No pudimos confirmar tus datos…"), sin crear un
-  duplicado ni decir nada de la ficha. La confirmación sólo muestra el email de la ficha si es el que
-  escribió. El navegador puede recordar los datos del propio paciente ("Recordar mis datos", con
+  mayúsculas ni formato: `099 123 4567` = `+593 99 123 4567`) y no cambia sus datos. Si no
+  coinciden, la reserva sale **igual que con una cédula nueva** (la misma respuesta, los mismos
+  emails al correo escrito, los mismos topes y la hora ocupada) y queda **«Por verificar»** (spec
+  009): un paciente aparte, sin cédula, con los datos escritos y `clients.claimed_client_id`
+  apuntando a la ficha, que no se toca ni recibe nada (ni el recordatorio). Antes respondía 403, y
+  eso decía que la cédula era de un paciente. El negocio la revisa en la agenda: «Es el mismo
+  paciente: unir a su ficha» (`POST /businesses/:id/clients/:clientId/confirm-claim` con
+  `{ updateEmail, updatePhone }`: las citas pasan a la ficha y el paciente aparte desaparece; no lo
+  puede hacer el rol Profesional, ni si el paciente aparte ya tiene historia clínica) o cancela la
+  cita. La confirmación sólo muestra el email de la ficha si es el que escribió. El navegador puede recordar los datos del propio paciente ("Recordar mis datos", con
   "Olvidar mis datos"), nunca la API. Un cliente antiguo sin cédula con el
-  mismo email **y el mismo nombre** (sin tildes, mayúsculas ni espacios de más) recibe la cédula en
+  mismo email, **el mismo nombre y el mismo teléfono** (sin tildes, mayúsculas ni espacios de más) recibe la cédula en
   lugar de duplicarse; con otro nombre es otra persona (una madre y su hijo con un solo email) y se
   crea su propia ficha, para no mezclar citas ni historias clínicas. El email ya no es único (familias).
 - **Datos obligatorios del paciente** (migración 031, `businesses.client_required_fields`, jsonb
@@ -489,7 +495,8 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
 - **Sesión:** cookie `httpOnly` con un token aleatorio; en la base sólo se guarda su hash (tabla
   `sessions`). Caduca por inactividad (migración 028): sin "Recordarme", a las 12 horas sin usarla
   (y como mucho 24 desde que se inició; la cookie se borra al cerrar el navegador); con
-  "Recordarme", a los 14 días sin usarla: cada uso la renueva otros 14 días, también la cookie. El
+  "Recordarme", a los 14 días sin usarla: cada uso la renueva otros 14 días, también la cookie, pero
+  como mucho 30 días desde que se inició (7 la del super admin, spec 009). El
   último uso (`sessions.last_seen_at`) se anota como mucho cada 5 minutos. Las sesiones abiertas
   antes de la migración siguen valiendo con esos límites. Cuando el super admin cambia una
   contraseña (la de otro o la suya), al activar la verificación en dos pasos o al desactivar una
@@ -502,7 +509,12 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   entera; y 30 con una cuenta sumando todas las conexiones (un ataque repartido entre muchas IP)
   dejan probar sólo desde conexiones en las que esa cuenta ya inició sesión. Se cuentan en la
   auditoría, así que valen para todas las instancias. Un email no registrado se bloquea igual: no
-  revela qué cuentas existen.
+  revela qué cuentas existen. Cada intento se aparta **antes** de comprobar la contraseña o el código
+  (contadores atómicos en `rate_limits`, `reserveAttempt` en `src/services/session-security.ts`):
+  con cien intentos a la vez sólo se comprueban los del tope (spec 009). Lo mismo vale para la
+  contraseña o el código que se piden con la sesión abierta (cambiar el email o la contraseña,
+  desactivar la verificación, códigos de recuperación nuevos): cuentan para el mismo bloqueo y sus
+  fallos quedan en los eventos de sesión.
 - **Verificación en dos pasos** (TOTP: Google Authenticator, Microsoft Authenticator…) para la
   cuenta de super admin, desde Configuración. **Es obligatoria** con datos reales (producción, la
   nube o la base de producción desde tu ordenador; con una base local, sólo con
@@ -512,7 +524,12 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   `{ twoFactorRequired, challenge }` y la sesión se abre en `POST /api/auth/login/two-factor` con
   el código de 6 dígitos (cada uno sirve una vez) o un código de recuperación (10, guardados como
   hash). 5 códigos incorrectos anulan el paso; cuentan para el bloqueo de la cuenta. Desactivarla
-  pide la contraseña y un código (`src/services/two-factor.ts`, `src/services/totp.ts`).
+  pide la contraseña y un código (`src/services/two-factor.ts`, `src/services/totp.ts`). El secreto
+  se guarda **cifrado** (AES-256-GCM con `TWO_FACTOR_KEY`, `src/services/secret-box.ts`); los de antes,
+  en claro, se cifran con el siguiente código correcto. Activarla o desactivarla, y que un super
+  admin cambie su contraseña, **avisa**: un email al momento a la cuenta y al super admin principal
+  (`account_security_changed`) y un aviso por ntfy en la siguiente pasada del cron
+  (`src/services/account-alerts.ts`), también tras `db:reset-2fa`.
   **Emergencia** (celular y códigos perdidos): `npm run db:reset-2fa -- <email>` desde tu ordenador.
 - **Contraseñas fuera del registro de emails:** los emails con datos de acceso se guardan con la
   contraseña oculta (`••••••••`); ésta va aparte (`notifications.secret`) sólo hasta que el email
@@ -525,8 +542,11 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   de nuevo"), y el token debe venir de un dominio del frontend (`hostname` de `FRONTEND_URL`,
   `APP_URL` o `TURNSTILE_HOSTNAMES`).
 - **Topes de emails** (`src/services/email-limits.ts`): como mucho 400 emails a terceros (pacientes y
-  bienvenidas) en 24 h entre todos los negocios (`THIRD_PARTY_EMAILS_PER_DAY`), y 20 confirmaciones
-  de reservas online a pacientes nuevos por negocio en 24 h. Lo que pasa del tope queda en el
+  bienvenidas) en 24 h entre todos los negocios (`THIRD_PARTY_EMAILS_PER_DAY`, por el tope diario de
+  Gmail); de ésos, como mucho 150 los que provoca el público (reservas online y registros,
+  `PUBLIC_EMAILS_PER_DAY`, spec 009), así que quien llene el tope con reservas falsas no deja a los
+  negocios sin recordatorios ni avisos; y 20 confirmaciones de reservas online a pacientes nuevos por
+  negocio en 24 h. Lo que pasa del tope queda en el
   historial como fallido ("No enviado: …") y avisa una vez al día en el registro y por ntfy
   (`NTFY_TOPIC` también en la API). Los avisos al negocio, a los profesionales y a la plataforma salen siempre.
 - **Página pública** sin datos internos: ni el propietario, ni los avisos, ni el motivo de los
@@ -543,11 +563,27 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   se guardan en PostgreSQL (tabla `rate_limits`, `src/http/rate-limit-store.ts`): todas las
   instancias de Vercel o Lambda comparten el mismo límite (antes cada una contaba en su memoria). Las
   IPv6 cuentan por subred /64. El cron borra las cuentas caducadas. En Vercel la IP del visitante
-  llega desde el proxy del frontend en `x-agendo-client-ip`, que sólo se acepta junto con
-  `PROXY_SECRET` (`src/http/client-ip.ts`): nadie puede falsear su IP.
-- **Function URL de Lambda cerrada:** en Lambda, con `PROXY_SECRET`, la API responde 403 a todo lo
-  que no traiga `x-agendo-proxy-secret` correcto (comparado en tiempo constante), salvo `GET
-  /api/health`: sólo se entra por el frontend. Sin `PROXY_SECRET`, no rechaza pero lo avisa al arrancar.
+  llega desde el proxy del frontend en `x-agendo-client-ip`, firmada con `PROXY_SECRET` y la hora
+  (`x-agendo-client-ts`, `x-agendo-client-sig`: HMAC-SHA256 de `<ip>.<segundos>`, válida 2 minutos;
+  `src/http/secrets.ts` y `client-ip.ts`): nadie puede falsear su IP, y una firma vista no sirve
+  después. Fase 1 de la spec 009: también vale el secreto fijo de antes (`x-agendo-proxy-secret`);
+  se quita cuando el frontend con la firma esté publicado.
+- **Function URL de Lambda cerrada:** en Lambda la API responde 403 a todo lo que no traiga la firma
+  del proxy (o, en la fase 1, `x-agendo-proxy-secret` correcto, comparado en tiempo constante),
+  salvo `GET /api/health`: sólo se entra por el frontend.
+- **En la nube no arranca desprotegida** (spec 009, `src/config.ts`): en Vercel o Lambda, si faltan
+  las claves de Turnstile, `PROXY_SECRET` o `TWO_FACTOR_KEY`, si `DATABASE_SSL` no es `true` (con una
+  base remota) o si `DATABASE_URL` lleva `sslmode`, el proceso termina con «Configuración insegura
+  para la nube: …» (lo que falta, sin valores) y no atiende. Allí la cookie va siempre `Secure`.
+- **Respuestas públicas sin cookie:** `/api/public/*` se atiende antes de cargar la sesión, así que
+  ninguna respuesta pública (algunas las guarda la CDN) lleva `Set-Cookie`; el frontend las pide sin
+  credenciales.
+- **Cada uno recibe sólo lo que necesita:** la bandeja de emails del negocio no muestra los dirigidos
+  a la plataforma (la solicitud de plan a los super admin); el rol Profesional recibe en blanco el
+  email, la sala y las cuentas bancarias de las agendas que no son suyas; y la ficha de otro usuario
+  pide al super admin la verificación en dos pasos, como el resto del panel.
+- **Nombres del público** (reserva y registro): sin saltos de línea, «@», ni enlaces o dominios
+  (`personNameField`), para que nadie use los emails de la plataforma para mandar textos a terceros.
 - **RLS activado** en todas las tablas: con Supabase, la API REST automática (clave anónima) no
   puede leer nada; sólo esta API (dueña de las tablas) accede a los datos.
 - `helmet` para las cabeceras HTTP.
@@ -570,7 +606,7 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   tabla, restricción, mensaje y pila (`errorForLog` en `src/http/errors.ts`), nunca entero: los de
   PostgreSQL traen en `detail` la fila con los datos del paciente. Los avisos de ntfy del cron
   (resumen de correos y uno por cada reserva desde la página) llevan a los pacientes a medias
-  ("Juan P.", "ju***@gmail.com", "099***5555", ver `src/services/masking.ts`), y el registro
+  ("Juan P.", "ju***@gmail.com", "***5555", ver `src/services/masking.ts`), y el registro
   público de Actions sólo el título y cifras.
 - **API local sólo en este equipo** (`127.0.0.1`) y almacenamiento local encerrado en su carpeta
   (ver "Almacenamiento"): nadie de la misma Wi-Fi puede pedir `/api/files/public/…/..%2F..%2F.env`.
@@ -757,7 +793,7 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
 
    | Variable | Valor |
    | --- | --- |
-   | `NODE_ENV` | `production` (cookie `Secure` y emails a sus destinatarios reales) |
+   | `NODE_ENV` | `production` (emails a sus destinatarios reales; la cookie va `Secure` en la nube igualmente) |
    | `DATABASE_URL` | La de `.env`: el **pooler compartido** `aws-0-us-west-2.pooler.supabase.com:6543` con usuario `postgres.<ref>`. La dirección directa `db.<ref>.supabase.co` sólo tiene IPv6 y Vercel no la alcanza |
    | `DATABASE_SSL` | `true` |
    | `DATABASE_POOL_MAX` | `5` |
@@ -766,10 +802,12 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    | `GMAIL_USER`, `GMAIL_FROM_NAME`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` | Los de `.env` |
    | `GMAIL_TRANSPORT` | Opcional: `api` para enviar por la API de Gmail con un token que sólo puede enviar (ver "Emails"); vacía, SMTP |
    | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Almacenamiento: historia clínica, comprobantes de pago, logos y fotos (Supabase → Project Settings → API Keys). Sin ellas no se pueden subir archivos ni imágenes |
-   | `PROXY_SECRET` | El de `.env` (mismo valor que en el frontend) |
-   | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | CAPTCHA de la página de reservas y del registro (Cloudflare → Turnstile → Add widget, hostname del frontend, modo *Managed*). Sin ellas, `/api/health` dice `captcha: false` |
+   | `PROXY_SECRET` | El de `.env` (mismo valor que en el frontend). **Obligatoria**: sin ella la API no arranca |
+   | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | CAPTCHA de la página de reservas y del registro (Cloudflare → Turnstile → Add widget, hostname del frontend, modo *Managed*). **Obligatorias**: sin ellas la API no arranca |
+   | `TWO_FACTOR_KEY` | Clave del cifrado del secreto de la verificación en dos pasos, de 32 caracteres o más (`openssl rand -base64 48`). **Obligatoria**; la misma en el `.env` para `npm run dev:prod`. Si se pierde, los super admin entran con sus códigos de recuperación o `npm run db:reset-2fa` |
    | `TURNSTILE_HOSTNAMES` | Opcional: otros dominios del frontend, separados por comas (ya valen los de `FRONTEND_URL` y `APP_URL`) |
    | `THIRD_PARTY_EMAILS_PER_DAY` | Opcional: tope de emails a pacientes y bienvenidas en 24 h (por defecto 400; súbelo con Google Workspace) |
+   | `PUBLIC_EMAILS_PER_DAY` | Opcional: de ésos, los que provocan las reservas online y los registros (por defecto 150) |
    | `NTFY_TOPIC` | Opcional: el del cron, para que la API avise al llegar al tope de emails |
 
 3. **Proyecto del frontend** (agenda-front): variables `API_URL` (URL de este proyecto, p. ej.
@@ -784,8 +822,9 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    - Variables: `APP_URL` (la del frontend: enlaces de los emails y del aviso) y, opcionales,
      `GMAIL_FROM_NAME` (por defecto "Agenda360"), `GMAIL_TRANSPORT` (`api`, ver "Emails") y
      `NTFY_SERVER`.
-   - Copias de seguridad: secreto `BACKUP_PASSPHRASE` (el de `.env`), variable `BACKUP_EMAIL`
-     (quién recibe las copias) y, opcional, secreto `BACKUP_HEALTHCHECK_URL`. Pruébalo en
+   - Copias de seguridad: secretos `BACKUP_PASSPHRASE` (el de `.env`) y `BACKUP_EMAIL` (quién recibe
+     las copias; secreto y no variable, porque el registro de Actions es público y mostraría el valor
+     de una variable) y, opcional, secreto `BACKUP_HEALTHCHECK_URL`. Pruébalo en
      **Actions → Copia de seguridad → Run workflow**.
    - Pruébalo en **Actions → Recordatorios y correos → Run workflow**.
 5. **Comprobación:** `https://<frontend>/api/health` responde `{"ok":true,"database":true}`, el
@@ -835,10 +874,13 @@ frontend decide a cuál llama con su variable `API_URL`.
      GitHub organization `jhordan-huera`, repository `agenda-backend`, branch `main`. Permiso
      (política en línea): `lambda:UpdateFunctionCode`, `lambda:GetFunction` y
      `lambda:GetFunctionConfiguration` sobre `arn:aws:lambda:us-west-2:<cuenta>:function:agenda-backend`.
-   - Variables del repositorio: `AWS_LAMBDA_FUNCTION` (`agenda-backend`) y `AWS_DEPLOY_ROLE_ARN`
-     (ARN del rol); **secreto** `AWS_LAMBDA_URL` (la Function URL: el repositorio es público y los
-     registros de Actions muestran las variables). Probar con Actions → *Publicar en AWS Lambda* →
-     Run workflow.
+   - Variable del repositorio: `AWS_LAMBDA_FUNCTION` (`agenda-backend`); **secretos**
+     `AWS_DEPLOY_ROLE_ARN` (ARN del rol: lleva el número de la cuenta de AWS; como variable también
+     vale) y `AWS_LAMBDA_URL` (la Function URL): el repositorio es público y los registros de Actions
+     muestran las variables. Sólo publica desde `main`, también a mano (spec 009); en la política de
+     confianza del rol, limita `token.actions.githubusercontent.com:sub` a
+     `repo:<usuario>/agenda-backend:ref:refs/heads/main`. Probar con Actions → *Publicar en AWS
+     Lambda* → Run workflow (desde `main`).
    - CloudWatch → Grupos de registros → `/aws/lambda/agenda-backend` → retención de 1 mes (los
      registros no se acumulan).
 4. **Cambio:** en el proyecto del frontend en Vercel, `API_URL` = la Function URL (sin `/` final) y

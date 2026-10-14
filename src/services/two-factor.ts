@@ -6,7 +6,9 @@ import { twoFactorConfirmSchema, twoFactorDisableSchema, twoFactorEnableSchema }
 import type { RecoveryCodes, TwoFactorSetup, TwoFactorStatus } from "../shared/types/index.ts";
 import { verifyPassword } from "./accounts.ts";
 import { parseInput, requireUser, type RequestContext } from "./context.ts";
-import { logSessionEvent, type ClientConnection } from "./session-security.ts";
+import { queueAccountSecurityEmail } from "./account-alerts.ts";
+import { isSealed, openSecret, sealSecret } from "./secret-box.ts";
+import { logSessionEvent, recordFailedSessionCheck, startSessionCheck, type ClientConnection } from "./session-security.ts";
 import { findTotpStep, generateRecoveryCodes, generateSecret, hashRecoveryCode, normalizeTotpCode, otpauthUrl } from "./totp.ts";
 
 /**
@@ -60,14 +62,17 @@ export type SecondFactorResult = { method: "app" } | { method: "recovery"; left:
 export async function verifySecondFactor(db: Db, userId: string, code: string): Promise<SecondFactorResult | null> {
   if (normalizeTotpCode(code)) {
     const row = await one<{ secret: string | null }>(db, 'select two_factor_secret as "secret" from users where id = $1', [userId]);
-    const step = row?.secret ? findTotpStep(row.secret, code) : null;
-    if (step === null) return null;
-    // Atómico: si dos peticiones usan el mismo código a la vez, sólo una lo consigue.
+    const stored = row?.secret ?? null;
+    const step = stored ? findTotpStep(openSecret(stored), code) : null;
+    if (step === null || !stored) return null;
+    // Atómico: si dos peticiones usan el mismo código a la vez, sólo una lo consigue. Un secreto de
+    // antes de la spec 009 (en claro) se guarda ya cifrado.
     const used = await one(
       db,
-      `update users set two_factor_last_step = $2
+      `update users set two_factor_last_step = $2,
+                        two_factor_secret = case when two_factor_secret = $3 then $4 else two_factor_secret end
         where id = $1 and coalesce(two_factor_last_step, -1) < $2 returning id`,
-      [userId, step],
+      [userId, step, stored, isSealed(stored) ? stored : sealSecret(stored)],
     );
     return used ? { method: "app" } : null;
   }
@@ -114,7 +119,7 @@ export const twoFactorService = {
     const updated = await one(
       pool,
       "update users set two_factor_pending_secret = $2 where id = $1 and two_factor_secret is null returning id",
-      [user.id, secret],
+      [user.id, sealSecret(secret)],
     );
     if (!updated) throw new AppError("conflict", "La verificación en dos pasos ya está activada.");
     return { secret, otpauthUrl: otpauthUrl(secret, user.email) };
@@ -136,7 +141,7 @@ export const twoFactorService = {
       );
       if (row?.enabled) throw new AppError("conflict", "La verificación en dos pasos ya está activada.");
       if (!row?.pending) throw new AppError("conflict", "Vuelve a empezar: pulsa «Activar» para generar un código QR nuevo.");
-      const step = findTotpStep(row.pending, code);
+      const step = findTotpStep(openSecret(row.pending), code);
       if (step === null) throw new AppError("validation", WRONG_CODE);
       const recoveryCodes = generateRecoveryCodes();
       await db.query(
@@ -148,6 +153,7 @@ export const twoFactorService = {
       );
       await db.query("delete from sessions where user_id = $1 and id <> $2", [user.id, ctx.sessionId]);
       await logSessionEvent(user, { action: "session.two_factor_enabled", summary: "Activó la verificación en dos pasos" }, connection, db);
+      await queueAccountSecurityEmail(db, user, "Activó la verificación en dos pasos", connection);
       return { recoveryCodes };
     });
   },
@@ -156,12 +162,19 @@ export const twoFactorService = {
   async disable(ctx: RequestContext, input: unknown, connection: ClientConnection): Promise<void> {
     const user = requireSuperAdminUser(ctx);
     const { password, code } = parseInput(twoFactorDisableSchema, input);
+    // La contraseña y el código cuentan para el bloqueo de la cuenta, como al iniciar sesión (spec 009).
+    const attempt = await startSessionCheck(user, connection);
     const row = await one<{ passwordHash: string }>(pool, 'select password_hash as "passwordHash" from users where id = $1', [user.id]);
     if (!row || !(await verifyPassword(password, row.passwordHash))) {
+      await recordFailedSessionCheck(user, connection, "Contraseña incorrecta al desactivar la verificación en dos pasos");
       throw new AppError("validation", "La contraseña no es correcta.");
     }
+    if (!(await verifySecondFactor(pool, user.id, code))) {
+      await recordFailedSessionCheck(user, connection, "Código incorrecto al desactivar la verificación en dos pasos");
+      throw new AppError("validation", WRONG_CODE);
+    }
+    await attempt.succeeded();
     await transaction(async (db) => {
-      if (!(await verifySecondFactor(db, user.id, code))) throw new AppError("validation", WRONG_CODE);
       await db.query(
         `update users
             set two_factor_secret = null, two_factor_pending_secret = null, two_factor_enabled_at = null,
@@ -170,6 +183,7 @@ export const twoFactorService = {
         [user.id],
       );
       await logSessionEvent(user, { action: "session.two_factor_disabled", summary: "Desactivó la verificación en dos pasos" }, connection, db);
+      await queueAccountSecurityEmail(db, user, "Desactivó la verificación en dos pasos", connection);
     });
   },
 
@@ -177,8 +191,13 @@ export const twoFactorService = {
   async regenerateRecoveryCodes(ctx: RequestContext, input: unknown, connection: ClientConnection): Promise<RecoveryCodes> {
     const user = requireSuperAdminUser(ctx);
     const { code } = parseInput(twoFactorConfirmSchema, input);
+    const attempt = await startSessionCheck(user, connection);
+    if (!(await verifySecondFactor(pool, user.id, code))) {
+      await recordFailedSessionCheck(user, connection, "Código incorrecto al generar códigos de recuperación");
+      throw new AppError("validation", WRONG_CODE);
+    }
+    await attempt.succeeded();
     return transaction(async (db) => {
-      if (!(await verifySecondFactor(db, user.id, code))) throw new AppError("validation", WRONG_CODE);
       const recoveryCodes = generateRecoveryCodes();
       await db.query("update users set two_factor_recovery_codes = $2 where id = $1", [
         user.id,
