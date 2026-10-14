@@ -536,6 +536,54 @@ export const emailTemplates = {
       ],
     }),
 
+  /** Una cita confirmada (o atendida, o no asistió) vuelve a quedar pendiente de confirmar (spec 008). */
+  appointmentPending: (data: AppointmentEmailData): EmailContent =>
+    clientEmail(data, {
+      subject: "Tu cita queda pendiente de confirmar",
+      preheader: `${capitalize(formatLongDate(data.date))} a las ${startAt(data)} en ${data.businessName}.`,
+      title: "Tu cita queda pendiente de confirmar",
+      greeting: `Hola ${data.clientName}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: `Tu cita en ${data.businessName} vuelve a estar pendiente de confirmar. Sigue agendada: te escribiremos para confirmarla.`,
+        },
+        appointmentDetails(data),
+      ],
+    }),
+
+  /** La cita quedó como atendida: gracias por la visita, con el enlace para volver a reservar (spec 008). */
+  appointmentCompleted: (data: AppointmentEmailData): EmailContent =>
+    clientEmail(data, {
+      subject: `Gracias por tu visita a ${data.businessName}`,
+      preheader: "Cuando quieras volver, puedes reservar en línea.",
+      title: "Gracias por tu visita",
+      greeting: `Hola ${data.clientName}:`,
+      blocks: [
+        { kind: "text", text: `Gracias por tu visita del ${formatLongDate(data.date)} a ${data.businessName}. Fue un gusto atenderte.` },
+        { kind: "text", text: "Cuando quieras volver, puedes reservar tu próxima cita aquí:" },
+        { kind: "button", label: "Reservar de nuevo", url: data.bookingUrl },
+      ],
+    }),
+
+  /** El paciente no asistió: invitación a elegir otra hora (spec 008). */
+  appointmentNoShow: (data: AppointmentEmailData): EmailContent =>
+    clientEmail(data, {
+      subject: "Te esperábamos en tu cita",
+      preheader: `Tu cita del ${formatLongDate(data.date)} en ${data.businessName}.`,
+      title: "Te esperábamos en tu cita",
+      greeting: `Hola ${data.clientName}:`,
+      blocks: [
+        {
+          kind: "callout",
+          tone: "warning",
+          text: `Te esperábamos el ${formatLongDate(data.date)} a las ${startAt(data)} en ${data.businessName} y no pudimos verte.`,
+        },
+        { kind: "text", text: "Si quieres, puedes elegir otra hora:" },
+        { kind: "button", label: "Elegir otra hora", url: data.bookingUrl },
+      ],
+    }),
+
   appointmentCancelled: (data: AppointmentEmailData): EmailContent =>
     clientEmail(data, {
       subject: "Tu cita ha sido cancelada",

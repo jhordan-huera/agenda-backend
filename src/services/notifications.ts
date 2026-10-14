@@ -1,6 +1,7 @@
 import { config } from "../config.ts";
 import { appointmentColumns, businessColumns } from "../db/columns.ts";
 import { many, one, type Db } from "../db/pool.ts";
+import { isFollowUpDate } from "../shared/lib/constants/business.ts";
 import { emailTemplates, type AppointmentEmailData, type EmailContent } from "../shared/lib/email/templates.ts";
 import { joinNames } from "../shared/lib/format.ts";
 import { addDaysISO, getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
@@ -243,7 +244,19 @@ interface ClientMessage {
   template: (data: AppointmentEmailData) => EmailContent;
 }
 
-function clientMessageFor(settings: Business["notificationSettings"], before: Appointment | null, after: Appointment): ClientMessage | null {
+/**
+ * Spec 008: todo cambio de estado se avisa. A los casos de siempre (cancelación, «vuelve a estar
+ * agendada», cambio de fecha u hora, confirmación) se suman, después y sin cambiar su prioridad:
+ * - Atendida y No asistió, con «Seguimiento» (encendido si el negocio no lo guardó) y sólo de citas
+ *   de los últimos 7 días (`today`: hoy en la zona del negocio);
+ * - volver a Pendiente desde Confirmada, Atendida o No asistió.
+ */
+function clientMessageFor(
+  settings: Business["notificationSettings"],
+  before: Appointment | null,
+  after: Appointment,
+  today: string,
+): ClientMessage | null {
   if (!before) {
     if (!settings.confirmations || !["pending", "confirmed"].includes(after.status)) return null;
     return after.status === "confirmed"
@@ -253,13 +266,23 @@ function clientMessageFor(settings: Business["notificationSettings"], before: Ap
   if (after.status === "cancelled" && before.status !== "cancelled") {
     return settings.cancellations ? { type: "appointment_cancelled", template: emailTemplates.appointmentCancelled } : null;
   }
-  if (after.status === "cancelled" || after.status === "completed" || after.status === "no_show") return null;
+  if (after.status === "cancelled") return null;
+  if (after.status === "completed" || after.status === "no_show") {
+    if (before.status === after.status || settings.followUps === false || !isFollowUpDate(after.date, today)) return null;
+    return after.status === "completed"
+      ? { type: "appointment_completed", template: emailTemplates.appointmentCompleted }
+      : { type: "appointment_no_show", template: emailTemplates.appointmentNoShow };
+  }
   if (!settings.confirmations) return null;
   // Estaba cancelada y vuelve a estar activa: el paciente la daba por perdida.
   if (before.status === "cancelled") return { type: "appointment_updated", template: emailTemplates.appointmentRestored };
   if (isRescheduled(before, after)) return { type: "appointment_updated", template: emailTemplates.appointmentUpdated };
   if (after.status === "confirmed" && before.status !== "confirmed") {
     return { type: "appointment_confirmed", template: emailTemplates.appointmentConfirmed };
+  }
+  // Vuelve a Pendiente desde Confirmada, Atendida o No asistió: ya no está confirmada (spec 008).
+  if (after.status === "pending" && before.status !== "pending") {
+    return { type: "appointment_pending", template: emailTemplates.appointmentPending };
   }
   return null;
 }
@@ -320,9 +343,10 @@ export async function notifyAppointmentChange(
     }
   };
 
+  const today = getZonedNow(business.timezone).date;
   for (const recipient of context.recipients) {
     const added = before !== null && !beforeIds.includes(recipient.clientId);
-    await write(recipient, clientMessageFor(settings, added ? null : before, after), data);
+    await write(recipient, clientMessageFor(settings, added ? null : before, after, today), data);
   }
   // Quitados de una cita que seguía activa: para ellos, la cita se canceló.
   const removedIds = beforeIds.filter((id) => !afterIds.includes(id));

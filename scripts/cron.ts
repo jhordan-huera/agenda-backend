@@ -33,6 +33,9 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   appointment_confirmed: ["Cita confirmada", "Citas confirmadas"],
   appointment_updated: ["Cita modificada", "Citas modificadas"],
   appointment_cancelled: ["Cita cancelada", "Citas canceladas"],
+  appointment_pending: ["Cita pendiente de confirmar", "Citas pendientes de confirmar"],
+  appointment_completed: ["Gracias por la visita", "Gracias por la visita"],
+  appointment_no_show: ["Aviso de No asistió", "Avisos de No asistió"],
   booking_received: ["Aviso de nueva reserva (al negocio)", "Avisos de nueva reserva (al negocio)"],
   professional_new_appointment: ["Aviso de cita nueva (al profesional)", "Avisos de cita nueva (al profesional)"],
   appointment_copy: ["Copia al profesional", "Copias al profesional"],
@@ -195,6 +198,18 @@ export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
       click: "/admin/businesses",
     });
   }
+  const statusNotices = report.statusNotices ?? [];
+  notices.push(...statusNotices);
+  const restStatus = (report.statusChanges ?? 0) - statusNotices.length;
+  if (restStatus > 0) {
+    notices.push({
+      title: "Agenda360: más cambios de estado",
+      message: `…y ${plural(restStatus, "cambio de estado más", "cambios de estado más")} en citas (detalle en la actividad de cada negocio).`,
+      priority: 3,
+      tags: ["arrows_counterclockwise"],
+      click: "/admin/activity",
+    });
+  }
   const clientNotices = report.clientNotices ?? [];
   notices.push(...clientNotices);
   const restClients = (report.panelClients ?? 0) - clientNotices.length;
@@ -267,6 +282,7 @@ async function main(): Promise<void> {
     console.info(
       `Recordatorios: ${report.reminders} · reservas por la página: ${report.onlineBookings ?? 0} · ` +
         `pacientes nuevos del panel: ${report.panelClients ?? 0} · citas del panel: ${report.panelAppointments ?? 0} · ` +
+        `cambios de estado: ${report.statusChanges ?? 0} · ` +
         `enviados desde la anterior: ${report.sentSinceLastRun} · ` +
         `negocios con error: ${report.reminderFailures} · ` +
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +

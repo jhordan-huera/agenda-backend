@@ -99,6 +99,8 @@ export const notificationSettingsSchema = z.object({
   // Con valor por defecto: los negocios guardados antes de los avisos por WhatsApp no los traen.
   whatsappOnStatusChange: z.boolean().default(true),
   whatsappFollowUps: z.boolean().default(true),
+  // Emails de Atendida y No asistió (spec 008): encendido también en los negocios guardados antes.
+  followUps: z.boolean().default(true),
 });
 
 /** Datos del negocio pedidos en el onboarding (pasos 1–3). */

@@ -270,7 +270,7 @@ businessRoutes.put(
 businessRoutes.patch(
   "/:businessId/appointments/:appointmentId/status",
   handle((req) =>
-    appointmentService.updateStatus(req.ctx, req.params.businessId, req.params.appointmentId, req.body?.status),
+    appointmentService.updateStatus(req.ctx, req.params.businessId, req.params.appointmentId, req.body?.status, req.body?.notify),
   ),
 );
 businessRoutes.patch(

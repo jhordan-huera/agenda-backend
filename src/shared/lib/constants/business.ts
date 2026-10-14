@@ -144,7 +144,21 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   reminderHoursBefore: 24,
   whatsappOnStatusChange: true,
   whatsappFollowUps: true,
+  followUps: true,
 };
+
+/** Emails de seguimiento (Atendida, No asistió): sólo de citas de hoy o de los últimos 7 días (spec 008). */
+export const FOLLOW_UP_DAYS = 7;
+
+/**
+ * La cita es de hoy o de los últimos FOLLOW_UP_DAYS días ("YYYY-MM-DD"): al poner al día citas viejas
+ * no se escribe a sus pacientes, y una futura marcada por error tampoco.
+ */
+export function isFollowUpDate(date: string, today: string): boolean {
+  const [year, month, day] = today.split("-").map(Number);
+  const from = new Date(Date.UTC(year, month - 1, day - FOLLOW_UP_DAYS)).toISOString().slice(0, 10);
+  return date >= from && date <= today;
+}
 
 /**
  * Datos obligatorios del paciente en el panel, si el super admin no eligió otros para el negocio (como

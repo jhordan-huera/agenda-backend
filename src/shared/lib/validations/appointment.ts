@@ -11,7 +11,7 @@ export const appointmentStatusSchema = z.enum([
 ]);
 
 /** El profesional abrió WhatsApp con el aviso de un cambio de la cita (queda en la actividad). */
-export const whatsAppNoticeSchema = z.enum(["confirmed", "cancelled", "rescheduled", "completed", "no_show", "pending"]);
+export const whatsAppNoticeSchema = z.enum(["confirmed", "cancelled", "rescheduled", "completed", "no_show", "pending", "unconfirmed"]);
 
 export const appointmentSchema = z
   .object({

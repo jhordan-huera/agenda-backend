@@ -5,9 +5,11 @@ import {
   findOnlineBookings,
   findPanelAppointments,
   findPanelClients,
+  findStatusChanges,
   newClientNotice,
   onlineBookingNotice,
   panelAppointmentNotice,
+  statusChangeNotice,
   type BookingNotice,
 } from "../services/booking-alerts.ts";
 import { deleteStalePendingAttachments } from "../services/clinical-attachment-service.ts";
@@ -97,6 +99,10 @@ export interface ScheduledTasksReport {
   panelAppointments?: number;
   /** El aviso de cada una (hasta MAX_APPOINTMENT_NOTICES), con quién la agendó y los pacientes a medias. */
   appointmentNotices?: BookingNotice[];
+  /** Cambios de estado de citas desde la ejecución anterior (spec 008). */
+  statusChanges?: number;
+  /** El aviso de cada uno (hasta MAX_STATUS_NOTICES): de qué estado a cuál, quién y sus emails. */
+  statusNotices?: BookingNotice[];
   /** Fecha de la ejecución anterior (null si es la primera). */
   since: string | null;
   /** Emails que siguen en cola al terminar (reintentos o lote máximo alcanzado). */
@@ -241,6 +247,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const online = await findOnlineBookings(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const panel = await findPanelClients(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const panelAppointments = await findPanelAppointments(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
+  const statusChanges = await findStatusChanges(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
     reminderFailures: reminders.failures,
@@ -257,6 +264,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     clientNotices: panel.clients.map(newClientNotice),
     panelAppointments: panelAppointments.total,
     appointmentNotices: panelAppointments.appointments.map(panelAppointmentNotice),
+    statusChanges: statusChanges.total,
+    statusNotices: statusChanges.changes.map(statusChangeNotice),
     since: previous?.ranAt ?? null,
     pending: totals?.pending ?? 0,
     security,

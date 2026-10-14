@@ -59,6 +59,11 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - El panel del super admin va en tarjetas, con botón para pasar a lista en Negocios y Usuarios, y
   la ficha de cada negocio en pestañas. Cada super admin elige los colores de su panel en su cuenta:
   no se aplican a los negocios ni a otros super admins (2026-10-14).
+- Todo cambio de estado de una cita se le avisa al paciente por email (con copia al profesional) y
+  el panel ofrece el WhatsApp ya escrito. La ficha de la cita tiene la casilla «Avisar al paciente»
+  (marcada) para no avisar al corregir un error. «Atendida» y «No asistió» van con el interruptor
+  «Seguimiento» (encendido) y sólo para citas de los últimos 7 días. El dueño del producto recibe por
+  ntfy cada cambio de estado (2026-10-14).
 - En la portada no hay testimonios, cifras ni precios inventados.
 
 ### IV. Se comprueba en local, nunca en producción
@@ -155,4 +160,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.4.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-14
+**Versión**: 1.5.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-14
