@@ -95,8 +95,8 @@ mismos datos. Salen **iguales píxel por píxel**.
 
 - **Si el front se publica antes que el backend,** el panel usa los colores de Agenda360 y guardar
   colores falla con un aviso hasta publicar el backend.
-- **La migración 035 va antes del backend.** Sin ella, la sesión del super admin falla al leer la
-  columna nueva.
+- **La migración 035 ya está en producción** (comprobado), así que el backend se puede publicar en
+  cualquier momento.
 
 ## Commits
 
@@ -107,12 +107,9 @@ mismos datos. Salen **iguales píxel por píxel**.
 
 ## Cómo publicarlo
 
-1. **Migraciones primero.** Las aplica el dueño del producto. Si la 034 (spec 006) todavía no está,
-   el mismo comando aplica las dos en orden:
-   ```
-   npm run db:migrate
-   ```
-2. **PR `dev` → `main` del backend.** Lleva también la spec 006 y el aviso de citas por ntfy.
+1. **Migración 035:** ya está aplicada en producción (2026-10-14 10:32, comprobado con una consulta
+   sólo de lectura).
+2. **PR `dev` → `main` del backend.**
 3. **PR `dev` → `main` del front.**
 4. **Después:** entrar al panel, elegir colores en Configuración y comprobar «Gestionar negocio».
 
@@ -120,5 +117,5 @@ mismos datos. Salen **iguales píxel por píxel**.
 
 Panel del super admin en tarjetas y con colores propios (spec 007): encabezado y cifras en cada
 pantalla, Negocios y Usuarios en tarjetas con opción de lista, ficha del negocio con pestañas y
-colores del panel por cuenta. **Migración 035** (`users.panel_colors`), que va antes. Reporte:
+colores del panel por cuenta. **Migración 035** (`users.panel_colors`), ya aplicada en producción. Reporte:
 `specs/007-panel-super-admin-tarjetas/reporte.md`.
