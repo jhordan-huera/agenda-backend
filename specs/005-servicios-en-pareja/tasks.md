@@ -187,13 +187,13 @@ dejarlo vacío y guardar con el aviso.
 - [x] T029 Crear `back/tests/couple-booking.test.ts` con los casos de quickstart.md §1: servicio, reserva en pareja, datos, límites, reintento, emails, pago en el panel, privacidad, ntfy y tope de emails.
 - [x] T030 Pasar `npm run typecheck` y `npm test` en back/, y `npm run build` y `npm run lint` en front/
 - [x] T031 Recorrido con Playwright en local (quickstart.md §2), en escritorio y a 390 px, con capturas
-- [ ] T032 Beta (D15), sobre el respaldo de T002:
+- [x] T032 Beta (D15), sobre el respaldo de T002:
   - los mismos cambios en tipos, validaciones, plantillas y pantallas;
   - en `src/lib/data/mock/`: `store.ts`, `public-booking-repository.ts`, `business-data-repository.ts`, `helpers.ts` y `notifications.ts`;
   - `services-page.tsx`;
   - `npm run build`, `npm run lint` y un recorrido.
 - [x] T033 [P] `back/README.md`: servicios en pareja, la migración 033 y la marca de acceso de cada otra persona
-- [ ] T034 Commits en back/ y front/ (sin firma de IA). Después, `/speckit-reporte`.
+- [x] T034 Commits en back/ y front/ (sin firma de IA). Después, `/speckit-reporte`.
 
 ---
 
