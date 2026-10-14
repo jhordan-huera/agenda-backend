@@ -1,6 +1,7 @@
 import { many, type Db } from "../db/pool.ts";
 import { formatPrice, formatShortDate } from "../shared/lib/format.ts";
-import type { Appointment, EmailType } from "../shared/types/index.ts";
+import { ROLE_LABELS } from "../shared/lib/permissions.ts";
+import type { Appointment, BusinessRole, EmailType } from "../shared/types/index.ts";
 import { scrubEmails } from "./mailer.ts";
 import { maskEmail, maskPhone, shortName } from "./masking.ts";
 
@@ -173,4 +174,92 @@ export async function findOnlineBookings(
     }),
   );
   return { bookings, total: rows[0].total };
+}
+
+/* --------------------------------------------- Pacientes nuevos del panel -- */
+
+/**
+ * Aviso por ntfy de cada paciente que se registra desde el panel (lo pidió el usuario, 2026-10-13):
+ * quién lo registró y el paciente, a medias. Los que crea la página de reservas ya salen en el aviso
+ * de su reserva («Paciente nuevo»). Lo envía el cron, como los de las reservas.
+ */
+export const MAX_CLIENT_NOTICES = 10;
+
+export interface PanelClient {
+  businessId: string;
+  businessName: string;
+  name: string;
+  email: string;
+  phone: string;
+  /** Quién lo registró (null: no se sabe, p. ej. su usuario ya no existe). */
+  createdBy: { name: string; role: BusinessRole | null; superAdmin: boolean } | null;
+}
+
+export function newClientNotice(client: PanelClient): BookingNotice {
+  const patient = [shortName(client.name), client.email && maskEmail(client.email), maskPhone(client.phone)].filter(Boolean).join(" · ");
+  const by = client.createdBy;
+  const who = !by
+    ? ""
+    : by.superAdmin && !by.role
+      ? " por el super admin (modo soporte)"
+      : ` por ${shortName(by.name)}${by.role ? ` (${ROLE_LABELS[by.role]})` : ""}`;
+  return {
+    title: "Agenda360: nuevo paciente",
+    message: [client.businessName, `Paciente nuevo: ${patient}`, `Registrado desde el panel${who}`].join("\n"),
+    priority: 3,
+    tags: ["bust_in_silhouette"],
+    click: `/admin/businesses/${client.businessId}`,
+  };
+}
+
+/**
+ * Los pacientes registrados desde el panel en (since, until], los más antiguos primero (hasta
+ * `limit`), y cuántos son en total. Sin `since` (la primera pasada), los del último día.
+ */
+export async function findPanelClients(
+  db: Db,
+  since: string | null,
+  until: string,
+  limit = MAX_CLIENT_NOTICES,
+): Promise<{ clients: PanelClient[]; total: number }> {
+  const rows = await many<{
+    total: number;
+    businessId: string;
+    businessName: string;
+    name: string;
+    email: string;
+    phone: string;
+    creatorName: string | null;
+    creatorRole: BusinessRole | null;
+    superAdmin: boolean | null;
+  }>(
+    db,
+    `select count(*) over ()::int as total, b.id as "businessId", b.name as "businessName", c.name, c.email, c.phone,
+            nullif(trim(u.first_name || ' ' || u.last_name), '') as "creatorName", bu.role as "creatorRole",
+            u.platform_role = 'super_admin' as "superAdmin"
+       from clients c
+       join businesses b on b.id = c.business_id
+       left join users u on u.id = c.created_by
+       left join business_users bu on bu.business_id = c.business_id and bu.user_id = c.created_by
+      where c.source = 'dashboard'
+        and c.created_at > coalesce($1::timestamptz, now() - interval '1 day') and c.created_at <= $2
+      order by c.created_at
+      limit $3`,
+    [since, until, limit],
+  );
+  if (rows.length === 0) return { clients: [], total: 0 };
+  return {
+    clients: rows.map((row) => ({
+      businessId: row.businessId,
+      businessName: row.businessName,
+      name: row.name,
+      email: row.email,
+      phone: row.phone,
+      createdBy:
+        row.creatorName === null && !row.superAdmin
+          ? null
+          : { name: row.creatorName ?? "", role: row.creatorRole, superAdmin: Boolean(row.superAdmin) },
+    })),
+    total: rows[0].total,
+  };
 }

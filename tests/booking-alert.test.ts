@@ -8,7 +8,7 @@ import { buildBookingNotices } from "../scripts/cron.ts";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
 import type { PublicBusinessProfile } from "../src/shared/types/index.ts";
-import { onlineBookingNotice, type OnlineBooking } from "../src/services/booking-alerts.ts";
+import { newClientNotice, onlineBookingNotice, type OnlineBooking } from "../src/services/booking-alerts.ts";
 import { maskEmail, maskPhone, shortName } from "../src/services/masking.ts";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
@@ -94,6 +94,30 @@ ok(
 const more = buildBookingNotices({ onlineBookings: 13, bookingNotices: Array.from({ length: 10 }, () => onlineBookingNotice(booking)) } as never);
 ok(more.length === 11 && /…y 3 reservas más/.test(more[10].message), "con muchas, detalla 10 y dice cuántas faltan", more.at(-1));
 
+console.log("Pacientes nuevos registrados desde el panel");
+const panelClient = {
+  businessId: "b1",
+  businessName: "Mente Abierta",
+  name: "Lucía Andrade Paz",
+  email: "lucia.andrade@gmail.com",
+  phone: "0991234567",
+  createdBy: { name: "Ana Torres", role: "professional" as const, superAdmin: false },
+};
+let clientNotice = newClientNotice(panelClient);
+ok(
+  clientNotice.title === "Agenda360: nuevo paciente" &&
+    clientNotice.click === "/admin/businesses/b1" &&
+    clientNotice.message === ["Mente Abierta", "Paciente nuevo: Lucía A. · lu***@gmail.com · 099***4567", "Registrado desde el panel por Ana T. (Profesional)"].join("\n"),
+  "el negocio, el paciente a medias y quién lo registró (título sin el negocio)",
+  clientNotice,
+);
+clientNotice = newClientNotice({ ...panelClient, email: "", createdBy: { name: "Soporte", role: null, superAdmin: true } });
+ok(/Paciente nuevo: Lucía A\. · 099\*\*\*4567\nRegistrado desde el panel por el super admin \(modo soporte\)$/.test(clientNotice.message), "sin email, y registrado por el super admin", clientNotice.message);
+clientNotice = newClientNotice({ ...panelClient, createdBy: null });
+ok(clientNotice.message.endsWith("\nRegistrado desde el panel"), "sin saber quién", clientNotice.message);
+const manyClients = buildBookingNotices({ panelClients: 12, clientNotices: Array.from({ length: 10 }, () => newClientNotice(panelClient)) } as never);
+ok(manyClients.length === 11 && /…y 2 pacientes nuevos más/.test(manyClients[10].message), "con muchos, detalla 10 y dice cuántos faltan", manyClients.at(-1));
+
 console.log("En la pasada del cron");
 const received: { topic: string; title: string; message: string; priority: number; click?: string }[] = [];
 const ntfy = createServer((req, res) => {
@@ -127,12 +151,14 @@ const runCron = () =>
     child.stderr!.on("data", (chunk) => (output += chunk));
     child.on("exit", (code) => resolve({ code, output }));
   });
+let cookie = "";
 const call = async (method: string, path: string, body?: unknown) => {
   const res = await fetch(BASE + path, {
     method,
-    headers: { "Content-Type": "application/json", "X-Requested-With": "fetch" },
+    headers: { "Content-Type": "application/json", "X-Requested-With": "fetch", ...(cookie ? { Cookie: cookie } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  for (const c of res.headers.getSetCookie()) cookie = c.split(";")[0];
   const text = await res.text();
   return { status: res.status, body: text ? JSON.parse(text) : undefined };
 };
@@ -187,6 +213,32 @@ try {
   await runCron();
   ok(mine().length === 2, "cada reserva se avisa una sola vez", mine().length);
 
+  // Un paciente registrado desde el panel por el propietario.
+  await call("POST", "/auth/login", { email: "jhordan@demo.com", password: "demo1234", remember: true });
+  const panelEmail = `panel.ntfy.${Date.now()}@example.com`;
+  r = await call("POST", `/businesses/${profile.business.id}/clients`, {
+    name: "Paciente Panel Ntfy",
+    documentId: cedulaFor(panelEmail),
+    email: panelEmail,
+    phone: "+593 99 333 2211",
+    address: "",
+    notes: "",
+    isActive: true,
+  });
+  ok(r.status === 200, "el propietario registra un paciente desde el panel", r.body);
+  run = await runCron();
+  const panelNotices = () => received.filter((n) => n.title === "Agenda360: nuevo paciente" && n.message.includes("Paciente P."));
+  const panelNotice = panelNotices()[0];
+  ok(run.code === 0 && panelNotices().length === 1, "el cron avisa del paciente nuevo del panel", received.map((n) => n.title));
+  ok(
+    panelNotice?.message === [profile.business.name, "Paciente nuevo: Paciente P. · pa***@example.com · +593***2211", "Registrado desde el panel por Jhordan H. (Propietario)"].join("\n"),
+    "con quién lo registró y sus datos a medias",
+    panelNotice?.message,
+  );
+  ok(!(panelNotice?.message ?? "").includes(panelEmail) && /pacientes nuevos del panel: 1/.test(run.output), "nunca el email completo; el registro público, sólo la cifra", run.output.slice(-400));
+  ok(!received.some((n) => n.title === "Agenda360: nuevo paciente" && n.message.includes("Paciente A.")), "los de la página no se repiten: ya salen en su reserva");
+  await runCron();
+  ok(panelNotices().length === 1, "cada paciente se avisa una sola vez", panelNotices().length);
 } finally {
   ntfy.close();
 }
