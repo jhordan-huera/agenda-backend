@@ -75,6 +75,17 @@ description: "Tareas del inicio del super admin con datos importantes"
 - [x] T017 [P] `back/README.md`: el inicio del super admin y la tabla `backup_runs`
 - [x] T018 Commits sin firma de IA. Después, `/speckit-reporte`.
 
+## Fase 6: Historia 5 - Gráficos (ampliación del 2026-10-14)
+
+- [x] T019 [US5] Backend: `growth.daily` y `health.emailsByDay` en `back/src/services/admin-service.ts`, y sus pruebas en `admin-overview.test.ts`:
+  - la suma diaria de este mes es igual a la cifra del mes;
+  - son 14 días y hoy es el último.
+- [x] T020 [P] [US5] Tipos compartidos (`DailyCounts`, `daily`, `emailsByDay`) en el front y `npm run sync:shared`
+- [x] T021 [P] [US5] `front/src/features/admin/growth-chart.tsx`: líneas acumuladas (este mes y el mes pasado) con selector de cifra y «Ver como tabla»
+- [x] T022 [P] [US5] `front/src/features/admin/emails-chart.tsx`: barras de enviados y fallidos de 14 días, con «Ver como tabla»
+- [x] T023 [P] [US5] `front/src/features/admin/business-growth-chart.tsx`: barras horizontales de hasta 8 negocios, con el nombre encima y las cifras escritas al lado (en vez de «Ver como tabla»: se leen enteras en el celular)
+- [x] T024 [US5] Integrarlos en los tres bloques. Beta: `daily` desde sus datos (sin emails). Build, lint, recorrido a 390 px, commits y reporte.
+
 ## Dependencias
 
 - T001 y T002 bloquean todo.

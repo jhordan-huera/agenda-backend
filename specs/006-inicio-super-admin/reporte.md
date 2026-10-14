@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev · **Fecha**: 2026-10-14
+**Estado**: Implementada en dev · **Fecha**: 2026-10-14 (ampliada el mismo día con gráficos)
 
 **Repos**: los dos (agenda-backend y agenda-front) y la beta · **Migración**: Sí: `034_backup_runs.sql`
 
@@ -16,6 +16,13 @@ Al entrar, el super admin ve tres bloques:
 - **Negocios para vender:** los que están cerca del límite de su plan, los que más crecen y los que
   dejaron de usar el sistema.
 
+Cada bloque tiene además su gráfico (historia 5):
+- **Crecimiento:** líneas acumuladas día a día, este mes frente al mes pasado completo, para citas,
+  reservas online o pacientes nuevos.
+- **Salud:** barras con los emails enviados y fallidos de los últimos 14 días.
+- **Negocios:** barras con las citas de los negocios activos con más citas, este mes frente a los
+  mismos días del mes pasado.
+
 Las copias de seguridad ahora quedan anotadas para poder mostrarlas.
 
 ## Qué se entrega
@@ -26,6 +33,7 @@ Las copias de seguridad ahora quedan anotadas para poder mostrarlas.
 | H2 – Saber si el sistema está sano | P1 | Hecha | Incluye la migración 034 y la anotación de cada copia |
 | H3 – Encontrar negocios a los que venderles | P1 | Hecha | 3 listas con enlace a la ficha de cada negocio |
 | H4 – Lo de siempre, arriba y en su lugar | P2 | Hecha | Saludo, planes, «Nuevo negocio» y solicitudes pendientes |
+| H5 – Gráficos, no sólo tarjetas | P1 | Hecha | Un gráfico por bloque. La beta no tiene el de emails (no hay emails reales) |
 
 ## Comprobación
 
@@ -45,17 +53,21 @@ Todo en local: base de prueba, API local y datos de demostración.
 | RF-010 – Arriba y solicitudes | Cumple | Recorrido: una solicitud pendiente aparece, se aprueba ahí y deja de ocupar lugar |
 | RF-011 – Fuera tabla, gráfico y reparto | Cumple | Recorrido: no aparecen. Archivos borrados |
 | RF-012 – Sólo el super admin, sin datos de pacientes | Cumple | Prueba: un propietario recibe 403 y la respuesta no trae ningún «@» |
-| RF-013 – Beta | Cumple | Build y lint. `/admin` en el 3199: crecimiento y negocios para vender con sus datos, y la salud «No disponible en la beta» |
+| RF-013 – Beta | Cumple | Build y lint. `/admin` en el 3199: crecimiento (con su gráfico) y negocios para vender (con el suyo) con sus datos, y la salud «No disponible en la beta» |
+| RF-014 – Gráfico de crecimiento | Cumple | Prueba: la suma día a día de este mes da las cifras del mes y después de hoy no hay datos. Recorrido (`graficos-006.mjs`): «124 en octubre», como el cuadro; al elegir «Reservas online», 26, también como el cuadro; recuadro al pasar el cursor y tabla de 30 días |
+| RF-015 – Gráfico de emails | Cumple | Prueba: 14 días, hoy el último e igual a «Emails de hoy». Recorrido: barras de enviados y fallidos y recuadro del día |
+| RF-016 – Gráfico por negocio | Cumple | Recorrido: los 5 negocios activos con citas, sin el suspendido; el nombre lleva a su ficha |
+| RF-017 – Se lee sin verlo | Cumple | Los dos primeros tienen descripción y «Ver como tabla». El de negocios escribe el nombre y las cifras junto a cada barra |
 | CE-001 – Saber en 10 s | Sin comprobar | No se midió con personas. Los tres bloques quedan a la vista al entrar |
-| CE-002 – Cifras exactas | Cumple | `admin-overview.test.ts`, 13 comprobaciones |
+| CE-002 – Cifras exactas | Cumple | `admin-overview.test.ts`, 16 comprobaciones |
 | CE-003 – Colores y resumen | Cumple | Recorrido con los dos escenarios (ámbar y rojo) |
 | CE-004 – Sin datos de pacientes | Cumple | Prueba de privacidad |
-| CE-005 – Pruebas y 390 px | Cumple | Backend: 42 de 42 suites. Front: build y lint. Sin desplazamiento horizontal a 390 px |
+| CE-005 – Pruebas y 390 px | Cumple | Backend: 42 de 42 suites. Front: build y lint. Sin desplazamiento horizontal a 390 px, también con los gráficos |
 
 **Pruebas automáticas:**
-- backend: `npm run typecheck` y `npm test`, 42 de 42, con `admin-overview` (13) y `backup` (28);
-- front: `npm run build` y `npm run lint` sin errores;
-- recorrido con Playwright (`inicio-006.mjs`): 13 de 13;
+- backend: `npm run typecheck` y `npm test`, 42 de 42, con `admin-overview` (16) y `backup` (28);
+- front y beta: `npm run build` y `npm run lint` sin errores;
+- recorrido con Playwright: `inicio-006.mjs` 13 de 13 y, para los gráficos, `graficos-006.mjs` 11 de 11;
 - la migración 034 se aplicó sin errores en el PostgreSQL 16 local.
 
 ## Cambios respecto al plan
@@ -64,6 +76,11 @@ Todo en local: base de prueba, API local y datos de demostración.
 - **Cron:** el título del cuadro quedó solo como «Cron».
 - **Solicitudes de plan:** sin pendientes, el inicio ya no muestra el historial de las resueltas
   (RF-010).
+- **Gráfico por negocio:** se pensó con «Ver como tabla», como los otros. En el celular los nombres
+  se cortaban junto al eje, así que quedó como barras con el nombre encima y las cifras escritas al
+  lado. Así se lee entero y no necesita tabla aparte (RF-017 se ajustó).
+- **Lo creado con fecha futura** (sólo pasa con datos de prueba) ya no cuenta en el mes en curso, ni
+  en las cifras ni en el día a día, para que las dos sumen lo mismo.
 
 ## Pendientes y riesgos
 
@@ -77,6 +94,8 @@ Todo en local: base de prueba, API local y datos de demostración.
 |---|---|---|
 | agenda-backend | d51019d | Spec 006: inicio del super admin con datos importantes (backend) |
 | agenda-front | ca05a67 | Spec 006: inicio del super admin con datos importantes |
+| agenda-backend | 01fd6bc | Spec 006: datos día a día para los gráficos del inicio del super admin |
+| agenda-front | e081925 | Spec 006: gráficos en el inicio del super admin |
 
 ## Cómo publicarlo
 
@@ -92,5 +111,6 @@ Todo en local: base de prueba, API local y datos de demostración.
 ## Texto para el PR
 
 Inicio del super admin con datos importantes (spec 006): crecimiento del mes, salud del sistema
-(emails, cron, copia de seguridad, seguridad) y negocios para vender. **Migración 034**
+(emails, cron, copia de seguridad, seguridad) y negocios para vender, cada bloque con su gráfico.
+**Migración 034**
 (`backup_runs`), que va antes. Reporte: `specs/006-inicio-super-admin/reporte.md`.
