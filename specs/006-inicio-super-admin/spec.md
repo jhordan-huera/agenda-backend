@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-13
 
-**Estado**: Aprobada (2026-10-13, en la conversación)
+**Estado**: Implementada (2026-10-14)
 
 **Repos**: agenda-backend (principal: cifras, salud del sistema y la migración 034), agenda-front
 (pantalla `/admin`) y la beta.
