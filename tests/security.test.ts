@@ -195,7 +195,7 @@ ok(
   Object.keys(profile.business),
 );
 ok(!("userId" in profile.professional), "el profesional no expone su cuenta");
-ok(profile.services.every((s: any) => !("clinicalTemplateId" in s)), "los servicios no exponen la plantilla clínica");
+ok(profile.services.every((s: any) => !("isActive" in s) && !("createdAt" in s)), "los servicios no exponen datos internos");
 ok(profile.blockedTimes.every((b: any) => !("reason" in b)), "los bloqueos no exponen el motivo");
 const owner = agent();
 r = await login(owner, "jhordan@demo.com", "demo1234", nextIp());

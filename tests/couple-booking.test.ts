@@ -98,7 +98,6 @@ const serviceBody = (fields: Record<string, unknown>) => ({
   showPrice: true,
   modes: ["business"],
   homeVisitFee: 0,
-  clinicalTemplateId: null,
   isActive: true,
   ...fields,
 });

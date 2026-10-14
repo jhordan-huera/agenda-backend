@@ -294,8 +294,8 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   los ve quien tiene acceso clínico (un administrador sin él, no).
 - **Formatos propios, por servicio y archivos** (migración 010): en los planes Pro y Business el
   propietario crea y edita sus formatos (`/clinical-templates`, cada cambio es una versión nueva; un
-  campo existente no cambia de tipo) o duplica uno de la plataforma. (`services.clinical_template_id` sigue en la API, pero el panel
-  ya no lo ofrece: se usa el formato del negocio.) Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
+  campo existente no cambia de tipo) o duplica uno de la plataforma. (Los servicios no tienen formato propio: siempre se
+  propone el del negocio. La columna `services.clinical_template_id` quedó sin uso.) Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
   Storage (en local, carpeta `storage/historias-clinicas/` y rutas `/api/files`); no se borran. Las
   subidas que nunca se completaron (más de un día en `pending`) las borra el cron: primero el archivo
   y después el registro (igual con los comprobantes).
@@ -422,8 +422,7 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   /businesses/:id` (`brandColors`, permiso `business.manage`), quedan en la actividad y llegan al
   perfil público para que la página de reservas use los colores del negocio.
 - **Formato de tu negocio** (migración 017): `businesses.clinical_default_template_id` guarda el
-  formato que se propone en cada evolución nueva (salvo en las citas de un servicio con formato
-  propio). Lo elige el propietario con `PUT /businesses/:id/clinical-default-template` (cualquier
+  formato que se propone en cada evolución nueva, en todas las citas. Lo elige el propietario con `PUT /businesses/:id/clinical-default-template` (cualquier
   plan, de la plataforma o propio y activo); si no eligió ninguno, o desactiva el elegido, se usa el
   recomendado para su especialidad. La lista de formatos marca cuál es con `isDefault`.
 - **Odontograma, mapa del cuerpo y escalas** (migración 011): tipos de campo `odontogram` (FDI, por

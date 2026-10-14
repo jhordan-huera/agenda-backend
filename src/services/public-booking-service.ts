@@ -396,7 +396,7 @@ function toPublicProfessional(professional: Professional): PublicProfessional {
  */
 function toPublicService(
   business: Business,
-  { clinicalTemplateId: _template, isActive: _active, createdAt: _created, ...service }: Service,
+  { isActive: _active, createdAt: _created, ...service }: Service,
 ): PublicService {
   const shown = { ...service, peoplePerSession: peopleFor(business, service) };
   return isPriceVisible(shown) ? shown : { ...shown, price: 0, homeVisitFee: 0 };

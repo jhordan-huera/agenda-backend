@@ -100,9 +100,10 @@ ni contra Supabase.
   página.
 - **Una página abierta antes de publicar** (servicio en pareja sin el bloque de la otra persona):
   la reserva responde que recargue la página.
-- **Formulario de servicios, error que ya existía:** el formulario no envía el formato de historia
-  clínica del servicio (`clinicalTemplateId`), así que editar un servicio en el panel se lo quita.
-  No es de esta spec; queda para un arreglo aparte si se quiere.
+- **Formulario de servicios, error que ya existía:** al editar un servicio en el panel se borraba
+  su formato de historia clínica. Por decisión del dueño del producto se quitó el formato por servicio
+  (en ningún servicio de producción había uno guardado). Las evoluciones usan siempre el formato del
+  negocio. Va en un commit aparte.
 
 ## Fuera de la spec, en los mismos días
 

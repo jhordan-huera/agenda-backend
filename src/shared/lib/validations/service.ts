@@ -27,8 +27,6 @@ export const serviceSchema = z
     modes: z.array(z.enum(SERVICE_MODE_VALUES)).min(1, "Elige al menos una modalidad").max(3).optional(),
     location: z.enum(["business", "home", "both"]).optional(),
     homeVisitFee: moneyField.default(0),
-    /** Formato de historia clínica de las evoluciones de este servicio (null: el habitual). */
-    clinicalTemplateId: z.string().min(1).max(80).nullable().default(null),
     /**
      * Personas por sesión (1, 2 o 3; sólo con las citas con varios pacientes habilitadas). Sin valor
      * por defecto: si no llega (un panel anterior, o un negocio sin habilitar), se conserva el guardado.

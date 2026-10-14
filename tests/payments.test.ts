@@ -136,7 +136,7 @@ const paid = services.find((s: { price: number; showPrice: boolean; isActive: bo
 const free = (
   await owner("POST", `${B}/services`, {
     name: "Valoración gratuita", description: "", durationMinutes: 30, price: 0, showPrice: true, homeVisitFee: 0,
-    clinicalTemplateId: null, isActive: true, modes: ["business"],
+    isActive: true, modes: ["business"],
   })
 ).body;
 const profile: PublicBusinessProfile = (await visitor("GET", `/public/businesses/${business.slug}?t=${Date.now()}`)).body;
