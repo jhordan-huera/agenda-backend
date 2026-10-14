@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev · **Fecha**: 2026-10-13
+**Estado**: Publicada (2026-10-13, PR #19 del backend y #18 del front) · **Fecha**: 2026-10-13
 
 **Repos**: los dos (agenda-backend y agenda-front) y la beta · **Migración**: Sí: `033_people_per_session.sql`
 

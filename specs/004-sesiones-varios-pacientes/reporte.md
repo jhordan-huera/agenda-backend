@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev · **Fecha**: 2026-10-13
+**Estado**: Publicada (2026-10-13, PR #17 del backend y #16 del front) · **Fecha**: 2026-10-13
 
 **Repos**: los dos (agenda-backend y agenda-front) y la beta · **Migración**: Sí: `032_appointment_clients.sql`
 

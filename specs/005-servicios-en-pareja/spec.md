@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-13
 
-**Estado**: Implementada (2026-10-13)
+**Estado**: Publicada (2026-10-13)
 
 **Repos**: agenda-backend (principal: datos, reserva pública y avisos), agenda-front (servicios, página
 de reservas y formulario de cita) y la beta.
