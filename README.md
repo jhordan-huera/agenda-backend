@@ -175,13 +175,13 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
 
 | Grupo | Rutas |
 | --- | --- |
-| Sesión | `GET /auth/session` · `POST /auth/login` · `register` · `logout` · `change-password` (sólo super admin) |
+| Sesión | `GET /auth/session` (con `panelColors` para el super admin) · `POST /auth/login` · `register` · `logout` · `change-password` (sólo super admin) |
 | Perfil | `GET/PUT /users/:userId` |
 | Negocio | `POST /businesses` (onboarding) · `GET /businesses/slug-availability` · `GET/PATCH /businesses/:id` · `GET …/professional` |
-| Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status`) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
+| Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status` con `notify`: `false` cambia el estado sin avisar al paciente) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
 | Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) |
-| Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, último cron, última copia e intentos fallidos; spec 006) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` |
+| Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, último cron, última copia e intentos fallidos; spec 006) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
 | Estado | `GET /health` |
 
 ## Contraseñas, modo soporte e historia clínica
@@ -421,6 +421,10 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   `#rrggbb`, con un check en la base; null = los de Agenda360). Se cambian con `PATCH
   /businesses/:id` (`brandColors`, permiso `business.manage`), quedan en la actividad y llegan al
   perfil público para que la página de reservas use los colores del negocio.
+- **Colores del panel del super admin** (migración 035, spec 007): `users.panel_colors` (mismo
+  formato y check que `brand_colors`). Cada super admin los guarda en su cuenta con `PUT
+  /admin/panel-colors` (`{ colors }`; sólo la suya, sin auditoría) y llegan en la sesión como
+  `panelColors`. No se aplican a los negocios ni a otros super admins.
 - **Formato de tu negocio** (migración 017): `businesses.clinical_default_template_id` guarda el
   formato que se propone en cada evolución nueva, en todas las citas. Lo elige el propietario con `PUT /businesses/:id/clinical-default-template` (cualquier
   plan, de la plataforma o propio y activo); si no eligió ninguno, o desactiva el elegido, se usa el
@@ -628,9 +632,18 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
     - **cada reserva por la página:** dice de cada persona si es «Paciente nuevo» o «Ya era paciente»;
     - **cada cita agendada desde el panel:** lo mismo que una reserva, con quién la agendó y su rol
       (sale del registro de actividad `appointment.created`);
-    - **cada paciente registrado desde el panel:** dice quién lo registró y con qué rol.
+    - **cada paciente registrado desde el panel:** dice quién lo registró y con qué rol;
+    - **cada cambio de estado de una cita** (spec 008): de qué estado a cuál, quién lo hizo y a quién
+      salieron los emails, o «Sin avisar al paciente». Sale del registro de actividad (las entradas
+      con «Estado» en `changes`), así que entran los botones de estado y el formulario de la cita.
 
     Hasta 10 de cada tipo por pasada; del resto sólo se dice cuántos son.
+  - **Avisos al paciente en cada cambio de estado** (spec 008): además de la confirmación, la
+    cancelación y «vuelve a estar agendada», salen «queda pendiente de confirmar» (con
+    Confirmaciones), «gracias por tu visita» al marcar Completada y «elige otra hora» al marcar No
+    asistió. Los dos últimos van con el interruptor `followUps` («Seguimiento», encendido si no está
+    guardado) y sólo para citas de hoy o de los últimos 7 días. Todos llevan la copia al profesional.
+    Con `notify: false` (la casilla «Avisar al paciente» desmarcada) no sale ninguno.
 - Gmail gratuito permite unos 500 emails al día; para más volumen conviene un proveedor
   transaccional (Resend, SES…): sólo cambia `mailer.ts`.
 

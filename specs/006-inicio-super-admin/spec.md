@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-13
 
-**Estado**: Implementada (2026-10-14). Ampliada el mismo día con gráficos (historia 5)
+**Estado**: Publicada (2026-10-14). Ampliada el mismo día con gráficos (historia 5)
 
 **Repos**: agenda-backend (principal: cifras, salud del sistema y la migración 034), agenda-front
 (pantalla `/admin`) y la beta.

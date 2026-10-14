@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev · **Fecha**: 2026-10-14 (ampliada el mismo día con gráficos)
+**Estado**: Publicada (2026-10-14, PR #23 del backend y #21 del front) · **Fecha**: 2026-10-14 (ampliada el mismo día con gráficos)
 
 **Repos**: los dos (agenda-backend y agenda-front) y la beta · **Migración**: Sí: `034_backup_runs.sql`
 

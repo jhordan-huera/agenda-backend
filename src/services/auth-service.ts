@@ -6,7 +6,7 @@ import { AppError } from "../http/errors.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
 import { formatSupportContact } from "../shared/lib/format.ts";
 import { changePasswordSchema, loginSchema, registerSchema, twoFactorLoginSchema } from "../shared/lib/validations/auth.ts";
-import type { BusinessRole, BusinessStatus, PlatformRole, TwoFactorChallenge, User } from "../shared/types/index.ts";
+import type { BrandColors, BusinessRole, BusinessStatus, PlatformRole, TwoFactorChallenge, User } from "../shared/types/index.ts";
 import { hashPassword, verifyPassword } from "./accounts.ts";
 import { parseInput, requireUser, type RequestContext } from "./context.ts";
 import { queueEmail } from "./notifications.ts";
@@ -39,6 +39,8 @@ export interface Session {
    * modo soporte responden `two_factor_required` y el frontend le muestra la pantalla para activarla.
    */
   twoFactorSetupRequired: boolean;
+  /** Colores del panel de plataforma del super admin (spec 007). null: los de Agenda360; siempre null si no es super admin. */
+  panelColors: BrandColors | null;
 }
 
 /** Token de sesión recién emitido: la ruta lo guarda en una cookie httpOnly. */
@@ -156,6 +158,11 @@ async function resolveSession(db: Db, user: User, twoFactorEnabled: boolean): Pr
       limit 1`,
     [user.id],
   );
+  // Sólo las cuentas de super admin tienen colores de panel: las de los negocios no hacen esta consulta.
+  const panel =
+    user.platformRole === "super_admin"
+      ? await one<{ colors: BrandColors | null }>(db, `select panel_colors as colors from users where id = $1`, [user.id])
+      : null;
   return {
     userId: user.id,
     businessId: membership?.businessId ?? null,
@@ -166,6 +173,7 @@ async function resolveSession(db: Db, user: User, twoFactorEnabled: boolean): Pr
     clinicalAccess: membership ? membership.role === "owner" || membership.clinicalAccess : false,
     professionalId: membership?.professionalId ?? null,
     twoFactorSetupRequired: user.platformRole === "super_admin" && config.superAdminTwoFactorRequired && !twoFactorEnabled,
+    panelColors: panel?.colors ?? null,
   };
 }
 

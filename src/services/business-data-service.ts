@@ -47,6 +47,7 @@ import {
   releaseClientAccess,
   type AgendaScope,
 } from "./agenda-scope.ts";
+import { WITHOUT_NOTICE } from "./booking-alerts.ts";
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
 import { isRescheduled, notifyAppointmentChange } from "./notifications.ts";
 import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
@@ -780,8 +781,19 @@ export const appointmentService = {
     });
   },
 
-  async updateStatus(ctx: RequestContext, businessId: string, appointmentId: string, status: unknown): Promise<Appointment> {
+  /**
+   * Cambio de estado desde el panel. `notify: false` corrige un error sin avisar al paciente: no sale
+   * ningún email ni copia, y la actividad lo dice (spec 008). Sin `notify`, se avisa.
+   */
+  async updateStatus(
+    ctx: RequestContext,
+    businessId: string,
+    appointmentId: string,
+    status: unknown,
+    notify: unknown = true,
+  ): Promise<Appointment> {
     const nextStatus = parseInput(appointmentStatusSchema, status);
+    const notifyPatient = parseInput(z.boolean({ error: "Indica si se avisa al paciente" }), notify ?? true);
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "appointments.manage", { lock: true });
       const before = await findOwned<Appointment>(
@@ -799,14 +811,14 @@ export const appointmentService = {
       const appointment = await saveAppointment(db, updated, resetsSchedule(before, updated));
       // Confirmada (o atendida) por recepción, un administrador o el propietario: el paciente pasa a ser del profesional.
       await releaseClientAccess(db, actor, appointment.id);
-      await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
+      if (notifyPatient) await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
       await logAudit(db, {
         businessId,
         actor,
         action: `appointment.${nextStatus}`,
         entityType: "appointment",
         entityId: appointment.id,
-        summary: `${STATUS_VERBS[nextStatus]} la cita de ${await describeAppointment(db, appointment)}`,
+        summary: `${STATUS_VERBS[nextStatus]} la cita de ${await describeAppointment(db, appointment)}${notifyPatient ? "" : WITHOUT_NOTICE}`,
         changes: diffChanges(await appointmentForAudit(db, before), await appointmentForAudit(db, appointment), APPOINTMENT_FIELDS),
       });
       return appointment;
@@ -899,6 +911,7 @@ const WHATSAPP_NOTICE_LABELS: Record<WhatsAppNoticeKind, string> = {
   completed: "con un gracias por la visita",
   no_show: "para reagendar (No asistió)",
   pending: "que la cita vuelve a estar agendada",
+  unconfirmed: "que la cita quedó pendiente de confirmar",
 };
 
 /* --------------------------------- Horarios ---------------------------------- */

@@ -1,6 +1,6 @@
 // Copia de agenda-front/src/lib/validations/admin.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
-import { businessCategorySchema, slugSchema, timezoneField } from "./business.ts";
+import { brandColorsSchema, businessCategorySchema, slugSchema, timezoneField } from "./business.ts";
 import { emailField, moneyField, optionalEmailField, optionalText, passwordField, phoneField, requiredText } from "./fields.ts";
 import { weeklyScheduleSchema } from "./schedule.ts";
 import { teamInviteSchema } from "./team.ts";
@@ -100,3 +100,7 @@ export type BusinessCategoryInput = z.infer<typeof businessCategoryInputSchema>;
 export type AdminMemberInput = z.infer<typeof adminMemberSchema>;
 export type PlatformAdminInput = z.infer<typeof platformAdminSchema>;
 export type BusinessDeletionInput = z.infer<typeof businessDeletionSchema>;
+
+/** Colores del panel de plataforma del super admin (spec 007); null vuelve a los de Agenda360. */
+export const panelColorsSchema = z.object({ colors: brandColorsSchema });
+export type PanelColorsInput = z.infer<typeof panelColorsSchema>;

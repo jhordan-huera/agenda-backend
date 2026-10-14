@@ -8,7 +8,7 @@ import { buildBookingNotices } from "../scripts/cron.ts";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
 import type { PublicBusinessProfile } from "../src/shared/types/index.ts";
-import { newClientNotice, onlineBookingNotice, panelAppointmentNotice, type OnlineBooking } from "../src/services/booking-alerts.ts";
+import { newClientNotice, onlineBookingNotice, panelAppointmentNotice, statusChangeNotice, type OnlineBooking } from "../src/services/booking-alerts.ts";
 import { maskEmail, maskPhone, shortName } from "../src/services/masking.ts";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
@@ -161,6 +161,50 @@ ok(
 const manyAppointments = buildBookingNotices({ panelAppointments: 11, appointmentNotices: Array.from({ length: 10 }, () => appointmentNotice) } as never);
 ok(manyAppointments.length === 11 && /…y 1 cita más agendadas desde el panel/.test(manyAppointments[10].message), "con muchas, detalla 10 y dice cuántas faltan", manyAppointments.at(-1));
 
+console.log("Aviso de un cambio de estado (spec 008)");
+const change = {
+  businessId: "b1",
+  businessName: "Mente Abierta",
+  serviceName: "Consulta inicial",
+  date: "2026-10-14",
+  startTime: "16:30",
+  from: "Confirmada",
+  to: "Cancelada",
+  clients: [{ name: "Juan Pérez", email: "juan.perez@gmail.com", phone: "0994445555" }],
+  by: { name: "Elena Suárez", role: "staff" as const, superAdmin: false },
+  withoutNotice: false,
+  emails: [
+    { type: "appointment_cancelled" as const, to: "juan.perez@gmail.com", status: "sent" as const, reason: null },
+    { type: "appointment_copy" as const, to: "ana.torres@gmail.com", status: "queued" as const, reason: null },
+  ],
+};
+notice = statusChangeNotice(change);
+ok(
+  notice.title === "Agenda360: cita cancelada" &&
+    notice.message ===
+      [
+        "Mente Abierta · mié 14 oct 16:30",
+        "Paciente: Juan P. · ju***@gmail.com · 099***5555",
+        "Consulta inicial",
+        "De Confirmada a Cancelada",
+        "Cambiado desde el panel por Elena S. (Recepción)",
+        "",
+        "Emails:",
+        "• Al paciente → ju***@gmail.com",
+        "• Copia al profesional → an***@gmail.com (en cola)",
+      ].join("\n"),
+  "de qué estado a cuál, quién lo hizo y sus emails, con el paciente a medias y sin el negocio en el título",
+  notice,
+);
+notice = statusChangeNotice({ ...change, from: "Confirmada", to: "Pendiente", withoutNotice: true, emails: [] });
+ok(
+  notice.title === "Agenda360: cita pendiente de confirmar" && notice.message.endsWith("Sin avisar al paciente (se desmarcó la casilla)."),
+  "sin avisar al paciente: lo dice",
+  notice,
+);
+const manyChanges = buildBookingNotices({ statusChanges: 12, statusNotices: Array.from({ length: 10 }, () => notice) } as never);
+ok(manyChanges.length === 11 && /…y 2 cambios de estado más/.test(manyChanges[10].message), "con muchos, detalla 10 y dice cuántos faltan", manyChanges.at(-1));
+
 console.log("En la pasada del cron");
 const received: { topic: string; title: string; message: string; priority: number; click?: string }[] = [];
 const ntfy = createServer((req, res) => {
@@ -305,6 +349,7 @@ try {
     isVirtual: false,
   });
   ok(r.status === 200, "el propietario agenda una cita desde el panel", r.body);
+  const panelAppointment = r.body;
   run = await runCron();
   const appointmentNotices = () => received.filter((n) => n.title === "Agenda360: nueva cita" && n.message.includes("Paciente: Paciente P."));
   const appointmentNoticeSent = appointmentNotices()[0]?.message ?? "";
@@ -320,6 +365,55 @@ try {
   ok(!received.some((n) => n.title === "Agenda360: nueva cita" && n.message.includes("Paciente A.")), "las reservas de la página no se repiten como citas del panel");
   await runCron();
   ok(appointmentNotices().length === 1, "cada cita se avisa una sola vez", appointmentNotices().length);
+
+  // Cambios de estado de esa cita (spec 008): con los botones y con el formulario.
+  const statusNotices = () => received.filter((n) => n.message.includes("Paciente: Paciente P.") && /\nDe \S/.test(n.message));
+  r = await call("PATCH", `/businesses/${profile.business.id}/appointments/${panelAppointment.id}/status`, { status: "cancelled" });
+  ok(r.status === 200, "el propietario cancela la cita", r.body);
+  run = await runCron();
+  const cancelledNotice = statusNotices().at(-1);
+  ok(
+    run.code === 0 && statusNotices().length === 1 && cancelledNotice?.title === "Agenda360: cita cancelada",
+    "el cron avisa del cambio de estado",
+    received.map((n) => n.title),
+  );
+  ok(
+    (cancelledNotice?.message ?? "").includes("\nDe Confirmada a Cancelada\nCambiado desde el panel por Jhordan H. (Propietario)\n") &&
+      (cancelledNotice?.message ?? "").includes("• Al paciente → pa***@example.com"),
+    "de qué estado a cuál, quién lo hizo y el email de cancelación",
+    cancelledNotice?.message,
+  );
+  ok(!(cancelledNotice?.message ?? "").includes(panelEmail) && /cambios de estado: 1/.test(run.output), "nunca el email completo; el registro público, sólo la cifra", run.output.slice(-400));
+  r = await call("PUT", `/businesses/${profile.business.id}/appointments/${panelAppointment.id}`, {
+    clientId: panelClientId,
+    serviceId: service.id,
+    professionalId: agenda.id,
+    date: panelSlot!.date,
+    startTime: panelSlot!.time,
+    durationMinutes: service.durationMinutes,
+    price: 15,
+    status: "pending",
+    notes: "",
+    homeVisit: null,
+    isVirtual: false,
+  });
+  ok(r.status === 200, "desde el formulario vuelve a Pendiente", r.body);
+  r = await call("PATCH", `/businesses/${profile.business.id}/appointments/${panelAppointment.id}/status`, { status: "confirmed", notify: false });
+  ok(r.status === 200, "y se confirma sin avisar al paciente", r.body);
+  run = await runCron();
+  const [fromForm, silent] = statusNotices().slice(-2);
+  ok(
+    statusNotices().length === 3 && fromForm?.title === "Agenda360: cita pendiente de confirmar" && fromForm.message.includes("\nDe Cancelada a Pendiente\n"),
+    "el cambio hecho desde el formulario también avisa",
+    statusNotices().map((n) => n.title),
+  );
+  ok(
+    silent?.title === "Agenda360: cita confirmada" && silent.message.endsWith("Sin avisar al paciente (se desmarcó la casilla)."),
+    "el que se hizo sin avisar al paciente lo dice",
+    silent?.message,
+  );
+  await runCron();
+  ok(statusNotices().length === 3, "cada cambio se avisa una sola vez", statusNotices().length);
 } finally {
   ntfy.close();
 }

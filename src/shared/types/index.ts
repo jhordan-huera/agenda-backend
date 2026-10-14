@@ -108,10 +108,20 @@ export interface NotificationSettings {
   whatsappOnStatusChange: boolean;
   /** Lo mismo al marcar Completada ("gracias por tu visita") o No asistió ("¿reagendamos?"). */
   whatsappFollowUps: boolean;
+  /**
+   * Emails de seguimiento al marcar Atendida ("gracias por tu visita") o No asistió ("elige otra
+   * hora"), sólo de citas de los últimos 7 días (spec 008). Los negocios guardados antes no lo
+   * traen: cuenta como encendido.
+   */
+  followUps: boolean;
 }
 
-/** Avisos por WhatsApp que se proponen al cambiar una cita. */
-export type WhatsAppNoticeKind = "confirmed" | "cancelled" | "rescheduled" | "completed" | "no_show" | "pending";
+/**
+ * Avisos por WhatsApp que se proponen al cambiar una cita. "pending": una cita cancelada vuelve a
+ * quedar pendiente; "unconfirmed": una cita confirmada (o atendida, o no asistió) vuelve a
+ * pendiente de confirmar (spec 008).
+ */
+export type WhatsAppNoticeKind = "confirmed" | "cancelled" | "rescheduled" | "completed" | "no_show" | "pending" | "unconfirmed";
 
 /** Un negocio suspendido no puede usar el panel ni recibir reservas online. */
 export type BusinessStatus = "active" | "suspended";
@@ -471,7 +481,13 @@ export type EmailType =
   | "professional_daily_agenda"
   | "payment_receipt_received"
   /** Copia al profesional de un email al paciente sobre su cita (también la de los recordatorios). */
-  | "appointment_copy";
+  | "appointment_copy"
+  /** La cita vuelve a quedar pendiente de confirmar (spec 008). */
+  | "appointment_pending"
+  /** La cita quedó como atendida: gracias por la visita (spec 008). */
+  | "appointment_completed"
+  /** El paciente no asistió: invitación a elegir otra hora (spec 008). */
+  | "appointment_no_show";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo

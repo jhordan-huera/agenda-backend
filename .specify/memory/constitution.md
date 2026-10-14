@@ -56,6 +56,14 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   su email o su teléfono, no se usa su ficha); las que no existen se registran como nuevas. Quien
   reserva es el paciente principal y sólo él recibe los datos de pago. En el panel, si faltan
   pacientes, se avisa sin bloquear (2026-10-13).
+- El panel del super admin va en tarjetas, con botón para pasar a lista en Negocios y Usuarios, y
+  la ficha de cada negocio en pestañas. Cada super admin elige los colores de su panel en su cuenta:
+  no se aplican a los negocios ni a otros super admins (2026-10-14).
+- Todo cambio de estado de una cita se le avisa al paciente por email (con copia al profesional) y
+  el panel ofrece el WhatsApp ya escrito. La ficha de la cita tiene la casilla «Avisar al paciente»
+  (marcada) para no avisar al corregir un error. «Atendida» y «No asistió» van con el interruptor
+  «Seguimiento» (encendido) y sólo para citas de los últimos 7 días. El dueño del producto recibe por
+  ntfy cada cambio de estado (2026-10-14).
 - En la portada no hay testimonios, cifras ni precios inventados.
 
 ### IV. Se comprueba en local, nunca en producción
@@ -88,8 +96,9 @@ Tipos, validaciones, constantes y plantillas de email se editan sólo en agenda-
 
 - Letra Sora. Estilo SaaS claro: lienzo `--canvas`, tarjetas blancas, degradado azul → lila de la
   marca.
-- Los colores salen de los tokens del tema (`--ink`, `--primary`, `--accent`…): cada negocio
-  personaliza los suyos, así que no se fijan colores que ignoren la marca.
+- Los colores salen de los tokens del tema (`--ink`, `--primary`, `--accent`…): cada negocio, y
+  cada super admin para su panel, personaliza los suyos, así que no se fijan colores que ignoren la
+  marca.
 - Primero el celular: las cuadrículas llevan `grid-cols-1` de base y nada se sale de la pantalla.
 - Accesible: cada campo con su etiqueta, foco visible, contraste suficiente, `prefers-reduced-motion`
   respetado y textos que tengan sentido con lector de pantalla.
@@ -151,4 +160,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.3.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-13
+**Versión**: 1.5.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-14
