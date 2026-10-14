@@ -5,7 +5,7 @@ import { offersService } from "../shared/lib/availability.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { BLOCKING_STATUSES } from "../shared/lib/constants/appointment-status.ts";
 import { clientRequiredFieldsOf } from "../shared/lib/constants/business.ts";
-import { formatNumericDate, formatTimeRange } from "../shared/lib/format.ts";
+import { formatNumericDate, formatTimeRange, joinNames } from "../shared/lib/format.ts";
 import { documentIdError } from "../shared/lib/identity.ts";
 import { addMinutesToTime, getZonedNow, minutesToTime } from "../shared/lib/time.ts";
 import { appointmentSchema, appointmentStatusSchema, whatsAppNoticeSchema } from "../shared/lib/validations/appointment.ts";
@@ -27,6 +27,7 @@ import type {
   Service,
   WhatsAppNoticeKind,
 } from "../shared/types/index.ts";
+import { clientNamesOf, resolveExtraClients, saveExtraClients } from "./appointment-clients.ts";
 import { describeAppointment, logAudit } from "./audit.ts";
 import {
   APPOINTMENT_FIELDS,
@@ -140,7 +141,9 @@ export const clientService = {
 
   /**
    * Resumen de las citas de cada cliente (totales, primera visita, última y próxima cita),
-   * calculado en la base: la lista de clientes y los reportes no descargan todo el historial.
+   * calculado en la base: la lista de clientes y los reportes no descargan todo el historial. Cuenta
+   * también las citas en las que es uno de los otros pacientes (citas con varios pacientes); lo cobrado
+   * (`totalSpent`), sólo las que tiene como paciente principal, que es quien paga.
    */
   async activity(ctx: RequestContext, businessId: string): Promise<ClientActivity[]> {
     const actor = await authorize(pool, ctx, businessId);
@@ -150,39 +153,45 @@ export const clientService = {
     const now = getZonedNow(business?.timezone ?? DEFAULT_TIMEZONE);
     const nowTime = minutesToTime(now.minutes);
     const past = "(a.date < $2::date or (a.date = $2::date and a.start_time <= $3::time))";
+    // Cada cita una vez por cada uno de sus pacientes (`participant`); `main`: es el paciente principal.
+    const participations = `(select a.*, a.client_id as participant, true as main from appointments a
+                             union all
+                             select a.*, ac.client_id, false from appointment_clients ac
+                               join appointments a on a.id = ac.appointment_id) a`;
     const rows = await many<Omit<ClientActivity, "lastAppointment" | "nextAppointment">>(
       pool,
-      `select client_id as "clientId",
-              count(*) filter (where status <> 'cancelled')::int as "totalAppointments",
-              count(*) filter (where status = 'completed')::int as completed,
-              count(*) filter (where status = 'cancelled')::int as cancelled,
-              count(*) filter (where status = 'no_show')::int as "noShow",
-              coalesce(sum(price) filter (where status = 'completed'), 0) as "totalSpent",
-              to_char(min(date) filter (where status <> 'cancelled'), 'YYYY-MM-DD') as "firstVisit"
-         from appointments where business_id = $1 and ($2::uuid is null or professional_id = $2::uuid)
-        group by client_id`,
+      `select a.participant as "clientId",
+              count(*) filter (where a.status <> 'cancelled')::int as "totalAppointments",
+              count(*) filter (where a.status = 'completed')::int as completed,
+              count(*) filter (where a.status = 'cancelled')::int as cancelled,
+              count(*) filter (where a.status = 'no_show')::int as "noShow",
+              coalesce(sum(a.price) filter (where a.status = 'completed' and a.main), 0) as "totalSpent",
+              to_char(min(a.date) filter (where a.status <> 'cancelled'), 'YYYY-MM-DD') as "firstVisit"
+         from ${participations}
+        where a.business_id = $1 and ($2::uuid is null or a.professional_id = $2::uuid)
+        group by a.participant`,
       [businessId, professionalId],
     );
-    const last = await many<Appointment>(
+    const last = await many<Appointment & { participant: string }>(
       pool,
-      `select distinct on (a.client_id) ${appointmentColumns("a")}
-         from appointments a
+      `select distinct on (a.participant) a.participant, ${appointmentColumns("a")}
+         from ${participations}
         where a.business_id = $1 and a.status <> 'cancelled' and ${past}
           and ($4::uuid is null or a.professional_id = $4::uuid)
-        order by a.client_id, a.date desc, a.start_time desc`,
+        order by a.participant, a.date desc, a.start_time desc`,
       [businessId, now.date, nowTime, professionalId],
     );
-    const next = await many<Appointment>(
+    const next = await many<Appointment & { participant: string }>(
       pool,
-      `select distinct on (a.client_id) ${appointmentColumns("a")}
-         from appointments a
+      `select distinct on (a.participant) a.participant, ${appointmentColumns("a")}
+         from ${participations}
         where a.business_id = $1 and a.status in ('pending', 'confirmed', 'completed') and not ${past}
           and ($4::uuid is null or a.professional_id = $4::uuid)
-        order by a.client_id, a.date, a.start_time`,
+        order by a.participant, a.date, a.start_time`,
       [businessId, now.date, nowTime, professionalId],
     );
-    const lastByClient = new Map(last.map((appointment) => [appointment.clientId, appointment]));
-    const nextByClient = new Map(next.map((appointment) => [appointment.clientId, appointment]));
+    const lastByClient = new Map(last.map(({ participant, ...appointment }) => [participant, appointment]));
+    const nextByClient = new Map(next.map(({ participant, ...appointment }) => [participant, appointment]));
     return rows.map((row) => ({
       ...row,
       lastAppointment: lastByClient.get(row.clientId) ?? null,
@@ -517,6 +526,8 @@ async function buildAppointmentFields(db: Db, businessId: string, input: unknown
   await findOwned<Service>(db, "services", "id", businessId, data.serviceId, "El servicio seleccionado no existe.");
   return {
     clientId: data.clientId,
+    /** undefined: el formulario no la trajo (un front anterior); ver resolveExtraClients. */
+    requestedExtraClientIds: data.extraClientIds,
     serviceId: data.serviceId,
     date: data.date,
     startTime: data.startTime,
@@ -575,10 +586,12 @@ async function appointmentForAudit(db: Db, appointment: Appointment): Promise<Ap
             (select display_name from professionals where id = $3) as "professionalName"`,
     [appointment.clientId, appointment.serviceId, appointment.professionalId],
   );
+  const extraNames = await clientNamesOf(db, appointment.extraClientIds ?? []);
   return {
     date: appointment.date,
     time: formatTimeRange(appointment.startTime, appointment.endTime),
     clientName: names?.clientName ?? "—",
+    extraClients: extraNames.length > 0 ? joinNames(extraNames) : "Ninguno",
     serviceName: names?.serviceName ?? "—",
     professionalName: names?.professionalName ?? "—",
     status: appointment.status,
@@ -619,7 +632,8 @@ export const appointmentService = {
         where business_id = $1
           and ($2::date is null or date >= $2::date)
           and ($3::date is null or date <= $3::date)
-          and ($4::uuid is null or client_id = $4::uuid)
+          and ($4::uuid is null or client_id = $4::uuid
+               or exists (select 1 from appointment_clients ac where ac.appointment_id = appointments.id and ac.client_id = $4::uuid))
           and ($5::uuid is null or professional_id = $5::uuid)
         order by date, start_time`,
       [businessId, from, to, filters.clientId ?? null, professionalId],
@@ -644,8 +658,15 @@ export const appointmentService = {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "appointments.manage", { lock: true });
       const scope = await agendaScope(db, actor, businessId);
-      const { requestedProfessionalId, ...fields } = await buildAppointmentFields(db, businessId, input);
+      const { requestedProfessionalId, requestedExtraClientIds, ...fields } = await buildAppointmentFields(db, businessId, input);
       await assertClientInScope(db, scope, fields.clientId);
+      const extraClientIds = await resolveExtraClients(db, {
+        businessId,
+        scope,
+        clientId: fields.clientId,
+        requested: requestedExtraClientIds,
+        current: [],
+      });
       const professionalId = await resolveAppointmentProfessional(db, businessId, actor, scope, requestedProfessionalId);
       await assertOffersService(db, businessId, professionalId, fields.serviceId);
 
@@ -654,6 +675,7 @@ export const appointmentService = {
         businessId,
         professionalId,
         ...fields,
+        extraClientIds,
         source: "dashboard",
         arrivedAt: null,
         paymentToken: "",
@@ -665,7 +687,7 @@ export const appointmentService = {
       await assertNoConflict(db, draft);
       if (draft.status !== "cancelled") await assertAppointmentLimit(db, businessId, draft.date);
 
-      const appointment = (await one<Appointment>(
+      const inserted = (await one<Appointment>(
         db,
         `insert into appointments
            (business_id, client_id, service_id, professional_id, date, start_time, end_time, status, notes, price,
@@ -687,6 +709,7 @@ export const appointmentService = {
           fields.isVirtual,
         ],
       ))!;
+      const appointment = await saveExtraClients(db, inserted, extraClientIds, []);
       await notifyAppointmentChange(db, null, appointment, "dashboard", actor.userId);
       await logAudit(db, {
         businessId,
@@ -713,21 +736,29 @@ export const appointmentService = {
       );
       const scope = await agendaScope(db, actor, businessId);
       assertAppointmentInScope(scope, before);
-      const { requestedProfessionalId, ...fields } = await buildAppointmentFields(db, businessId, input);
+      const { requestedProfessionalId, requestedExtraClientIds, ...fields } = await buildAppointmentFields(db, businessId, input);
       if (fields.clientId !== before.clientId) await assertClientInScope(db, scope, fields.clientId);
+      const extraClientIds = await resolveExtraClients(db, {
+        businessId,
+        scope,
+        clientId: fields.clientId,
+        requested: requestedExtraClientIds,
+        current: before.extraClientIds,
+      });
       // Cambiar de agenda (reasignar a otro profesional): sólo a una activa y no para el rol Profesional.
       const professionalId =
         requestedProfessionalId && requestedProfessionalId !== before.professionalId
           ? await resolveAppointmentProfessional(db, businessId, actor, scope, requestedProfessionalId)
           : before.professionalId;
-      const updated: Appointment = { ...before, ...fields, professionalId };
+      const updated: Appointment = { ...before, ...fields, extraClientIds, professionalId };
       // Otro profesional u otro servicio: tiene que atenderlo (una cita que ya estaba así se puede seguir editando).
       if (professionalId !== before.professionalId || updated.serviceId !== before.serviceId) {
         await assertOffersService(db, businessId, professionalId, updated.serviceId);
       }
       await assertNoConflict(db, updated);
       await assertLimitOnChange(db, before, updated);
-      const appointment = await saveAppointment(db, updated, resetsSchedule(before, updated));
+      const saved = await saveAppointment(db, updated, resetsSchedule(before, updated));
+      const appointment = await saveExtraClients(db, saved, extraClientIds, before.extraClientIds);
       await releaseClientAccess(db, actor, appointment.id);
       await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
 
@@ -782,9 +813,16 @@ export const appointmentService = {
 
   /**
    * El profesional abrió WhatsApp con el aviso ya escrito de un cambio de la cita (enlace wa.me).
-   * Sólo se sabe que lo abrió, no si lo envió: así lo dice la actividad.
+   * Sólo se sabe que lo abrió, no si lo envió: así lo dice la actividad. `clientId`: a cuál de los
+   * pacientes de la cita (con varios pacientes, uno por cada botón); sin él, a la cita entera.
    */
-  async logWhatsAppNotice(ctx: RequestContext, businessId: string, appointmentId: string, kind: unknown): Promise<void> {
+  async logWhatsAppNotice(
+    ctx: RequestContext,
+    businessId: string,
+    appointmentId: string,
+    kind: unknown,
+    clientId: unknown = null,
+  ): Promise<void> {
     const notice = parseInput(whatsAppNoticeSchema, kind);
     await transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "appointments.manage");
@@ -803,7 +841,12 @@ export const appointmentService = {
         action: "appointment.whatsapp_notice",
         entityType: "appointment",
         entityId: appointment.id,
-        summary: `Abrió WhatsApp para avisar ${WHATSAPP_NOTICE_LABELS[notice]} a ${await describeAppointment(db, appointment)}`,
+        summary: `Abrió WhatsApp para avisar ${WHATSAPP_NOTICE_LABELS[notice]} a ${await describeAppointment(
+          db,
+          typeof clientId === "string" && [appointment.clientId, ...appointment.extraClientIds].includes(clientId)
+            ? { ...appointment, clientId, extraClientIds: [] }
+            : appointment,
+        )}`,
       });
     });
   },

@@ -291,7 +291,9 @@ businessRoutes.get(
 );
 businessRoutes.post(
   "/:businessId/appointments/:appointmentId/whatsapp-notice",
-  handle((req) => appointmentService.logWhatsAppNotice(req.ctx, req.params.businessId, req.params.appointmentId, req.body?.kind)),
+  handle((req) =>
+    appointmentService.logWhatsAppNotice(req.ctx, req.params.businessId, req.params.appointmentId, req.body?.kind, req.body?.clientId),
+  ),
 );
 
 // Horario semanal y bloqueos

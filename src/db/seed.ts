@@ -23,6 +23,7 @@ const TABLES = [
   "clinical_profiles",
   "audit_logs",
   "notifications",
+  "appointment_clients",
   "appointments",
   "blocked_times",
   "schedules",

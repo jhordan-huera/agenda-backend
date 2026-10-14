@@ -203,7 +203,14 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   );
   const sent = await many<SentEmail>(
     pool,
-    `select n.type, n.to_email as "to", b.name as "businessName", a.id as "appointmentId", c.name as "clientName",
+    // El nombre del paciente al que le salió el email (en una cita con varios pacientes, el suyo); si no
+    // fue a un paciente (la copia, los avisos al negocio), el del principal.
+    `select n.type, n.to_email as "to", b.name as "businessName", a.id as "appointmentId",
+            coalesce((select r.name from clients r
+                       where lower(r.email) = lower(n.to_email)
+                         and (r.id = a.client_id
+                              or exists (select 1 from appointment_clients ac where ac.appointment_id = a.id and ac.client_id = r.id))
+                       order by r.id = a.client_id desc limit 1), c.name) as "clientName",
             to_char(a.date, 'YYYY-MM-DD') as date, to_char(a.start_time, 'HH24:MI') as "startTime"
        from notifications n
        left join businesses b on b.id = n.business_id

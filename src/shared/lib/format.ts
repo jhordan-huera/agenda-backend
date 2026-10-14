@@ -83,6 +83,12 @@ export function plural(count: number, singular: string, pluralForm: string): str
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
+/** Nombres en una frase: "Ana", "Ana y Carlos", "Ana, Carlos y Luis" (los pacientes de una cita). */
+export function joinNames(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} y ${names[names.length - 1]}`;
+}
+
 /** Contacto de soporte en texto: "soporte@x.com o al WhatsApp 099 406 0669" (el teléfono es opcional). */
 export function formatSupportContact(settings: { supportEmail: string; supportPhone: string }): string {
   return settings.supportPhone ? `${settings.supportEmail} o al WhatsApp ${settings.supportPhone}` : settings.supportEmail;

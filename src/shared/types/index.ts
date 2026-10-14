@@ -153,6 +153,11 @@ export interface Business {
    * elige el super admin para cada negocio; la reserva online no cambia (pide cédula, nombre, email y teléfono).
    */
   clientRequiredFields: ClientRequiredFields;
+  /**
+   * Citas con varios pacientes (p. ej. sesiones de pareja): hasta 3 por cita. Lo activa el super admin
+   * para cada negocio; el negocio no lo cambia.
+   */
+  multiClientAppointments: boolean;
   createdAt: ISODateTime;
 }
 
@@ -374,7 +379,10 @@ export type AppointmentSource = "dashboard" | "booking_page";
 export interface Appointment {
   id: string;
   businessId: string;
+  /** Paciente principal: el de la reserva y el del pago. */
   clientId: string;
+  /** Otros pacientes de la sesión (hasta 2, en orden; vacío si no hay). Ver Business.multiClientAppointments. */
+  extraClientIds: string[];
   serviceId: string;
   professionalId: string;
   date: ISODate;
@@ -898,6 +906,7 @@ export type PublicBusiness = Omit<
   | "clinicalDefaultTemplateId"
   | "professionalScope"
   | "clientRequiredFields"
+  | "multiClientAppointments"
   | "createdAt"
 >;
 /** Sin su cuenta, su email ni sus avisos. */

@@ -16,6 +16,11 @@ export const whatsAppNoticeSchema = z.enum(["confirmed", "cancelled", "reschedul
 export const appointmentSchema = z
   .object({
     clientId: z.string().min(1, "Selecciona un cliente"),
+    /**
+     * Otros pacientes de la sesión (hasta 2). Sin el campo: al crear, ninguno; al editar, se conservan los
+     * que tenía (un front anterior no los borra).
+     */
+    extraClientIds: z.array(z.string().min(1)).max(2, "Una cita puede tener como máximo 3 pacientes.").optional(),
     serviceId: z.string().min(1, "Selecciona un servicio"),
     date: dateField,
     startTime: timeField,
@@ -38,6 +43,13 @@ export const appointmentSchema = z
     },
     { path: ["durationMinutes"], message: "La cita no puede terminar después de medianoche" },
   )
-  .refine((data) => !(data.isVirtual && data.homeVisit), { path: ["isVirtual"], message: "Una cita virtual no es a domicilio" });
+  .refine((data) => !(data.isVirtual && data.homeVisit), { path: ["isVirtual"], message: "Una cita virtual no es a domicilio" })
+  .refine(
+    (data) => {
+      const extra = data.extraClientIds ?? [];
+      return new Set(extra).size === extra.length && !extra.includes(data.clientId);
+    },
+    { path: ["extraClientIds"], message: "Ese paciente ya está en la cita." },
+  );
 
 export type AppointmentInput = z.infer<typeof appointmentSchema>;

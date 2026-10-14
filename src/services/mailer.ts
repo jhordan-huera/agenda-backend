@@ -5,7 +5,7 @@ import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { escapeHtml } from "../shared/lib/email/layout.ts";
 import { getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
 import { createGmailSender } from "./gmail-transport.ts";
-import { isQuietTime, minutesUntilQuietEnds, minutesUntilStart, reminderKeySql } from "./reminder-rules.ts";
+import { isQuietTime, minutesUntilQuietEnds, minutesUntilStart, reminderCurrentSql } from "./reminder-rules.ts";
 
 /**
  * Envío de emails con Gmail (OAuth2, por SMTP o por su API: ver gmail-transport.ts). Los
@@ -76,7 +76,7 @@ interface QueuedEmail {
   appointmentDate: string | null;
   appointmentTime: string | null;
   timezone: string | null;
-  /** El recordatorio es de la fecha y hora actuales de la cita (ver reminderKeySql). */
+  /** El recordatorio es de la fecha y hora actuales de la cita y de uno de sus pacientes (ver reminderCurrentSql). */
   reminderCurrent: boolean | null;
 }
 
@@ -177,7 +177,7 @@ async function claimBatch(skipReminders: boolean): Promise<QueuedEmail[]> {
      )
      select c.id, c.type, c.to_email as "to", c.subject, c.body, c.html, c.secret, c.attempts,
             a.status as "appointmentStatus", a.date as "appointmentDate", a.start_time as "appointmentTime",
-            b.timezone, c.dedupe_key = ${reminderKeySql("a")} as "reminderCurrent"
+            b.timezone, ${reminderCurrentSql("c", "a")} as "reminderCurrent"
        from claimed c
        left join appointments a on c.type = 'appointment_reminder' and a.id = c.appointment_id
        left join businesses b on b.id = a.business_id

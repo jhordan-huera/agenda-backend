@@ -357,7 +357,42 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
 - **Avisos por WhatsApp** (migración 019): `notification_settings` lleva `whatsappOnStatusChange` y
   `whatsappFollowUps` (la migración los activa en los negocios que ya existían). El aviso lo abre el
   front con un enlace `wa.me`; `POST /businesses/:id/appointments/:id/whatsapp-notice` (`kind`:
-  confirmed, cancelled, rescheduled, completed, no_show) sólo lo registra en la actividad.
+  confirmed, cancelled, rescheduled, completed, no_show; `clientId` opcional: a cuál de los pacientes
+  de la cita) sólo lo registra en la actividad.
+- **Citas con varios pacientes** (migración 032, spec `specs/004-sesiones-varios-pacientes`; sesiones de
+  pareja o de familia).
+  - **Dónde se guardan:**
+    - el paciente principal sigue en `appointments.client_id`, que es el de la reserva y el del pago;
+    - los otros, hasta 2, en `appointment_clients (appointment_id, client_id, business_id, created_at)`;
+    - en la API llegan como `extraClientIds` en todas las citas, por la subconsulta de
+      `appointmentColumns()`.
+  - **El interruptor:** sólo lo tienen los negocios que habilita el super admin:
+    - columna `businesses.multi_client_appointments` (`multiClientAppointments`), apagada por defecto;
+    - se cambia con `PUT /admin/businesses/:id/multi-client-appointments` (`{ enabled }`);
+    - queda en la actividad como `platform.multi_client_appointments_changed`;
+    - `PATCH /businesses/:id` lo ignora y el perfil público no lo trae.
+  - **Reglas al guardar** (`src/services/appointment-clients.ts`):
+    - sin el interruptor sólo se pueden quitar pacientes;
+    - cada paciente nuevo tiene que ser del negocio, estar activo y estar en el alcance del
+      profesional;
+    - un `PUT` sin `extraClientIds` conserva los que había;
+    - un trigger de la base impide más de 2 adicionales, repetir al principal o mezclar negocios.
+  - **La hora:** se ocupa una sola vez (`appointments_no_overlap` no cambia).
+  - **Emails** (`notifyAppointmentChange`):
+    - cada paciente con email recibe el suyo, con su nombre;
+    - los que se agregan a una cita activa reciben el de una cita nueva, y los que se quitan, la
+      cancelación;
+    - sale un email por dirección;
+    - la copia al profesional sale una vez y nombra a todos (`joinNames`).
+  - **Recordatorios:** uno por paciente.
+    - El del principal conserva la clave de siempre y el de cada adicional le añade
+      `:<client_id>`.
+    - `reminderCurrentSql` comprueba en el envío que sigue en la cita.
+  - **Historial y actividad:**
+    - `?clientId=` y `clients/activity` incluyen las participaciones;
+    - lo cobrado se suma sólo al paciente principal.
+  - **Alcance:** un profesional con «sólo sus pacientes» ve a los adicionales de su agenda.
+  - **Borrado:** borrar a un adicional sólo lo quita de la cita.
 - **Colores de marca** (migración 018): `businesses.brand_colors` (jsonb, `{ primary, highlight }` en
   `#rrggbb`, con un check en la base; null = los de Agenda360). Se cambian con `PATCH
   /businesses/:id` (`brandColors`, permiso `business.manage`), quedan en la actividad y llegan al

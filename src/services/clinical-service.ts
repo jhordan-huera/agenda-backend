@@ -1,4 +1,4 @@
-import { clinicalAttachmentColumns, clinicalNoteColumns, clinicalProfileColumns } from "../db/columns.ts";
+import { clinicalAttachmentColumns, clinicalNoteColumns, clinicalProfileColumns, extraClientIdsSql } from "../db/columns.ts";
 import { isUuid, many, one, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
@@ -288,14 +288,16 @@ export const clinicalService = {
       const content = parseInput(clinicalNoteDataSchema(template.fields), data.data);
       if (data.appointmentId) {
         const appointment = isUuid(data.appointmentId)
-          ? await one<{ clientId: string }>(
+          ? await one<{ clientIds: string[] }>(
               db,
-              'select client_id as "clientId" from appointments where id = $1 and business_id = $2',
+              `select array[client_id::text] || ${extraClientIdsSql("appointments")} as "clientIds"
+                 from appointments where id = $1 and business_id = $2`,
               [data.appointmentId, businessId],
             )
           : null;
         if (!appointment) throw new AppError("not_found", "La cita no existe.");
-        if (appointment.clientId !== clientId) throw new AppError("validation", "La cita es de otro paciente.");
+        // En una cita con varios pacientes, cada uno tiene su evolución vinculada a la misma cita.
+        if (!appointment.clientIds.includes(clientId)) throw new AppError("validation", "La cita es de otro paciente.");
       }
       const { id } = (await one<{ id: string }>(
         db,
