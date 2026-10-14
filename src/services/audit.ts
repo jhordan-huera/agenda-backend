@@ -1,6 +1,7 @@
-import { one, type Db } from "../db/pool.ts";
-import { formatNumericDate } from "../shared/lib/format.ts";
+import type { Db } from "../db/pool.ts";
+import { formatNumericDate, joinNames } from "../shared/lib/format.ts";
 import type { Appointment, AuditChange, AuditEntityType } from "../shared/types/index.ts";
+import { appointmentClientIds, clientNamesOf } from "./appointment-clients.ts";
 import type { AuditActor } from "./context.ts";
 
 /** Auditoría: quién hizo qué y cuándo. Se escribe en la misma transacción que el cambio. */
@@ -40,11 +41,11 @@ export async function logAudit(
   );
 }
 
-/** "María López (10/10/2026 10:00)" */
+/** "María López (10/10/2026 10:00)"; con varios pacientes, "Ana Torres y Carlos Pérez (…)". */
 export async function describeAppointment(
   db: Db,
-  appointment: Pick<Appointment, "clientId" | "date" | "startTime">,
+  appointment: Pick<Appointment, "clientId" | "date" | "startTime"> & { extraClientIds?: string[] },
 ): Promise<string> {
-  const client = await one<{ name: string }>(db, "select name from clients where id = $1", [appointment.clientId]);
-  return `${client?.name ?? "cliente"} (${formatNumericDate(appointment.date)} ${appointment.startTime})`;
+  const names = await clientNamesOf(db, appointmentClientIds(appointment));
+  return `${joinNames(names)} (${formatNumericDate(appointment.date)} ${appointment.startTime})`;
 }

@@ -45,6 +45,7 @@ export const businessColumns = columns({
   brandColors: "brand_colors",
   professionalScope: "professional_scope",
   clientRequiredFields: "client_required_fields",
+  multiClientAppointments: "multi_client_appointments",
   createdAt: "created_at",
 });
 
@@ -117,7 +118,7 @@ export const serviceColumns = columns({
   createdAt: "created_at",
 });
 
-export const appointmentColumns = columns({
+const appointmentBaseColumns = columns({
   id: "id",
   businessId: "business_id",
   clientId: "client_id",
@@ -139,6 +140,18 @@ export const appointmentColumns = columns({
   createdAt: "created_at",
   updatedAt: "updated_at",
 });
+
+/**
+ * Los otros pacientes de la cita (tabla appointment_clients), en el orden en que se agregaron; '{}' si no
+ * hay. `alias`: el de la tabla appointments en la consulta (sin alias, "appointments").
+ */
+export const extraClientIdsSql = (alias = "appointments") =>
+  `coalesce((select array_agg(ac.client_id::text order by ac.created_at, ac.client_id)
+     from appointment_clients ac where ac.appointment_id = ${alias}.id), '{}')`;
+
+/** Las columnas de la cita y sus otros pacientes (`extraClientIds`). */
+export const appointmentColumns = (alias?: string) =>
+  `${appointmentBaseColumns(alias)}, ${extraClientIdsSql(alias)} as "extraClientIds"`;
 
 export const paymentReceiptColumns = columns({
   id: "id",

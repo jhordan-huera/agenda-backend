@@ -548,6 +548,8 @@ function seedTenant(
     professionalScope: "all",
     // No se inserta: la base pone el mismo valor por defecto (migración 031).
     clientRequiredFields: { ...DEFAULT_CLIENT_REQUIRED_FIELDS },
+    // Tampoco: apagado por defecto (migración 032); lo activa el super admin.
+    multiClientAppointments: false,
     createdAt,
   });
   const professionalBase = { businessId, avatarUrl: null, email: "", meetingUrl: "", bankAccounts: [], allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, isActive: true, createdAt };
@@ -714,6 +716,7 @@ function seedTenant(
       id: crypto.randomUUID(),
       businessId,
       clientId,
+      extraClientIds: [],
       serviceId: service.id,
       professionalId: agendaId,
       date,

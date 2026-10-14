@@ -47,6 +47,9 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   teléfono.
 - Las fechas de consentimiento y de las evoluciones clínicas las pone el sistema.
 - Cada email al paciente sobre su cita (salvo los recordatorios) sale con copia al profesional.
+- Una cita puede tener hasta 3 pacientes (sesiones de pareja), sólo en los negocios que el super
+  admin habilite con su interruptor; el negocio no lo cambia. Cada paciente recibe sus avisos, la
+  copia al profesional sale una vez y la hora se ocupa una sola vez (2026-10-13).
 - En la portada no hay testimonios, cifras ni precios inventados.
 
 ### IV. Se comprueba en local, nunca en producción
@@ -142,4 +145,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.1.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-13
+**Versión**: 1.2.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-13

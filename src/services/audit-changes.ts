@@ -79,6 +79,8 @@ export interface AppointmentForAudit {
   date: string;
   time: string;
   clientName: string;
+  /** Los otros pacientes de la cita ("Ninguno" si no hay). */
+  extraClients: string;
   serviceName: string;
   professionalName: string;
   status: AppointmentStatus;
@@ -93,6 +95,7 @@ export const APPOINTMENT_FIELDS: ChangeField<AppointmentForAudit>[] = [
   { key: "date", label: "Fecha", format: formatNumericDate },
   { key: "time", label: "Hora" },
   { key: "clientName", label: "Cliente" },
+  { key: "extraClients", label: "Otros pacientes" },
   { key: "serviceName", label: "Servicio" },
   { key: "professionalName", label: "Profesional" },
   { key: "status", label: "Estado", format: (value: AppointmentStatus) => APPOINTMENT_STATUS_CONFIG[value].label },

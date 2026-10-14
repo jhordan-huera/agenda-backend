@@ -620,6 +620,36 @@ export const adminService = {
     });
   },
 
+  /**
+   * Citas con varios pacientes (sesiones de pareja, hasta 3 por cita) en un negocio. Sólo el super admin;
+   * queda en la actividad del negocio. Al apagarlo, las citas que ya tienen varios pacientes los conservan
+   * (sólo se pueden quitar).
+   */
+  async setMultiClientAppointments(ctx: RequestContext, businessId: string, value: unknown): Promise<Business> {
+    const actor = authorizeSuperAdmin(ctx);
+    const enabled = parseInput(z.boolean({ error: "Indica si el negocio puede tener citas con varios pacientes" }), value);
+    return transaction(async (db) => {
+      const current = await findBusiness(db, businessId, true);
+      if (current.multiClientAppointments === enabled) return current;
+      const business = (await one<Business>(
+        db,
+        `update businesses set multi_client_appointments = $2 where id = $1 returning ${businessColumns()}`,
+        [businessId, enabled],
+      ))!;
+      const label = (on: boolean) => (on ? "Sí" : "No");
+      await logAudit(db, {
+        businessId,
+        actor,
+        action: "platform.multi_client_appointments_changed",
+        entityType: "business",
+        entityId: businessId,
+        summary: `${enabled ? "Activó" : "Desactivó"} las citas con varios pacientes en ${business.name}`,
+        changes: [{ label: "Citas con varios pacientes", before: label(current.multiClientAppointments), after: label(enabled) }],
+      });
+      return business;
+    });
+  },
+
   /** Solicitudes de cambio de plan: las pendientes primero y después las resueltas en los últimos 30 días. */
   async listPlanRequests(ctx: RequestContext): Promise<AdminPlanRequest[]> {
     authorizeSuperAdmin(ctx);

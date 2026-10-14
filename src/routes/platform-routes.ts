@@ -165,6 +165,11 @@ adminRoutes.put(
   "/businesses/:businessId/client-required-fields",
   handle((req) => adminService.setClientRequiredFields(req.ctx, req.params.businessId, req.body)),
 );
+// Citas con varios pacientes en el negocio: { enabled: boolean }.
+adminRoutes.put(
+  "/businesses/:businessId/multi-client-appointments",
+  handle((req) => adminService.setMultiClientAppointments(req.ctx, req.params.businessId, req.body?.enabled)),
+);
 adminRoutes.get(
   "/categories",
   handle((req) => categoryService.listForAdmin(req.ctx)),

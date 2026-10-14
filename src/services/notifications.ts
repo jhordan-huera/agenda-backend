@@ -2,11 +2,13 @@ import { config } from "../config.ts";
 import { appointmentColumns, businessColumns } from "../db/columns.ts";
 import { many, one, type Db } from "../db/pool.ts";
 import { emailTemplates, type AppointmentEmailData, type EmailContent } from "../shared/lib/email/templates.ts";
+import { joinNames } from "../shared/lib/format.ts";
 import { addDaysISO, getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
 import type { Appointment, BankAccount, Business, EmailType } from "../shared/types/index.ts";
+import { appointmentClientIds } from "./appointment-clients.ts";
 import { newPatientEmailHold, thirdPartyEmailHold } from "./email-limits.ts";
 import { PASSWORD_MASK, scheduleEmailDelivery } from "./mailer.ts";
-import { isQuietTime, minutesUntilStart, reminderKeySql } from "./reminder-rules.ts";
+import { isQuietTime, minutesUntilStart, reminderKeyFor, reminderKeySql } from "./reminder-rules.ts";
 
 export { PASSWORD_MASK };
 
@@ -68,10 +70,19 @@ export async function queueEmail(
   return queued;
 }
 
+/** Un paciente de la cita a quien se le escribe ("" = sin email). */
+interface Recipient {
+  clientId: string;
+  name: string;
+  email: string;
+}
+
 interface AppointmentContext {
   business: Business;
+  /** Los pacientes de la cita: el principal primero y luego los demás (ver appointment-clients.ts). */
+  recipients: Recipient[];
+  /** Todos sus nombres ("Ana Torres y Carlos Pérez"): avisos al negocio y al profesional, y la copia. */
   clientName: string;
-  clientEmail: string;
   serviceName: string;
   /** Los clientes ven el precio de este servicio (ver isPriceVisible). */
   showPrice: boolean;
@@ -95,9 +106,12 @@ async function loadAppointmentContext(db: Db, appointment: Appointment): Promise
   const business = await one<Business>(db, `select ${businessColumns()} from businesses where id = $1`, [
     appointment.businessId,
   ]);
-  const details = await one<Omit<AppointmentContext, "business">>(
+  const ids = appointmentClientIds(appointment);
+  const rows = await many<Recipient>(db, `select id as "clientId", name, email from clients where id = any($1::uuid[])`, [ids]);
+  const recipients = ids.flatMap((id) => rows.filter((row) => row.clientId === id));
+  const details = await one<Omit<AppointmentContext, "business" | "recipients" | "clientName">>(
     db,
-    `select c.name as "clientName", c.email as "clientEmail", s.name as "serviceName",
+    `select s.name as "serviceName",
             s.show_price as "showPrice",
             coalesce(p.meeting_url, '') as "meetingUrl",
             coalesce(p.bank_accounts, '[]'::jsonb) as "bankAccounts",
@@ -106,13 +120,14 @@ async function loadAppointmentContext(db: Db, appointment: Appointment): Promise
             coalesce(p.notify_new_appointments, false) as "professionalNotify",
             p.user_id as "professionalUserId",
             coalesce(nullif(p.email, ''), u.email, '') as "professionalCopyEmail"
-       from clients c cross join services s
-       left join professionals p on p.id = $3
+       from services s
+       left join professionals p on p.id = $2
        left join users u on u.id = p.user_id
-      where c.id = $1 and s.id = $2`,
-    [appointment.clientId, appointment.serviceId, appointment.professionalId],
+      where s.id = $1`,
+    [appointment.serviceId, appointment.professionalId],
   );
-  return business && details ? { business, ...details } : null;
+  if (!business || !details || recipients.length === 0) return null;
+  return { business, recipients, clientName: joinNames(recipients.map((recipient) => recipient.name)), ...details };
 }
 
 function buildEmailData(context: AppointmentContext, appointment: Appointment): AppointmentEmailData {
@@ -166,6 +181,7 @@ export function isRescheduled(before: Appointment, after: Appointment): boolean 
 }
 
 const sameEmail = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+const emailKey = (email: string) => email.trim().toLowerCase();
 
 /** Enlace a la cita en la agenda del panel. */
 const agendaUrlOf = (appointment: Appointment) =>
@@ -249,11 +265,16 @@ function clientMessageFor(settings: Business["notificationSettings"], before: Ap
 }
 
 /**
- * Emails automáticos al crear o cambiar una cita, según la configuración de notificaciones. Cada
- * email que sale al paciente (no los recordatorios) le llega también, como copia, al profesional de
- * la cita; a ese email ya no se le manda además el aviso de cita nueva o de nueva reserva.
+ * Emails automáticos al crear o cambiar una cita, según la configuración de notificaciones, a cada
+ * paciente de la cita con su nombre (citas con varios pacientes, spec 004):
+ * - los que ya estaban reciben el aviso del cambio;
+ * - los que se agregan a una cita activa, el de una cita nueva (solicitud o confirmación);
+ * - los que se quitan de una cita activa, el de cancelación.
+ * Un solo email por dirección (una pareja con el mismo correo). Cada email que sale al paciente (no
+ * los recordatorios) le llega también, una sola vez y con los nombres de todos, como copia al
+ * profesional de la cita; a ese email ya no se le manda además el aviso de cita nueva o de nueva reserva.
  * `actorUserId`: quién hizo el cambio desde el panel (al profesional no se le avisa de lo que hizo él).
- * Devuelve true si se envió un email al cliente.
+ * Devuelve true si se envió un email a algún paciente.
  */
 export async function notifyAppointmentChange(
   db: Db,
@@ -265,33 +286,63 @@ export async function notifyAppointmentChange(
   const context = await loadAppointmentContext(db, after);
   if (!context) return false;
   const { business } = context;
+  const settings = business.notificationSettings;
   const data = buildEmailData(context, after);
-  const message = clientMessageFor(business.notificationSettings, before, after);
-
+  const beforeIds = before ? appointmentClientIds(before) : [];
+  const afterIds = appointmentClientIds(after);
+  const written = new Set<string>();
   let sentToClient = false;
-  let copiedTo = "";
-  if (message && context.clientEmail) {
+  let copied: { message: ClientMessage; data: AppointmentEmailData } | null = null;
+
+  const write = async (recipient: Recipient, message: ClientMessage | null, emailData: AppointmentEmailData) => {
+    if (!message || !recipient.email || written.has(emailKey(recipient.email))) return;
+    written.add(emailKey(recipient.email));
     // La reserva online de un paciente nuevo: tope por negocio (además del general a terceros).
-    const hold = origin === "booking_page" ? await newPatientEmailHold(db, business.id, after.clientId) : null;
-    sentToClient = await queueEmail(db, {
+    const hold = origin === "booking_page" ? await newPatientEmailHold(db, business.id, recipient.clientId) : null;
+    const queued = await queueEmail(db, {
       businessId: business.id,
       type: message.type,
-      to: context.clientEmail,
+      to: recipient.email,
       appointmentId: after.id,
       hold,
-      ...message.template(data),
+      ...message.template({ ...emailData, clientName: recipient.name }),
     });
-    const copyTo = context.professionalCopyEmail;
-    if (sentToClient && copyTo && !sameEmail(copyTo, context.clientEmail)) {
-      await queueEmail(db, {
-        businessId: business.id,
-        type: "appointment_copy",
-        to: copyTo,
-        appointmentId: after.id,
-        ...message.template({ ...data, professionalCopy: { agendaUrl: agendaUrlOf(after), pending: after.status === "pending" } }),
-      });
-      copiedTo = copyTo;
+    if (queued) {
+      sentToClient = true;
+      copied ??= { message, data: emailData };
     }
+  };
+
+  for (const recipient of context.recipients) {
+    const added = before !== null && !beforeIds.includes(recipient.clientId);
+    await write(recipient, clientMessageFor(settings, added ? null : before, after), data);
+  }
+  // Quitados de una cita que seguía activa: para ellos, la cita se canceló.
+  const removedIds = beforeIds.filter((id) => !afterIds.includes(id));
+  if (before && removedIds.length > 0 && settings.cancellations && ["pending", "confirmed"].includes(before.status)) {
+    const beforeContext = await loadAppointmentContext(db, before);
+    const cancelled: ClientMessage = { type: "appointment_cancelled", template: emailTemplates.appointmentCancelled };
+    for (const recipient of beforeContext?.recipients.filter((r) => removedIds.includes(r.clientId)) ?? []) {
+      await write(recipient, cancelled, buildEmailData(beforeContext!, { ...before, status: "cancelled" }));
+    }
+  }
+
+  let copiedTo = "";
+  const copyTo = context.professionalCopyEmail;
+  const copy = copied as { message: ClientMessage; data: AppointmentEmailData } | null;
+  if (copy && copyTo && !written.has(emailKey(copyTo))) {
+    await queueEmail(db, {
+      businessId: business.id,
+      type: "appointment_copy",
+      to: copyTo,
+      appointmentId: after.id,
+      ...copy.message.template({
+        ...copy.data,
+        clientName: context.clientName,
+        professionalCopy: { agendaUrl: agendaUrlOf(after), pending: after.status === "pending" },
+      }),
+    });
+    copiedTo = copyTo;
   }
 
   if (!before && origin === "booking_page" && business.email && !sameEmail(business.email, copiedTo)) {
@@ -333,7 +384,11 @@ export async function runReminderJob(db: Db, businessId: string, at: Date = new 
       where a.business_id = $1
         and a.status in ('pending', 'confirmed')
         and a.date between $2 and $3
-        and not exists (select 1 from notifications n where n.dedupe_key = ${reminderKeySql("a")})`,
+        and (not exists (select 1 from notifications n where n.dedupe_key = ${reminderKeySql("a")})
+             or exists (select 1 from appointment_clients ac
+                         where ac.appointment_id = a.id
+                           and not exists (select 1 from notifications n
+                                            where n.dedupe_key = ${reminderKeySql("a")} || ':' || ac.client_id)))`,
     [businessId, now.date, lastDate],
   );
 
@@ -346,17 +401,23 @@ export async function runReminderJob(db: Db, businessId: string, at: Date = new 
     if (settings.confirmations && minutesUntil + minutesSinceScheduled <= windowMinutes) continue;
 
     const context = await loadAppointmentContext(db, appointment);
-    if (!context?.clientEmail) continue;
+    if (!context) continue;
     const when = appointment.date === now.date ? "hoy" : appointment.date === addDaysISO(now.date, 1) ? "mañana" : null;
-    const inserted = await queueEmail(db, {
-      businessId,
-      type: "appointment_reminder",
-      to: context.clientEmail,
-      appointmentId: appointment.id,
-      dedupeKey: reminderKey,
-      ...emailTemplates.appointmentReminder(buildEmailData(context, appointment), when),
-    });
-    if (inserted) sent++;
+    const data = buildEmailData(context, appointment);
+    const written = new Set<string>();
+    for (const recipient of context.recipients) {
+      if (!recipient.email || written.has(emailKey(recipient.email))) continue;
+      written.add(emailKey(recipient.email));
+      const inserted = await queueEmail(db, {
+        businessId,
+        type: "appointment_reminder",
+        to: recipient.email,
+        appointmentId: appointment.id,
+        dedupeKey: reminderKeyFor(reminderKey, appointment, recipient.clientId),
+        ...emailTemplates.appointmentReminder({ ...data, clientName: recipient.name }, when),
+      });
+      if (inserted) sent++;
+    }
   }
   return sent;
 }
@@ -383,22 +444,27 @@ export async function runDailyAgendaJob(db: Db, businessId: string, at?: ZonedNo
   );
   let sent = 0;
   for (const professional of professionals) {
-    const appointments = await many<{
+    const rows = await many<{
       time: string;
       clientName: string;
+      extraNames: string[];
       serviceName: string;
       homeVisit: Appointment["homeVisit"];
       isVirtual: boolean;
     }>(
       db,
       `select to_char(a.start_time, 'HH24:MI') || '–' || to_char(a.end_time, 'HH24:MI') as time,
-              c.name as "clientName", s.name as "serviceName", a.home_visit as "homeVisit", a.is_virtual as "isVirtual"
+              c.name as "clientName", s.name as "serviceName", a.home_visit as "homeVisit", a.is_virtual as "isVirtual",
+              coalesce((select array_agg(ec.name order by ac.created_at, ac.client_id)
+                          from appointment_clients ac join clients ec on ec.id = ac.client_id
+                         where ac.appointment_id = a.id), '{}') as "extraNames"
          from appointments a join clients c on c.id = a.client_id join services s on s.id = a.service_id
         where a.professional_id = $1 and a.date = $2 and a.status in ('pending', 'confirmed')
         order by a.start_time`,
       [professional.id, now.date],
     );
-    if (appointments.length === 0) continue;
+    if (rows.length === 0) continue;
+    const appointments = rows.map(({ extraNames, ...row }) => ({ ...row, clientName: joinNames([row.clientName, ...extraNames]) }));
     const inserted = await queueEmail(db, {
       businessId,
       type: "professional_daily_agenda",

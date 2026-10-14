@@ -30,3 +30,21 @@ export const minutesUntilStart = (date: string, startTime: string, now: ZonedNow
 export const reminderKeySql = (alias: string) =>
   `'reminder:' || ${alias}.id || ':' || to_char(${alias}.date, 'YYYY-MM-DD') || 'T' || to_char(${alias}.start_time, 'HH24:MI')
    || ':' || floor(extract(epoch from ${alias}.scheduled_at) * 1000)::bigint`;
+
+/**
+ * Clave del recordatorio de un paciente de la cita: la del principal es la de la cita (la de siempre;
+ * los recordatorios que ya estaban en cola siguen valiendo) y la de cada uno de los otros pacientes
+ * (citas con varios pacientes, spec 004) le añade ":<id del paciente>".
+ */
+export const reminderKeyFor = (reminderKey: string, appointment: { clientId: string }, clientId: string) =>
+  clientId === appointment.clientId ? reminderKey : `${reminderKey}:${clientId}`;
+
+/**
+ * Condición SQL "el recordatorio `notificationAlias` sigue valiendo para la cita `appointmentAlias`": es
+ * de su fecha y hora actuales y, si es de uno de los otros pacientes, ese paciente sigue en la cita.
+ */
+export const reminderCurrentSql = (notificationAlias: string, appointmentAlias: string) =>
+  `(${notificationAlias}.dedupe_key = ${reminderKeySql(appointmentAlias)}
+    or exists (select 1 from appointment_clients ac
+                where ac.appointment_id = ${appointmentAlias}.id
+                  and ${notificationAlias}.dedupe_key = ${reminderKeySql(appointmentAlias)} || ':' || ac.client_id))`;

@@ -50,9 +50,15 @@ export async function agendaScope(db: Db, actor: Actor, businessId: string): Pro
  * historia clínica. `professionalParam` y `userParam` son los números de parámetro ($n) con esos valores.
  */
 export function ownClientCondition(alias: string, professionalParam: number, userParam: number): string {
+  // También los otros pacientes de las citas de su agenda (citas con varios pacientes): los agrega el
+  // panel, nunca la reserva online, así que esas citas no quedan pendientes de acceso por ellos.
   return `(${alias}.created_by = $${userParam}
            or exists (select 1 from appointments own
                        where own.client_id = ${alias}.id and own.professional_id = $${professionalParam}
+                         and not own.client_access_pending)
+           or exists (select 1 from appointment_clients ownextra
+                        join appointments own on own.id = ownextra.appointment_id
+                       where ownextra.client_id = ${alias}.id and own.professional_id = $${professionalParam}
                          and not own.client_access_pending))`;
 }
 

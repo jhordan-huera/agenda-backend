@@ -287,6 +287,7 @@ function toPublicBusiness({
   clinicalDefaultTemplateId: _template,
   professionalScope: _scope,
   clientRequiredFields: _required,
+  multiClientAppointments: _multiClient,
   createdAt: _created,
   ...business
 }: Business): PublicBusiness {
