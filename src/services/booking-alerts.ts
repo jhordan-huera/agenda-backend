@@ -39,9 +39,11 @@ export interface OnlineBooking {
   startTime: string;
   place: keyof typeof PLACE_LABELS;
   status: Appointment["status"];
-  /** El paciente se creó con esta reserva (no estaba en el negocio). */
-  newClient: boolean;
-  client: { name: string; email: string; phone: string };
+  /**
+   * Las personas de la reserva: quien reservó primero y, en una sesión en pareja o en familia, las
+   * demás. `newClient`: se creó con esta reserva (no estaba en el negocio).
+   */
+  clients: { name: string; email: string; phone: string; newClient: boolean }[];
   /** Los emails de la reserva y cómo están: `reason`, por qué no salió (un tope diario, un fallo). */
   emails: { type: EmailType; to: string; status: "queued" | "sent" | "failed"; reason: string | null }[];
 }
@@ -63,8 +65,10 @@ function describeEmailStatus(email: OnlineBooking["emails"][number]): string {
 }
 
 export function onlineBookingNotice(booking: OnlineBooking): BookingNotice {
-  const { client } = booking;
-  const patient = [shortName(client.name), client.email && maskEmail(client.email), maskPhone(client.phone)].filter(Boolean).join(" · ");
+  const patients = booking.clients.map((client) => {
+    const patient = [shortName(client.name), client.email && maskEmail(client.email), maskPhone(client.phone)].filter(Boolean).join(" · ");
+    return `${client.newClient ? "Paciente nuevo" : "Ya era paciente"}: ${patient}`;
+  });
   const emails = booking.emails
     .filter((email) => EMAIL_ROLES[email.type])
     .map((email) => `• ${EMAIL_ROLES[email.type]} → ${maskEmail(email.to)}${describeEmailStatus(email)}`);
@@ -72,7 +76,7 @@ export function onlineBookingNotice(booking: OnlineBooking): BookingNotice {
     title: "Agenda360: nueva reserva",
     message: [
       `${booking.businessName} · ${formatShortDate(booking.date)} ${booking.startTime}`,
-      `${booking.newClient ? "Paciente nuevo" : "Ya era paciente"}: ${patient}`,
+      ...patients,
       `${booking.serviceName} · ${booking.durationMinutes} min · ${booking.price > 0 ? formatPrice(booking.price, booking.currency) : "gratis"}`,
       [booking.professionalName && `Con ${booking.professionalName}`, PLACE_LABELS[booking.place]].filter(Boolean).join(" · "),
       booking.status === "pending" ? "Pendiente de confirmar" : booking.status === "confirmed" ? "Confirmada" : "Ya cancelada",
@@ -88,7 +92,8 @@ export function onlineBookingNotice(booking: OnlineBooking): BookingNotice {
 /**
  * Las reservas por la página creadas en (since, until], las más antiguas primero (hasta `limit`), y
  * cuántas son en total. Sin `since` (la primera pasada), las del último día. Un paciente es nuevo si
- * se creó con la reserva: misma transacción, mismo instante.
+ * se creó con la reserva: misma transacción, mismo instante. Con las otras personas de una sesión en
+ * pareja o en familia, en el orden en que se muestran.
  */
 export async function findOnlineBookings(
   db: Db,
@@ -115,6 +120,7 @@ export async function findOnlineBookings(
     clientName: string;
     clientEmail: string;
     clientPhone: string;
+    extraClients: OnlineBooking["clients"];
   }>(
     db,
     `select a.id, count(*) over ()::int as total, b.id as "businessId", b.name as "businessName", b.currency,
@@ -122,7 +128,12 @@ export async function findOnlineBookings(
             to_char(a.date, 'YYYY-MM-DD') as date, to_char(a.start_time, 'HH24:MI') as "startTime",
             a.is_virtual as "isVirtual", a.home_visit is not null as "homeVisit", a.status,
             (c.source = 'booking_page' and c.created_at = a.created_at) as "newClient",
-            c.name as "clientName", c.email as "clientEmail", c.phone as "clientPhone"
+            c.name as "clientName", c.email as "clientEmail", c.phone as "clientPhone",
+            coalesce((select json_agg(json_build_object('name', ec.name, 'email', ec.email, 'phone', ec.phone,
+                                                        'newClient', ec.source = 'booking_page' and ec.created_at = a.created_at)
+                                      order by ac.created_at, ac.client_id)
+                        from appointment_clients ac join clients ec on ec.id = ac.client_id
+                       where ac.appointment_id = a.id), '[]') as "extraClients"
        from appointments a
        join businesses b on b.id = a.business_id
        join services s on s.id = a.service_id
@@ -154,8 +165,10 @@ export async function findOnlineBookings(
       startTime: row.startTime,
       place: row.isVirtual ? "virtual" : row.homeVisit ? "home" : "business",
       status: row.status,
-      newClient: row.newClient,
-      client: { name: row.clientName, email: row.clientEmail, phone: row.clientPhone },
+      clients: [
+        { name: row.clientName, email: row.clientEmail, phone: row.clientPhone, newClient: row.newClient },
+        ...row.extraClients,
+      ],
       emails: emails.filter((email) => email.appointmentId === row.id).map(({ appointmentId: _id, ...email }) => email),
     }),
   );

@@ -71,6 +71,7 @@ export const SERVICE_FIELDS: ChangeField<ServiceForAudit>[] = [
   { key: "modes", label: "Modalidad", format: (value: ServiceMode[]) => describeServiceModes(value) },
   { key: "homeVisitFee", label: "Recargo a domicilio", format: money },
   { key: "clinicalTemplateName", label: "Formato de historia clínica" },
+  { key: "peoplePerSession", label: "Personas por sesión" },
   { key: "isActive", label: "Activo", format: yesNo },
 ];
 

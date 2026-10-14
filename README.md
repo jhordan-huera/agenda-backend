@@ -393,6 +393,30 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
     - lo cobrado se suma sólo al paciente principal.
   - **Alcance:** un profesional con «sólo sus pacientes» ve a los adicionales de su agenda.
   - **Borrado:** borrar a un adicional sólo lo quita de la cita.
+- **Servicios en pareja o en familia y su reserva online** (migración 033, spec
+  `specs/005-servicios-en-pareja`).
+  - **El servicio:** `services.people_per_session` (`peoplePerSession`, de 1 a 3, por defecto 1).
+    - Sólo vale con el interruptor de las citas con varios pacientes (`peopleFor(business, service)`).
+    - Sin el interruptor, o si el cuerpo no trae el campo, se conserva el guardado.
+    - El perfil público manda el valor efectivo: 1 sin el interruptor.
+  - **La reserva** (`POST /public/businesses/:slug/bookings`):
+    - en un servicio de 2 o 3 personas, el cuerpo trae `extraPatients` (`{ documentId, name, email, phone }`);
+    - quien reserva es el paciente principal;
+    - cada persona se reconoce por su cédula con la misma regla (`resolveBookingClient`: email o
+      teléfono que coincidan, ficha antigua sin cédula, o paciente nuevo con los topes del día y del
+      plan);
+    - las demás quedan en `appointment_clients`, todo en una transacción;
+    - el límite de citas por persona al día cuenta también las sesiones en las que va como otra
+      paciente;
+    - el reintento compara las cédulas de todas.
+  - **Emails:**
+    - los datos de pago van sólo al paciente principal, también en las citas del panel;
+    - el email de solicitud de las demás personas dice quién reservó (`bookedBy`);
+    - el tope de emails a pacientes nuevos cuenta a todas las personas.
+  - **«Sólo sus pacientes»:** cada otra persona de una reserva online que ya existía queda con
+    `appointment_clients.client_access_pending` (trigger de la migración 033, con las reglas de la
+    028) hasta que el negocio gestione la cita: el profesional ve su nombre, pero no su ficha.
+  - **ntfy:** el aviso de la reserva tiene una línea por persona.
 - **Colores de marca** (migración 018): `businesses.brand_colors` (jsonb, `{ primary, highlight }` en
   `#rrggbb`, con un check en la base; null = los de Agenda360). Se cambian con `PATCH
   /businesses/:id` (`brandColors`, permiso `business.manage`), quedan en la actividad y llegan al

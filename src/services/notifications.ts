@@ -270,6 +270,8 @@ function clientMessageFor(settings: Business["notificationSettings"], before: Ap
  * - los que ya estaban reciben el aviso del cambio;
  * - los que se agregan a una cita activa, el de una cita nueva (solicitud o confirmación);
  * - los que se quitan de una cita activa, el de cancelación.
+ * Los datos de pago van sólo al principal; en una reserva por la página, el email de los demás dice
+ * quién la hizo (spec 005).
  * Un solo email por dirección (una pareja con el mismo correo). Cada email que sale al paciente le
  * llega también, una sola vez y con los nombres de todos, como copia al profesional de la cita (la de
  * los recordatorios, en runReminderJob); a ese email ya no se le manda además el aviso de cita nueva o
@@ -295,18 +297,22 @@ export async function notifyAppointmentChange(
   let sentToClient = false;
   let copied: { message: ClientMessage; data: AppointmentEmailData } | null = null;
 
+  // Quien reservó una sesión en pareja o en familia por la página (el principal): se lo dice a los demás.
+  const bookedBy = !before && origin === "booking_page" ? context.recipients[0]?.name : undefined;
   const write = async (recipient: Recipient, message: ClientMessage | null, emailData: AppointmentEmailData) => {
     if (!message || !recipient.email || written.has(emailKey(recipient.email))) return;
     written.add(emailKey(recipient.email));
     // La reserva online de un paciente nuevo: tope por negocio (además del general a terceros).
     const hold = origin === "booking_page" ? await newPatientEmailHold(db, business.id, recipient.clientId) : null;
+    // Los datos de pago, sólo al principal: el precio es de la sesión y lo paga una persona (spec 005).
+    const own = recipient.clientId === after.clientId ? {} : { payment: null, bookedBy };
     const queued = await queueEmail(db, {
       businessId: business.id,
       type: message.type,
       to: recipient.email,
       appointmentId: after.id,
       hold,
-      ...message.template({ ...emailData, clientName: recipient.name }),
+      ...message.template({ ...emailData, ...own, clientName: recipient.name }),
     });
     if (queued) {
       sentToClient = true;

@@ -41,8 +41,7 @@ const booking: OnlineBooking = {
   startTime: "16:30",
   place: "business",
   status: "pending",
-  newClient: true,
-  client: { name: "Juan Pérez", email: "juan.perez@gmail.com", phone: "0994445555" },
+  clients: [{ name: "Juan Pérez", email: "juan.perez@gmail.com", phone: "0994445555", newClient: true }],
   emails: [
     { type: "booking_created", to: "juan.perez@gmail.com", status: "sent", reason: null },
     { type: "appointment_copy", to: "ana.torres@gmail.com", status: "sent", reason: null },
@@ -74,7 +73,7 @@ ok(
 );
 notice = onlineBookingNotice({
   ...booking,
-  newClient: false,
+  clients: [{ ...booking.clients[0], newClient: false }],
   price: 0,
   place: "home",
   emails: [{ type: "booking_created", to: "juan.perez@gmail.com", status: "failed", reason: "No enviado: se alcanzó el tope de 300 emails a terceros en 24 h." }],
@@ -83,6 +82,15 @@ ok(/\nYa era paciente: /.test(notice.message) && /· gratis\n/.test(notice.messa
 ok(/• Al paciente → ju\*\*\*@gmail\.com \(no salió: se alcanzó el tope/.test(notice.message), "un email que no salió dice por qué", notice.message);
 notice = onlineBookingNotice({ ...booking, emails: [{ type: "booking_created", to: "juan.perez@gmail.com", status: "failed", reason: "550 juan.perez@gmail.com no existe" }] });
 ok(!notice.message.includes("juan.perez@gmail.com"), "sin el email completo aunque venga en el error de Gmail", notice.message);
+notice = onlineBookingNotice({
+  ...booking,
+  clients: [...booking.clients, { name: "María López Vera", email: "maria.lopez@gmail.com", phone: "0991112222", newClient: false }],
+});
+ok(
+  notice.message.includes("\nPaciente nuevo: Juan P. · ju***@gmail.com · 099***5555\nYa era paciente: María L. · ma***@gmail.com · 099***2222\n"),
+  "sesión en pareja: una línea por persona, quien reservó primero y todo a medias",
+  notice.message,
+);
 const more = buildBookingNotices({ onlineBookings: 13, bookingNotices: Array.from({ length: 10 }, () => onlineBookingNotice(booking)) } as never);
 ok(more.length === 11 && /…y 3 reservas más/.test(more[10].message), "con muchas, detalla 10 y dice cuántas faltan", more.at(-1));
 
@@ -178,6 +186,7 @@ try {
   ok(r.status === 200 && mine().length === 2 && /\nYa era paciente: Paciente A\./.test(mine()[1]?.message ?? ""), "otra cita del mismo paciente: «Ya era paciente»", mine()[1]?.message);
   await runCron();
   ok(mine().length === 2, "cada reserva se avisa una sola vez", mine().length);
+
 } finally {
   ntfy.close();
 }

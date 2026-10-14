@@ -29,6 +29,11 @@ export const serviceSchema = z
     homeVisitFee: moneyField.default(0),
     /** Formato de historia clínica de las evoluciones de este servicio (null: el habitual). */
     clinicalTemplateId: z.string().min(1).max(80).nullable().default(null),
+    /**
+     * Personas por sesión (1, 2 o 3; sólo con las citas con varios pacientes habilitadas). Sin valor
+     * por defecto: si no llega (un panel anterior, o un negocio sin habilitar), se conserva el guardado.
+     */
+    peoplePerSession: z.number().int().min(1).max(3).optional(),
     isActive: z.boolean(),
   })
   .transform(({ location, modes, ...service }) => ({

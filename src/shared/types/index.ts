@@ -351,6 +351,11 @@ export interface Service {
   homeVisitFee: number;
   /** Formato de historia clínica propuesto al registrar la evolución de una cita de este servicio. */
   clinicalTemplateId: string | null;
+  /**
+   * Personas por sesión: 1 (individual), 2 (pareja) o 3 (familia). Sólo vale si el negocio tiene
+   * multiClientAppointments; en la página de reservas llega ya con el valor efectivo (1 sin él).
+   */
+  peoplePerSession: number;
   isActive: boolean;
   createdAt: ISODateTime;
 }

@@ -52,6 +52,11 @@ export interface AppointmentEmailData {
    * paciente en el asunto y, arriba, una nota y el botón para abrir la cita en la agenda.
    */
   professionalCopy?: { agendaUrl: string; pending: boolean };
+  /**
+   * Sesión en pareja o en familia reservada por la página: quién la reservó, en el email de solicitud
+   * de cada una de las demás personas (no reservaron ellas).
+   */
+  bookedBy?: string;
 }
 
 /* ------------------------------------------------------------------ Piezas -- */
@@ -391,7 +396,12 @@ export const emailTemplates = {
       title: "Tu cita ha sido reservada",
       greeting: `Hola ${data.clientName}:`,
       blocks: [
-        { kind: "text", text: `Tu cita en ${data.businessName} ha sido reservada. Te avisaremos cuando quede confirmada.` },
+        {
+          kind: "text",
+          text: data.bookedBy
+            ? `${data.bookedBy} reservó para ti una cita en ${data.businessName}. Te avisaremos cuando quede confirmada.`
+            : `Tu cita en ${data.businessName} ha sido reservada. Te avisaremos cuando quede confirmada.`,
+        },
         appointmentDetails(data),
         ...payment(data),
         ...policy(data),
