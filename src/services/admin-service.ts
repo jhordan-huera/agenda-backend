@@ -25,6 +25,7 @@ import {
   isSameBusinessName,
   planIdSchema,
   planRejectionSchema,
+  panelColorsSchema,
   platformAdminSchema,
   platformSettingsSchema,
   userPasswordSchema,
@@ -38,6 +39,7 @@ import type {
   AdminUserSummary,
   AuditLog,
   AuditLogPage,
+  BrandColors,
   Business,
   BusinessRole,
   BusinessStatus,
@@ -1101,6 +1103,17 @@ export const adminService = {
       pool,
       `select ${notificationColumns()} from notifications order by created_at desc limit 200`,
     );
+  },
+
+  /**
+   * Colores del panel de plataforma (spec 007): se guardan en la cuenta de quien lo pide, nunca en la
+   * de otro. Sin auditoría: es una preferencia personal que no cambia la plataforma.
+   */
+  async updatePanelColors(ctx: RequestContext, input: unknown): Promise<{ colors: BrandColors | null }> {
+    const actor = authorizeSuperAdmin(ctx);
+    const { colors } = parseInput(panelColorsSchema, input);
+    await pool.query("update users set panel_colors = $2 where id = $1", [actor.userId, colors]);
+    return { colors };
   },
 
   async updateSettings(ctx: RequestContext, input: unknown): Promise<PlatformSettings> {

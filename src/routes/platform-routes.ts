@@ -230,3 +230,8 @@ adminRoutes.put(
   "/settings",
   handle((req) => adminService.updateSettings(req.ctx, req.body)),
 );
+// Colores del panel de plataforma de la cuenta que lo pide (spec 007).
+adminRoutes.put(
+  "/panel-colors",
+  handle((req) => adminService.updatePanelColors(req.ctx, req.body)),
+);
