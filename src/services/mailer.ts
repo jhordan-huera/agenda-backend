@@ -5,7 +5,7 @@ import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { escapeHtml } from "../shared/lib/email/layout.ts";
 import { getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
 import { createGmailSender } from "./gmail-transport.ts";
-import { isQuietTime, minutesUntilQuietEnds, minutesUntilStart, reminderCurrentSql } from "./reminder-rules.ts";
+import { isQuietTime, isReminderEmail, isReminderSql, minutesUntilQuietEnds, minutesUntilStart, reminderCurrentSql } from "./reminder-rules.ts";
 
 /**
  * Envío de emails con Gmail (OAuth2, por SMTP o por su API: ver gmail-transport.ts). Los
@@ -71,7 +71,9 @@ interface QueuedEmail {
   secret: string | null;
   /** Intentos, contando éste. */
   attempts: number;
-  /** Recordatorios: la cita tal como está ahora (null si ya no existe) y la zona del negocio. */
+  /** Clave única (recordatorios y su copia al profesional, agenda del día); null en los demás. */
+  dedupeKey: string | null;
+  /** Recordatorios (y su copia): la cita tal como está ahora (null si ya no existe) y la zona del negocio. */
   appointmentStatus: string | null;
   appointmentDate: string | null;
   appointmentTime: string | null;
@@ -138,12 +140,12 @@ function zonedNowOf(email: QueuedEmail): ZonedNow {
 type ReminderCheck = { action: "send" } | { action: "discard"; reason: string } | { action: "postpone"; minutes: number };
 
 /**
- * Un recordatorio se comprueba otra vez antes de salir (puede llevar un rato en cola o
- * reintentándose): si la cita se canceló, cambió de fecha u hora o ya empezó, se descarta (el
- * cuerpo guardado diría algo falso); en las horas de silencio del negocio, espera a las 7:00.
+ * Un recordatorio (o su copia al profesional) se comprueba otra vez antes de salir (puede llevar un
+ * rato en cola o reintentándose): si la cita se canceló, cambió de fecha u hora o ya empezó, se
+ * descarta (el cuerpo guardado diría algo falso); en las horas de silencio del negocio, espera a las 7:00.
  */
 function checkReminder(email: QueuedEmail): ReminderCheck {
-  if (email.type !== "appointment_reminder") return { action: "send" };
+  if (!isReminderEmail(email)) return { action: "send" };
   if (!email.appointmentStatus || !["pending", "confirmed"].includes(email.appointmentStatus) || !email.reminderCurrent) {
     return { action: "discard", reason: "Recordatorio descartado: la cita se canceló o cambió de fecha u hora." };
   }
@@ -169,17 +171,17 @@ async function claimBatch(skipReminders: boolean): Promise<QueuedEmail[]> {
         where id in (
           select id from notifications
            where status = 'queued' and next_attempt_at <= now()
-                 ${skipReminders ? "and type <> 'appointment_reminder'" : ""}
+                 ${skipReminders ? `and not ${isReminderSql("notifications")}` : ""}
            order by created_at
            limit $1
              for update skip locked)
     returning id, type, to_email, subject, body, html, secret, attempts, appointment_id, dedupe_key, created_at
      )
-     select c.id, c.type, c.to_email as "to", c.subject, c.body, c.html, c.secret, c.attempts,
+     select c.id, c.type, c.to_email as "to", c.subject, c.body, c.html, c.secret, c.attempts, c.dedupe_key as "dedupeKey",
             a.status as "appointmentStatus", a.date as "appointmentDate", a.start_time as "appointmentTime",
             b.timezone, ${reminderCurrentSql("c", "a")} as "reminderCurrent"
        from claimed c
-       left join appointments a on c.type = 'appointment_reminder' and a.id = c.appointment_id
+       left join appointments a on ${isReminderSql("c")} and a.id = c.appointment_id
        left join businesses b on b.id = a.business_id
       order by c.created_at`,
     [BATCH_SIZE, CLAIM_MINUTES],
@@ -242,7 +244,7 @@ async function deliver(email: QueuedEmail, send: (email: OutgoingEmail) => Promi
     // Último intento, o un recordatorio de una cita que ya empezó: no se reintenta.
     const giveUp =
       email.attempts >= MAX_ATTEMPTS ||
-      (email.type === "appointment_reminder" && minutesUntilStart(email.appointmentDate!, email.appointmentTime!, zonedNowOf(email)) <= 0);
+      (isReminderEmail(email) && minutesUntilStart(email.appointmentDate!, email.appointmentTime!, zonedNowOf(email)) <= 0);
     await pool.query(
       `update notifications
           set last_error = $2,
@@ -273,8 +275,8 @@ let pendingRun = false;
  * Envía los emails en cola que ya toca enviar. Si ya está trabajando, se repite al terminar (y
  * devuelve un resumen vacío). `maxBatches` limita la pasada; `deadline` (Date.now()) es la hora
  * a partir de la cual no empieza envíos nuevos (lo reservado y sin enviar vuelve a la cola);
- * `skipReminders` deja los recordatorios de citas para el cron de GitHub (scripts/cron.ts), que
- * es quien los envía. `send`: sólo para las pruebas, otra forma de enviar (sin Gmail).
+ * `skipReminders` deja los recordatorios de citas (y sus copias al profesional) para el cron de
+ * GitHub (scripts/cron.ts), que es quien los envía. `send`: sólo para las pruebas, otra forma de enviar (sin Gmail).
  */
 export async function processEmailQueue(
   options: { maxBatches?: number; deadline?: number; skipReminders?: boolean; send?: (email: OutgoingEmail) => Promise<void> } = {},

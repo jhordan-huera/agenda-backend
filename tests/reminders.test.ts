@@ -1,6 +1,6 @@
 // Recordatorios de citas: una zona horaria inválida no frena el cron, horas de silencio (21:00 a 7:00),
-// citas agendadas ya dentro de la ventana, un recordatorio nuevo al reprogramar o reactivar, y el
-// envío, que descarta los que ya no valen.
+// citas agendadas ya dentro de la ventana, un recordatorio nuevo al reprogramar o reactivar, la copia
+// al profesional, y el envío, que descarta los que ya no valen (y sus copias).
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import type { OutgoingEmail } from "../src/services/mailer.ts";
@@ -71,6 +71,14 @@ const insertAppointment = (date: string, startTime: string, scheduledAt: Date, p
   ).split("\n")[0];
 const reminders = (appointmentId: string) =>
   Number(sql(`select count(*) from notifications where type = 'appointment_reminder' and appointment_id = '${appointmentId}'`));
+/** Copias de los recordatorios al profesional (las de los demás emails no llevan clave). */
+const reminderCopies = (appointmentId: string) =>
+  Number(
+    sql(
+      `select count(*) from notifications
+        where type = 'appointment_copy' and dedupe_key like 'reminder:%' and appointment_id = '${appointmentId}'`,
+    ),
+  );
 const runJob = (at: Date) => transaction((db) => runReminderJob(db, businessId, at));
 const longAgo = new Date("2031-03-01T12:00:00Z");
 
@@ -117,8 +125,18 @@ ok(reminders(morning) === 0, "ni a las 2:28 de la madrugada", reminders(morning)
 await runJob(ecuador(day, "07:00"));
 ok(reminders(morning) === 1, "a las 7:00 sale el de la cita de las 10:00", reminders(morning));
 ok(reminders(early) === 0, "el de la cita de las 6:30 ya no: empezó antes de las 7:00", reminders(early));
+const copy = sql(
+  `select subject || ' | ' || to_email from notifications
+    where type = 'appointment_copy' and dedupe_key like 'reminder:%' and appointment_id = '${morning}'`,
+);
+ok(
+  reminderCopies(morning) === 1 && copy.startsWith(`Copia · ${client.name}: Recuerda que tienes una cita hoy | `) && !copy.endsWith("paciente.recordatorios@correo.ec"),
+  "y al profesional, la copia del recordatorio",
+  copy,
+);
+ok(reminderCopies(early) === 0, "sin recordatorio no hay copia", reminderCopies(early));
 await runJob(ecuador(day, "08:00"));
-ok(reminders(morning) === 1, "y no se repite", reminders(morning));
+ok(reminders(morning) === 1 && reminderCopies(morning) === 1, "y no se repiten", [reminders(morning), reminderCopies(morning)]);
 
 console.log("Citas agendadas ya dentro de la ventana del recordatorio");
 const sameDay = insertAppointment("2031-03-13", "18:00", ecuador("2031-03-13", "16:47"));
@@ -163,17 +181,24 @@ const restored = sql(
 ok(restored === "Tu cita ha sido restablecida", "al reactivarla, el paciente recibe que su cita está en pie", restored);
 await runJob(ecuador("2031-03-19", "14:00"));
 ok(reminders(morning) === 3, "y vuelve a tener recordatorio", reminders(morning));
+ok(reminderCopies(morning) === 3, "con su copia al profesional cada vez", reminderCopies(morning));
 
 console.log("Al enviarlos se vuelven a comprobar");
-// Sin otros emails en cola: sólo los de esta prueba.
+// Sin otros emails en cola: sólo los recordatorios de esta prueba y sus copias.
 sql(
   `update notifications set status = 'failed'
-    where status = 'queued' and not (type = 'appointment_reminder' and appointment_id is not distinct from '${morning}')`,
+    where status = 'queued'
+      and not (appointment_id is not distinct from '${morning}' and (type = 'appointment_reminder' or coalesce(dedupe_key, '') like 'reminder:%'))`,
 );
 const queued = sql(
   `select id from notifications where appointment_id = '${morning}' and type = 'appointment_reminder' and status = 'queued' order by created_at`,
 ).split("\n");
 ok(queued.length === 3, "los tres recordatorios siguen en cola (sin Gmail)", queued);
+// Las copias van al email del dueño (datos demo, a ésos no se les envía): a uno de verdad.
+const copyOfReminder = `appointment_id = '${morning}' and type = 'appointment_copy' and dedupe_key like 'reminder:%'`;
+sql(`update notifications set to_email = 'profesional.recordatorios@correo.ec' where ${copyOfReminder}`);
+const queuedCopies = sql(`select id from notifications where ${copyOfReminder} and status = 'queued' order by created_at`).split("\n");
+ok(queuedCopies.length === 3, "y sus tres copias", queuedCopies);
 const sent: OutgoingEmail[] = [];
 const capture = async (email: OutgoingEmail) => {
   sent.push(email);
@@ -187,10 +212,26 @@ ok(/^failed/.test(status(queued[1])), "el de antes de la cancelación, también"
 ok(sent.length === 0 && /^queued · 0/.test(status(queued[2])), "el vigente, a las 23:00 del negocio, espera (sin gastar un intento)", [sent.length, status(queued[2])]);
 const waitHours = Number(sql(`select extract(epoch from next_attempt_at - now()) / 3600 from notifications where id = '${queued[2]}'`));
 ok(waitHours > 6.9 && waitHours <= 8, "hasta las 7:00", waitHours);
-sql(`update notifications set next_attempt_at = now() where id = '${queued[2]}'`);
+ok(
+  /^failed.*descartado/.test(status(queuedCopies[0])) && /^failed.*descartado/.test(status(queuedCopies[1])),
+  "las copias de los que ya no valen también se descartan",
+  [status(queuedCopies[0]), status(queuedCopies[1])],
+);
+ok(/^queued · 0/.test(status(queuedCopies[2])), "y la del vigente espera con él", status(queuedCopies[2]));
+sql(`update notifications set next_attempt_at = now() where id in ('${queued[2]}', '${queuedCopies[2]}')`);
 sql(`update businesses set timezone = '${noonZone}' where id = '${businessId}'`);
+pass = await processEmailQueue({ send: capture, skipReminders: true });
+ok(sent.length === 0 && /^queued/.test(status(queuedCopies[2])), "los envíos desde la app no toman el recordatorio ni su copia: los manda el cron", [
+  sent.length,
+  status(queuedCopies[2]),
+]);
 pass = await processEmailQueue({ send: capture });
-ok(pass.sent === 1 && sent.length === 1 && /^sent/.test(status(queued[2])), "de día sale", [pass, status(queued[2])]);
+ok(
+  pass.sent === 2 && sent.length === 2 && /^sent/.test(status(queued[2])) && /^sent/.test(status(queuedCopies[2])),
+  "de día salen el recordatorio y su copia",
+  [pass, status(queued[2]), status(queuedCopies[2])],
+);
+ok(sent.some((email) => email.to === "profesional.recordatorios@correo.ec" && email.subject.startsWith("Copia · ")), "la copia, al profesional", sent.map((e) => e.subject));
 
 const past = insertAppointment("2025-01-06", "10:00", longAgo, spare);
 sql(
@@ -202,7 +243,7 @@ sql(
 );
 pass = await processEmailQueue({ send: capture });
 const pastStatus = sql(`select status || ' · ' || last_error from notifications where appointment_id = '${past}'`);
-ok(pass.skipped === 1 && /^failed · .*ya empezó/.test(pastStatus) && sent.length === 1, "el de una cita que ya pasó no se envía", pastStatus);
+ok(pass.skipped === 1 && /^failed · .*ya empezó/.test(pastStatus) && sent.length === 2, "el de una cita que ya pasó no se envía", pastStatus);
 sql(`update businesses set timezone = 'America/Guayaquil' where id = '${businessId}'`);
 
 await pool.end();

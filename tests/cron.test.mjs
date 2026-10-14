@@ -75,12 +75,18 @@ sql(`insert into appointments (business_id, client_id, service_id, professional_
 console.log("Cron directo contra la base");
 const queuedBefore = Number(sql("select count(*) from notifications where status = 'queued'"));
 const remindersBefore = Number(sql("select count(*) from notifications where type = 'appointment_reminder'"));
+// Las copias de los recordatorios al profesional (decisión del 2026-10-13) también quedan en cola.
+const reminderCopies = () => Number(sql("select count(*) from notifications where type = 'appointment_copy' and dedupe_key like 'reminder:%'"));
+const copiesBefore = reminderCopies();
 let run = await runScript();
 let first = lastRun();
 const remindersAfter = Number(sql("select count(*) from notifications where type = 'appointment_reminder'"));
 ok(run.code === 0 && first?.report.since === null, "primera ejecución: termina bien y queda en cron_runs", run.output.slice(-300));
 ok(first?.report.reminders > 0 && first.report.reminders === remindersAfter - remindersBefore, "pone en cola los recordatorios de las citas próximas", [first?.report.reminders, remindersAfter - remindersBefore]);
-ok(Number(sql("select count(*) from notifications where status = 'queued'")) === queuedBefore + first.report.reminders, "sin Gmail no envía nada: todo sigue en cola");
+ok(
+  Number(sql("select count(*) from notifications where status = 'queued'")) === queuedBefore + first.report.reminders + reminderCopies() - copiesBefore,
+  "sin Gmail no envía nada: todo sigue en cola (recordatorios y sus copias)",
+);
 ok(/Recordatorios: \d+ · reservas por la página: \d+ · enviados/.test(run.output) && !/@/.test(run.output), "el registro (público en GitHub) sólo lleva cifras, ningún email", run.output.slice(-300));
 ok(received.length === 1 && received[0].priority === 4 && /no tiene acceso a Gmail/.test(received[0].title), "avisa que faltan las credenciales de Gmail", received[0]);
 run = await runScript();

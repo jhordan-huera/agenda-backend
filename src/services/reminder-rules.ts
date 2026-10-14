@@ -39,12 +39,27 @@ export const reminderKeySql = (alias: string) =>
 export const reminderKeyFor = (reminderKey: string, appointment: { clientId: string }, clientId: string) =>
   clientId === appointment.clientId ? reminderKey : `${reminderKey}:${clientId}`;
 
+/** Clave de la copia del recordatorio al profesional (una por cita y versión, como el del principal). */
+export const reminderCopyKey = (reminderKey: string) => `${reminderKey}:copy`;
+
+/**
+ * Los recordatorios y sus copias al profesional (tipo appointment_copy, con clave de recordatorio): al
+ * enviarlos se comprueban igual y sólo los envía el cron.
+ */
+export const isReminderSql = (notificationAlias: string) =>
+  `(${notificationAlias}.type = 'appointment_reminder' or coalesce(${notificationAlias}.dedupe_key, '') like 'reminder:%')`;
+
+export const isReminderEmail = (email: { type: string; dedupeKey: string | null }) =>
+  email.type === "appointment_reminder" || (email.dedupeKey ?? "").startsWith("reminder:");
+
 /**
  * Condición SQL "el recordatorio `notificationAlias` sigue valiendo para la cita `appointmentAlias`": es
- * de su fecha y hora actuales y, si es de uno de los otros pacientes, ese paciente sigue en la cita.
+ * de su fecha y hora actuales y, si es de uno de los otros pacientes, ese paciente sigue en la cita. La
+ * copia al profesional vale mientras valga la fecha y hora.
  */
 export const reminderCurrentSql = (notificationAlias: string, appointmentAlias: string) =>
   `(${notificationAlias}.dedupe_key = ${reminderKeySql(appointmentAlias)}
+    or ${notificationAlias}.dedupe_key = ${reminderKeySql(appointmentAlias)} || ':copy'
     or exists (select 1 from appointment_clients ac
                 where ac.appointment_id = ${appointmentAlias}.id
                   and ${notificationAlias}.dedupe_key = ${reminderKeySql(appointmentAlias)} || ':' || ac.client_id))`;

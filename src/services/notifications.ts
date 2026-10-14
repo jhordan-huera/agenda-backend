@@ -8,7 +8,7 @@ import type { Appointment, BankAccount, Business, EmailType } from "../shared/ty
 import { appointmentClientIds } from "./appointment-clients.ts";
 import { newPatientEmailHold, thirdPartyEmailHold } from "./email-limits.ts";
 import { PASSWORD_MASK, scheduleEmailDelivery } from "./mailer.ts";
-import { isQuietTime, minutesUntilStart, reminderKeyFor, reminderKeySql } from "./reminder-rules.ts";
+import { isQuietTime, minutesUntilStart, reminderCopyKey, reminderKeyFor, reminderKeySql } from "./reminder-rules.ts";
 
 export { PASSWORD_MASK };
 
@@ -270,9 +270,10 @@ function clientMessageFor(settings: Business["notificationSettings"], before: Ap
  * - los que ya estaban reciben el aviso del cambio;
  * - los que se agregan a una cita activa, el de una cita nueva (solicitud o confirmación);
  * - los que se quitan de una cita activa, el de cancelación.
- * Un solo email por dirección (una pareja con el mismo correo). Cada email que sale al paciente (no
- * los recordatorios) le llega también, una sola vez y con los nombres de todos, como copia al
- * profesional de la cita; a ese email ya no se le manda además el aviso de cita nueva o de nueva reserva.
+ * Un solo email por dirección (una pareja con el mismo correo). Cada email que sale al paciente le
+ * llega también, una sola vez y con los nombres de todos, como copia al profesional de la cita (la de
+ * los recordatorios, en runReminderJob); a ese email ya no se le manda además el aviso de cita nueva o
+ * de nueva reserva.
  * `actorUserId`: quién hizo el cambio desde el panel (al profesional no se le avisa de lo que hizo él).
  * Devuelve true si se envió un email a algún paciente.
  */
@@ -366,6 +367,8 @@ export async function notifyAppointmentChange(
  *   no empezaron;
  * - si la cita se agendó, se movió o se reactivó ya dentro de esas horas y el negocio envía
  *   confirmaciones: el paciente acaba de recibir la confirmación o el aviso del cambio.
+ * Si sale alguno, el profesional recibe la copia (decisión del usuario, 2026-10-13): una por cita y
+ * versión, con los nombres de todos, salvo que su email sea el de uno de los pacientes.
  * Lo ejecutan el cron (scripts/cron.ts) y, en local, src/jobs/reminders.ts. `at`: el momento (pruebas).
  */
 export async function runReminderJob(db: Db, businessId: string, at: Date = new Date()): Promise<number> {
@@ -405,6 +408,7 @@ export async function runReminderJob(db: Db, businessId: string, at: Date = new 
     const when = appointment.date === now.date ? "hoy" : appointment.date === addDaysISO(now.date, 1) ? "mañana" : null;
     const data = buildEmailData(context, appointment);
     const written = new Set<string>();
+    let reminded = false;
     for (const recipient of context.recipients) {
       if (!recipient.email || written.has(emailKey(recipient.email))) continue;
       written.add(emailKey(recipient.email));
@@ -416,7 +420,25 @@ export async function runReminderJob(db: Db, businessId: string, at: Date = new 
         dedupeKey: reminderKeyFor(reminderKey, appointment, recipient.clientId),
         ...emailTemplates.appointmentReminder({ ...data, clientName: recipient.name }, when),
       });
-      if (inserted) sent++;
+      if (inserted) {
+        sent++;
+        reminded = true;
+      }
+    }
+    // La clave única evita una segunda copia si después se agrega un paciente y le sale su recordatorio.
+    const copyTo = context.professionalCopyEmail;
+    if (reminded && copyTo && !written.has(emailKey(copyTo))) {
+      await queueEmail(db, {
+        businessId,
+        type: "appointment_copy",
+        to: copyTo,
+        appointmentId: appointment.id,
+        dedupeKey: reminderCopyKey(reminderKey),
+        ...emailTemplates.appointmentReminder(
+          { ...data, professionalCopy: { agendaUrl: agendaUrlOf(appointment), pending: appointment.status === "pending" } },
+          when,
+        ),
+      });
     }
   }
   return sent;

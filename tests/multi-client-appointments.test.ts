@@ -243,6 +243,19 @@ queued = await transaction((db) => runReminderJob(db, businessId, at));
 ok(queued === 0 && countOf(session.id, "appointment_reminder") === 3, "una sola vez cada uno");
 const mainKey = sql(`select dedupe_key from notifications where appointment_id = '${session.id}' and type = 'appointment_reminder' and to_email = '${ana.email}'`);
 ok(/^reminder:[^:]+:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d+$/.test(mainKey), "el del principal conserva la clave de siempre", mainKey);
+const reminderCopy = () =>
+  sql(
+    `select subject || ' | ' || dedupe_key from notifications
+      where appointment_id = '${session.id}' and type = 'appointment_copy' and dedupe_key like 'reminder:%'`,
+  )
+    .split("\n")
+    .filter(Boolean);
+ok(
+  reminderCopy().length === 1 &&
+    reminderCopy()[0] === `Copia · Ana Pareja, Carlos Pareja y Diana Pareja: Recuerda que tienes una cita mañana | ${mainKey}:copy`,
+  "el profesional recibe una sola copia del recordatorio, con los tres nombres",
+  reminderCopy(),
+);
 r = await put({ extraClientIds: [carlos.id], startTime: "12:00" });
 const current = (
   await pool.query(
@@ -258,6 +271,15 @@ ok(
   "al quitar a Diana, su recordatorio en cola deja de valer y los demás siguen",
   current,
 );
+const copyCurrent = (
+  await pool.query(
+    `select ${reminderCurrentSql("c", "a")} as current
+       from notifications c join appointments a on a.id = c.appointment_id
+      where c.type = 'appointment_copy' and c.dedupe_key like 'reminder:%' and c.appointment_id = $1`,
+    [session.id],
+  )
+).rows as { current: boolean }[];
+ok(copyCurrent.length === 1 && copyCurrent[0].current === true, "la copia del recordatorio sigue valiendo (la fecha y hora no cambiaron)", copyCurrent);
 
 console.log("Interruptor apagado: se conservan, se pueden quitar, no agregar");
 r = await admin("PUT", SWITCH, { enabled: false });

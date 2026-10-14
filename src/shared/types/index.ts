@@ -467,7 +467,7 @@ export type EmailType =
   | "professional_new_appointment"
   | "professional_daily_agenda"
   | "payment_receipt_received"
-  /** Copia al profesional de un email al paciente sobre su cita (no los recordatorios). */
+  /** Copia al profesional de un email al paciente sobre su cita (también la de los recordatorios). */
   | "appointment_copy";
 
 /**
