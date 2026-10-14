@@ -21,3 +21,10 @@ updates:
     groups:
       menores:
         update-types: ["minor", "patch"]
+    # Saltos de versión grandes que se prueban aparte (PR cerrados el 2026-10-13): TypeScript 7 es una
+    # reescritura (Vercel compila con TypeScript) y los tipos de Node siguen al Node 24 de producción.
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
