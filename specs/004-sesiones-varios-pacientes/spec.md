@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-13
 
-**Estado**: Aprobada (2026-10-13)
+**Estado**: Implementada (2026-10-13)
 
 **Repos**: agenda-backend (principal: datos, avisos y API), agenda-front (panel) y la beta.
 

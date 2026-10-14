@@ -334,10 +334,28 @@ ok(valeriaClients.some((c) => c.id === yolanda.id && !c.restricted), "y la tiene
 ok(!valeriaClients.some((c) => c.id === carlos.id), "pero no a Carlos (su sesión es de otra agenda)");
 await ricardo("PATCH", B, { professionalScope: "all" });
 
+console.log("Avisos al profesional con los nombres de todos");
+const { runDailyAgendaJob } = await import("../src/services/notifications.ts");
+const { getZonedNow } = await import("../src/shared/lib/time.ts");
+sql(`update professionals set email = 'agenda.ricardo.${tag}@correo.ec', notify_new_appointments = true, daily_agenda = true
+      where id = '${ricardoAgenda.id}'`);
+// Sin email de los pacientes no sale la copia: el profesional recibe el aviso de cita nueva.
+const noEmail1 = await newPatient("Nora Sinemail");
+const noEmail2 = await newPatient("Omar Sinemail");
+sql(`update clients set email = '' where id in ('${noEmail1.id}', '${noEmail2.id}')`);
+r = await elena("POST", `${B}/appointments`, input({ clientId: noEmail1.id, extraClientIds: [noEmail2.id], date: "2031-06-05", startTime: "10:00" }));
+ok(r.status === 200, "recepción agenda una sesión de pareja de pacientes sin email", r.body);
+const notice = sql(`select subject from notifications where appointment_id = '${r.body.id}' and type = 'professional_new_appointment'`);
+ok(/Nora Sinemail y Omar Sinemail/.test(notice), "el aviso de cita nueva al profesional nombra a los dos", notice);
+const agendaDay = getZonedNow("America/Guayaquil", new Date("2031-06-05T12:00:00Z"));
+await transaction((db) => runDailyAgendaJob(db, businessId, agendaDay));
+const daily = sql(`select body from notifications where type = 'professional_daily_agenda' and to_email = 'agenda.ricardo.${tag}@correo.ec'`);
+ok(/Nora Sinemail y Omar Sinemail/.test(daily), "la agenda del día nombra a los dos en su fila", daily.slice(0, 300));
+
 console.log("Citas existentes");
 ok(
-  sql(`select count(*) from appointments a where exists (select 1 from appointment_clients ac where ac.appointment_id = a.id)`) === "2",
-  "sólo las dos citas de esta prueba tienen otros pacientes",
+  sql(`select count(*) from appointments a where exists (select 1 from appointment_clients ac where ac.appointment_id = a.id)`) === "3",
+  "sólo las citas de esta prueba tienen otros pacientes",
 );
 const demo = (await ricardo("GET", `${B}/appointments?from=2026-01-01&to=2026-12-31`)).body as Appointment[];
 ok(demo.length > 0 && demo.every((a) => Array.isArray(a.extraClientIds)), "las citas demo traen extraClientIds (vacío)", demo[0]);

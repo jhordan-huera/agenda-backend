@@ -177,13 +177,13 @@ no puede cambiarlo; no sale en el perfil público; queda en la auditoría.
 
 ## Fase 9: Beta
 
-- [ ] T033 [P] En beta/, copiar desde front/ los archivos que son idénticos:
+- [x] T033 [P] En beta/, copiar desde front/ los archivos que son idénticos:
   - `types/index.ts` (sólo los dos campos, porque el archivo difiere), `lib/validations/appointment.ts` y `lib/format.ts`;
   - calendario, reportes, `client-summary.ts` y `appointment-utils.ts`;
   - `extra-clients-field.tsx`, `multi-client-appointments-card.tsx` y los archivos del inicio.
 
   Revisar con `diff` antes de copiar.
-- [ ] T034 En `beta/src/lib/data/mock/`:
+- [x] T034 En `beta/src/lib/data/mock/`:
   - `store.ts` (`migrateData`): `extraClientIds ??= []` y `multiClientAppointments ??= false`;
   - `seed.ts` y `business-factory.ts`: el interruptor en `false`;
   - `business-data-repository.ts`: las mismas reglas que T015 al crear y editar, y al borrar un paciente se quita de los adicionales;
@@ -191,7 +191,7 @@ no puede cambiarlo; no sale en el perfil público; queda en la auditoría.
   - `notifications.ts`: un email por paciente, la copia una vez y los recordatorios por paciente;
   - `admin-repository.ts`: `setMultiClientAppointments` con auditoría;
   - `account-repository.ts`: no lo deja cambiar.
-- [ ] T035 En la beta, a mano:
+- [x] T035 En la beta, a mano:
   - repositorio y `use-admin.ts`;
   - formulario, detalle y aviso de WhatsApp;
   - ficha del negocio del super admin.
@@ -200,15 +200,15 @@ no puede cambiarlo; no sale en el perfil público; queda en la auditoría.
 
 ## Fase 10: Cierre
 
-- [ ] T036 Correr `npm run typecheck` y `npm test` en back/, `npm run build` y `npm run lint` en front/, y `npm run build` en beta/
-- [ ] T037 Recorrido con Playwright en local (quickstart 2):
+- [x] T036 Correr `npm run typecheck` y `npm test` en back/, `npm run build` y `npm run lint` en front/, y `npm run build` en beta/
+- [x] T037 Recorrido con Playwright en local (quickstart 2):
   - super admin, interruptor, crear una cita de pareja, agenda, arrastre con emails, detalle, WhatsApp, ficha, reportes y PDF;
   - con el interruptor apagado;
   - a 390 px de ancho.
 
   Repetirlo en la beta.
 - [x] T038 [P] Documentar en `back/README.md` la tabla `appointment_clients`, el interruptor y la migración 032.
-- [ ] T039 Commits en `dev` de back y front, sin firma de IA. Escribir `reporte.md` con `/speckit-reporte`. Sin push.
+- [x] T039 Commits en `dev` de back y front, sin firma de IA. Escribir `reporte.md` con `/speckit-reporte`. Sin push.
 
 ---
 
