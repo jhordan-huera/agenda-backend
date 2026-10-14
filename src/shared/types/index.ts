@@ -824,6 +824,12 @@ export interface PlatformSettings {
   supportPhone: string;
 }
 
+/** Una cifra de lo que va del mes y la de los mismos días del mes pasado (inicio del super admin). */
+export interface GrowthPair {
+  current: number;
+  previous: number;
+}
+
 /** Métricas globales para el panel del super admin. */
 export interface PlatformStats {
   businesses: { total: number; active: number; suspended: number; newThisMonth: number };
@@ -833,6 +839,31 @@ export interface PlatformStats {
   onlineBookingsThisMonth: number;
   /** Negocios creados por mes (últimos 6 meses, "YYYY-MM"). */
   signupsByMonth: { month: string; count: number }[];
+  /**
+   * Crecimiento del mes (spec 006): desde el día 1 hasta hoy, frente a los mismos días del mes pasado
+   * (en Ecuador). Citas agendadas (creadas, sin las canceladas), reservas online, pacientes y negocios nuevos.
+   */
+  growth: {
+    from: ISODate;
+    to: ISODate;
+    previousFrom: ISODate;
+    previousTo: ISODate;
+    appointments: GrowthPair;
+    onlineBookings: GrowthPair;
+    newClients: GrowthPair;
+    newBusinesses: GrowthPair;
+  };
+  /** Salud del sistema (spec 006). Sólo cifras: sin emails ni cuentas. */
+  health: {
+    /** Emails de hoy: enviados, fallidos (sin los descartados a propósito) y los que siguen en cola. */
+    emailsToday: { sent: number; failed: number; queued: number };
+    /** Última pasada del cron (null: ninguna) y sus errores (negocios con fallos y emails que no salieron). */
+    cron: { lastRunAt: ISODateTime | null; failures: number };
+    /** Última copia de seguridad registrada (null: ninguna todavía). */
+    backup: { ranAt: ISODateTime; ok: boolean; sizeBytes: number | null; error: string } | null;
+    /** Intentos fallidos de inicio de sesión en 24 h y cuentas con 10 o más en la última hora. */
+    security: { failedLogins24h: number; accountsOnAlert: number };
+  };
 }
 
 export interface AdminBusinessSummary {
@@ -841,6 +872,8 @@ export interface AdminBusinessSummary {
   subscription: Subscription | null;
   usage: PlanUsage;
   lastActivityAt: ISODateTime | null;
+  /** Citas agendadas en lo que va del mes y en los mismos días del mes pasado (spec 006). */
+  growth: GrowthPair;
 }
 
 export interface AdminBusinessDetail extends AdminBusinessSummary {

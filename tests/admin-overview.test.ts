@@ -1,0 +1,166 @@
+// Inicio del super admin con datos importantes (spec 006): el crecimiento del mes (lo que va del mes
+// frente a los mismos días del mes pasado), la salud del sistema (emails de hoy, cron, copia de
+// seguridad, intentos fallidos) y el crecimiento de cada negocio. Sólo el super admin, sin datos de pacientes.
+import { execFileSync } from "node:child_process";
+import { cedulaFor } from "./helpers/cedula.mjs";
+import type { AdminBusinessSummary, PlatformStats } from "../src/shared/types/index.ts";
+
+const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
+let failures = 0;
+const ok = (cond: unknown, label: string, extra?: unknown) => {
+  if (cond) console.log("  ✓", label);
+  else {
+    failures++;
+    console.log("  ✗", label, extra === undefined ? "" : JSON.stringify(extra).slice(0, 500));
+  }
+};
+function agent() {
+  let cookie = "";
+  return async (method: string, path: string, body?: unknown) => {
+    const res = await fetch(BASE + path, {
+      method,
+      headers: { "Content-Type": "application/json", "X-Requested-With": "fetch", ...(cookie ? { Cookie: cookie } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    for (const c of res.headers.getSetCookie()) cookie = c.split(";")[0];
+    const text = await res.text();
+    return { status: res.status, body: text ? JSON.parse(text) : undefined };
+  };
+}
+const sql = (query: string) =>
+  execFileSync("psql", [process.env.TEST_DATABASE_URL!, "-qAtc", query], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+
+const admin = agent();
+await admin("POST", "/auth/login", { email: "admin@demo.com", password: "demo1234", remember: true });
+const owner = agent();
+const ownerSession = (await owner("POST", "/auth/login", { email: "ricardo@demo.com", password: "demo1234", remember: true })).body;
+const clinicId: string = ownerSession.businessId;
+const stats = async () => (await admin("GET", "/admin/stats")).body as PlatformStats;
+const clinicGrowth = async () =>
+  ((await admin("GET", "/admin/businesses")).body as AdminBusinessSummary[]).find((b) => b.business.id === clinicId)!.growth;
+
+// Los periodos, como los calcula el servidor (en Ecuador): un instante dentro de cada uno y, si el mes
+// pasado tiene días fuera del periodo comparable, uno de esos.
+const PERIODS = `with p as (
+  select m.month_start, m.prev_start, least(m.prev_start + (now() - m.month_start), m.month_start) as prev_end
+    from (select date_trunc('month', now() at time zone 'America/Guayaquil') at time zone 'America/Guayaquil' as month_start,
+                 (date_trunc('month', now() at time zone 'America/Guayaquil') - interval '1 month') at time zone 'America/Guayaquil' as prev_start) m)`;
+const instant = (which: "current" | "previous" | "outside") =>
+  sql(`${PERIODS} select ${
+    which === "current"
+      ? "p.month_start + (now() - p.month_start) / 2"
+      : which === "previous"
+        ? "p.prev_start + (p.prev_end - p.prev_start) / 2"
+        : "case when p.prev_end + interval '1 minute' < p.month_start then p.prev_end + interval '1 minute' end"
+  } from p`);
+
+console.log("Sólo el super admin");
+let r = await owner("GET", "/admin/stats");
+ok(r.status === 403, "un propietario no ve las estadísticas de la plataforma", r.status);
+
+console.log("Crecimiento del mes");
+const before = await stats();
+const growthBefore = await clinicGrowth();
+ok(before.growth && /^\d{4}-\d{2}-01$/.test(before.growth.from) && /^\d{4}-\d{2}-01$/.test(before.growth.previousFrom), "trae los dos periodos", before.growth);
+const professional = sql(`select id from professionals where business_id = '${clinicId}' order by created_at limit 1`);
+const service = sql(`select id from services where business_id = '${clinicId}' order by created_at limit 1`);
+const client = sql(`select id from clients where business_id = '${clinicId}' order by created_at limit 1`);
+let minute = 0;
+/** Una cita creada en ese instante (para un día lejano: no choca con la agenda). */
+const appointment = (createdAt: string, status = "confirmed", source = "dashboard") => {
+  minute += 30;
+  const start = `${String(8 + Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+  sql(`insert into appointments (business_id, client_id, service_id, professional_id, date, start_time, end_time, status, price, source, created_at)
+       values ('${clinicId}', '${client}', '${service}', '${professional}', '2032-02-02', '${start}', '${start}'::time + interval '15 minutes',
+               '${status}', 0, '${source}', '${createdAt}')`);
+};
+const current = instant("current");
+const previous = instant("previous");
+const outside = instant("outside");
+appointment(current);
+appointment(current, "confirmed", "booking_page");
+appointment(current, "cancelled");
+appointment(previous);
+appointment(previous, "pending", "booking_page");
+if (outside) appointment(outside);
+let seed = 0;
+const newClient = (createdAt: string) =>
+  sql(`insert into clients (business_id, name, document_id, email, phone, created_at)
+       values ('${clinicId}', 'Crecimiento ${++seed}', '${cedulaFor(`crecimiento-${seed}`)}', '', '', '${createdAt}')`);
+newClient(current);
+newClient(current);
+newClient(previous);
+// Negocios: todos antiguos menos uno de este mes y uno del periodo anterior.
+sql(`update businesses set created_at = '2020-01-01'`);
+sql(`update businesses set created_at = '${current}' where id = '${clinicId}'`);
+sql(`update businesses set created_at = '${previous}' where id = (select id from businesses where id <> '${clinicId}' order by name limit 1)`);
+const after = await stats();
+const delta = (name: keyof PlatformStats["growth"] & ("appointments" | "onlineBookings" | "newClients")) => ({
+  current: after.growth[name].current - before.growth[name].current,
+  previous: after.growth[name].previous - before.growth[name].previous,
+});
+ok(
+  delta("appointments").current === 2 && delta("appointments").previous === 2,
+  "citas agendadas: cuentan por cuándo se crearon, sin las canceladas ni las fuera del periodo comparable",
+  delta("appointments"),
+);
+ok(delta("onlineBookings").current === 1 && delta("onlineBookings").previous === 1, "reservas online", delta("onlineBookings"));
+ok(delta("newClients").current === 2 && delta("newClients").previous === 1, "pacientes nuevos", delta("newClients"));
+ok(after.growth.newBusinesses.current === 1 && after.growth.newBusinesses.previous === 1, "negocios nuevos", after.growth.newBusinesses);
+const growthAfter = await clinicGrowth();
+ok(
+  growthAfter.current - growthBefore.current === 2 && growthAfter.previous - growthBefore.previous === 2,
+  "el crecimiento de cada negocio, con las mismas reglas",
+  { growthBefore, growthAfter },
+);
+
+console.log("Salud del sistema");
+const emailsBefore = before.health.emailsToday;
+const email = (status: string, lastError: string | null, sentAt = "null") =>
+  sql(`insert into notifications (business_id, type, to_email, subject, body, status, last_error, sent_at, attempts, next_attempt_at)
+       values ('${clinicId}', 'appointment_confirmed', 'salud@example.com', 'Prueba', '', '${status}', ${lastError === null ? "null" : `'${lastError}'`},
+               ${sentAt}, 1, now() + interval '1 day')`);
+email("sent", null, "now()");
+email("failed", "550 buzón inexistente");
+email("failed", "Recordatorio descartado: la cita se canceló o cambió de fecha u hora.");
+email("failed", "Dirección de demostración: no se envía.");
+email("queued", null);
+sql("delete from cron_runs");
+sql("delete from backup_runs");
+let health = (await stats()).health;
+ok(
+  health.emailsToday.sent - emailsBefore.sent === 1 &&
+    health.emailsToday.failed - emailsBefore.failed === 1 &&
+    health.emailsToday.queued - emailsBefore.queued === 1,
+  "emails de hoy: enviados, fallidos (sin los descartados a propósito) y en cola",
+  { emailsBefore, now: health.emailsToday },
+);
+ok(health.cron.lastRunAt === null && health.backup === null, "sin pasadas del cron ni copias registradas: null", health);
+sql(`insert into cron_runs (ran_at, report) values (now() - interval '3 hours', '{"reminderFailures": 1, "emails": {"failed": 2}}')`);
+health = (await stats()).health;
+const cronAge = (Date.now() - Date.parse(health.cron.lastRunAt ?? "")) / 3_600_000;
+ok(cronAge > 2.9 && cronAge < 3.1 && health.cron.failures === 3, "la última pasada del cron y sus errores", health.cron);
+sql(`insert into backup_runs (ran_at, ok, size_bytes, error) values (now() - interval '10 days', true, 2048, '')`);
+sql(`insert into backup_runs (ok, size_bytes, error) values (false, null, 'pg_dump falló')`);
+health = (await stats()).health;
+ok(health.backup?.ok === false && health.backup.error === "pg_dump falló" && health.backup.sizeBytes === null, "la última copia (aquí, una fallida)", health.backup);
+const loginsBefore = health.security;
+const failedLogin = (name: string, ago: string) =>
+  sql(`insert into audit_logs (actor_name, action, entity_type, summary, created_at)
+       values ('${name}', 'session.login_failed', 'session', 'Intento de inicio de sesión fallido', now() - interval '${ago}')`);
+for (let i = 0; i < 12; i++) failedLogin("atacante@example.com", "10 minutes");
+failedLogin("olvido@example.com", "5 hours");
+failedLogin("viejo@example.com", "2 days");
+health = (await stats()).health;
+ok(
+  health.security.failedLogins24h - loginsBefore.failedLogins24h === 13 && health.security.accountsOnAlert - loginsBefore.accountsOnAlert === 1,
+  "intentos fallidos en 24 h y cuentas en alerta (10 o más en la última hora)",
+  { loginsBefore, now: health.security },
+);
+
+console.log("Privacidad");
+const raw = JSON.stringify(await stats());
+ok(!raw.includes("@"), "la respuesta no trae ningún email ni cuenta", raw.slice(0, 300));
+
+console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas del inicio del super admin pasaron");
+process.exitCode = failures ? 1 : 0;
