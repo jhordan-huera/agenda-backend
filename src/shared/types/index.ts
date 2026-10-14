@@ -830,6 +830,13 @@ export interface GrowthPair {
   previous: number;
 }
 
+/** Lo de un día en la plataforma: citas agendadas, reservas online y pacientes nuevos (inicio del super admin). */
+export interface DailyCounts {
+  appointments: number;
+  onlineBookings: number;
+  newClients: number;
+}
+
 /** Métricas globales para el panel del super admin. */
 export interface PlatformStats {
   businesses: { total: number; active: number; suspended: number; newThisMonth: number };
@@ -852,6 +859,11 @@ export interface PlatformStats {
     onlineBookings: GrowthPair;
     newClients: GrowthPair;
     newBusinesses: GrowthPair;
+    /**
+     * Día a día, del 1 al mayor entre hoy y el último día del mes pasado (para el gráfico): `current`
+     * es null después de hoy y `previous`, si el mes pasado no tuvo ese día.
+     */
+    daily: { day: number; current: DailyCounts | null; previous: DailyCounts | null }[];
   };
   /** Salud del sistema (spec 006). Sólo cifras: sin emails ni cuentas. */
   health: {
@@ -863,6 +875,8 @@ export interface PlatformStats {
     backup: { ranAt: ISODateTime; ok: boolean; sizeBytes: number | null; error: string } | null;
     /** Intentos fallidos de inicio de sesión en 24 h y cuentas con 10 o más en la última hora. */
     security: { failedLogins24h: number; accountsOnAlert: number };
+    /** Emails de los últimos 14 días (hoy el último), en Ecuador: enviados y fallidos (sin los descartados). */
+    emailsByDay: { date: ISODate; sent: number; failed: number }[];
   };
 }
 

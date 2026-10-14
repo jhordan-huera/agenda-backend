@@ -114,6 +114,22 @@ ok(
   { growthBefore, growthAfter },
 );
 
+console.log("Día a día (gráficos)");
+const sum = (key: "appointments" | "onlineBookings" | "newClients") =>
+  after.growth.daily.reduce((total, day) => total + (day.current?.[key] ?? 0), 0);
+ok(
+  sum("appointments") === after.growth.appointments.current && sum("onlineBookings") === after.growth.onlineBookings.current &&
+    sum("newClients") === after.growth.newClients.current,
+  "la suma día a día de este mes da las cifras del mes",
+  { daily: sum("appointments"), month: after.growth.appointments.current },
+);
+const today = Number(after.growth.to.slice(8));
+ok(
+  after.growth.daily[0].day === 1 && after.growth.daily.length >= today && after.growth.daily.slice(today).every((day) => day.current === null),
+  "del día 1 en adelante; después de hoy, sin datos de este mes",
+  after.growth.daily.length,
+);
+
 console.log("Salud del sistema");
 const emailsBefore = before.health.emailsToday;
 const email = (status: string, lastError: string | null, sentAt = "null") =>
@@ -136,6 +152,12 @@ ok(
   { emailsBefore, now: health.emailsToday },
 );
 ok(health.cron.lastRunAt === null && health.backup === null, "sin pasadas del cron ni copias registradas: null", health);
+ok(
+  health.emailsByDay.length === 14 && health.emailsByDay.at(-1)?.date === after.growth.to &&
+    health.emailsByDay.at(-1)?.sent === health.emailsToday.sent && health.emailsByDay.at(-1)?.failed === health.emailsToday.failed,
+  "los emails de 14 días, con hoy al final igual a «Emails de hoy»",
+  health.emailsByDay.at(-1),
+);
 sql(`insert into cron_runs (ran_at, report) values (now() - interval '3 hours', '{"reminderFailures": 1, "emails": {"failed": 2}}')`);
 health = (await stats()).health;
 const cronAge = (Date.now() - Date.parse(health.cron.lastRunAt ?? "")) / 3_600_000;

@@ -146,7 +146,7 @@ async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBu
             (select count(*) from professionals p where p.business_id = b.id and p.is_active) as professionals,
             (select max(l.created_at) from audit_logs l where l.business_id = b.id) as "lastActivityAt",
             (select count(*) from appointments a
-              where a.business_id = b.id and a.status <> 'cancelled' and a.created_at >= p.month_start)::int as "growthCurrent",
+              where a.business_id = b.id and a.status <> 'cancelled' and a.created_at >= p.month_start and a.created_at <= now())::int as "growthCurrent",
             (select count(*) from appointments a
               where a.business_id = b.id and a.status <> 'cancelled'
                 and a.created_at >= p.prev_start and a.created_at < p.prev_end)::int as "growthPrevious"
@@ -195,21 +195,54 @@ async function platformGrowth(): Promise<PlatformStats["growth"]> {
             to_char(now() at time zone $1, 'YYYY-MM-DD') as "to",
             to_char(p.prev_start at time zone $1, 'YYYY-MM-DD') as "previousFrom",
             to_char(p.prev_end at time zone $1, 'YYYY-MM-DD') as "previousTo",
-            (select count(*) from appointments a where a.status <> 'cancelled' and a.created_at >= p.month_start)::int as "appointmentsCurrent",
+            (select count(*) from appointments a where a.status <> 'cancelled' and a.created_at >= p.month_start and a.created_at <= now())::int as "appointmentsCurrent",
             (select count(*) from appointments a where a.status <> 'cancelled'
                and a.created_at >= p.prev_start and a.created_at < p.prev_end)::int as "appointmentsPrevious",
             (select count(*) from appointments a where a.status <> 'cancelled' and a.source = 'booking_page'
-               and a.created_at >= p.month_start)::int as "onlineCurrent",
+               and a.created_at >= p.month_start and a.created_at <= now())::int as "onlineCurrent",
             (select count(*) from appointments a where a.status <> 'cancelled' and a.source = 'booking_page'
                and a.created_at >= p.prev_start and a.created_at < p.prev_end)::int as "onlinePrevious",
-            (select count(*) from clients c where c.created_at >= p.month_start)::int as "clientsCurrent",
+            (select count(*) from clients c where c.created_at >= p.month_start and c.created_at <= now())::int as "clientsCurrent",
             (select count(*) from clients c where c.created_at >= p.prev_start and c.created_at < p.prev_end)::int as "clientsPrevious",
-            (select count(*) from businesses b where b.created_at >= p.month_start)::int as "businessesCurrent",
+            (select count(*) from businesses b where b.created_at >= p.month_start and b.created_at <= now())::int as "businessesCurrent",
             (select count(*) from businesses b where b.created_at >= p.prev_start and b.created_at < p.prev_end)::int as "businessesPrevious"
        from periods p`,
     [DEFAULT_TIMEZONE],
   ))!;
   const pair = (name: string) => ({ current: Number(row[`${name}Current`]), previous: Number(row[`${name}Previous`]) });
+  // Día a día desde el inicio del mes pasado (para el gráfico), por la fecha en Ecuador.
+  const days = await many<{ date: string; appointments: number; online: number; clients: number }>(
+    pool,
+    `with start as (select (date_trunc('month', now() at time zone $1) - interval '1 month') at time zone $1 as at),
+          a as (select to_char(created_at at time zone $1, 'YYYY-MM-DD') as date, count(*)::int as appointments,
+                       count(*) filter (where source = 'booking_page')::int as online
+                  from appointments, start where status <> 'cancelled' and created_at >= start.at and created_at <= now() group by 1),
+          c as (select to_char(created_at at time zone $1, 'YYYY-MM-DD') as date, count(*)::int as clients
+                  from clients, start where created_at >= start.at and created_at <= now() group by 1)
+     select coalesce(a.date, c.date) as date, coalesce(a.appointments, 0) as appointments, coalesce(a.online, 0) as online,
+            coalesce(c.clients, 0) as clients
+       from a full join c on c.date = a.date`,
+    [DEFAULT_TIMEZONE],
+  );
+  const byDate = new Map(days.map((day) => [day.date, day]));
+  const countsOn = (date: string) => {
+    const day = byDate.get(date);
+    return { appointments: day?.appointments ?? 0, onlineBookings: day?.online ?? 0, newClients: day?.clients ?? 0 };
+  };
+  const today = Number(String(row.to).slice(8));
+  const previousMonth = String(row.previousFrom).slice(0, 7);
+  const [year, month] = previousMonth.split("-").map(Number);
+  const previousDays = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const currentMonth = String(row.from).slice(0, 7);
+  const dayOf = (yearMonth: string, day: number) => `${yearMonth}-${String(day).padStart(2, "0")}`;
+  const daily = Array.from({ length: Math.max(today, previousDays) }, (_, index) => {
+    const day = index + 1;
+    return {
+      day,
+      current: day <= today ? countsOn(dayOf(currentMonth, day)) : null,
+      previous: day <= previousDays ? countsOn(dayOf(previousMonth, day)) : null,
+    };
+  });
   return {
     from: String(row.from),
     to: String(row.to),
@@ -219,7 +252,30 @@ async function platformGrowth(): Promise<PlatformStats["growth"]> {
     onlineBookings: pair("online"),
     newClients: pair("clients"),
     newBusinesses: pair("businesses"),
+    daily,
   };
+}
+
+/** Días del gráfico de emails del inicio del super admin. */
+const EMAIL_CHART_DAYS = 14;
+
+/** Emails enviados y fallidos (sin los descartados a propósito) de los últimos 14 días, en Ecuador. */
+async function emailsByDay(): Promise<PlatformStats["health"]["emailsByDay"]> {
+  const rows = await many<{ date: string; sent: number; failed: number }>(
+    pool,
+    `with days as (select generate_series((now() at time zone $1)::date - ($2::int - 1), (now() at time zone $1)::date, interval '1 day')::date as day),
+          since as (select ((now() at time zone $1)::date - ($2::int - 1))::timestamp at time zone $1 as at)
+     select to_char(d.day, 'YYYY-MM-DD') as date,
+            (select count(*) from notifications n, since
+              where n.status = 'sent' and n.sent_at >= since.at and (n.sent_at at time zone $1)::date = d.day)::int as sent,
+            (select count(*) from notifications n, since
+              where n.status = 'failed' and n.created_at >= since.at and (n.created_at at time zone $1)::date = d.day
+                and coalesce(n.last_error, '') not like 'Recordatorio descartado%'
+                and coalesce(n.last_error, '') not like 'Dirección de demostración%')::int as failed
+       from days d order by d.day`,
+    [DEFAULT_TIMEZONE, EMAIL_CHART_DAYS],
+  );
+  return rows;
 }
 
 /** Intentos fallidos de inicio de sesión de una cuenta en una hora que cuentan como alerta (como el cron). */
@@ -231,7 +287,7 @@ const LOGIN_ALERT_ATTEMPTS = 10;
  * seguridad registrada y los intentos fallidos de inicio de sesión.
  */
 async function systemHealth(): Promise<PlatformStats["health"]> {
-  const [row, backup] = await Promise.all([
+  const [row, backup, emailDays] = await Promise.all([
     one<{
       sent: number;
       failed: number;
@@ -264,12 +320,14 @@ async function systemHealth(): Promise<PlatformStats["health"]> {
       pool,
       `select ran_at as "ranAt", ok, size_bytes as "sizeBytes", error from backup_runs order by ran_at desc limit 1`,
     ),
+    emailsByDay(),
   ]);
   return {
     emailsToday: { sent: row!.sent, failed: row!.failed, queued: row!.queued },
     cron: { lastRunAt: row!.cronAt, failures: row!.cronFailures ?? 0 },
     backup: backup ?? null,
     security: { failedLogins24h: row!.failedLogins, accountsOnAlert: row!.accountsOnAlert },
+    emailsByDay: emailDays,
   };
 }
 

@@ -18,13 +18,19 @@ Sólo para el super admin (rutas `/admin/*`, como hoy). No hay rutas nuevas: dos
     "appointments": { "current": 275, "previous": 233 },
     "onlineBookings": { "current": 73, "previous": 69 },
     "newClients": { "current": 42, "previous": 43 },
-    "newBusinesses": { "current": 1, "previous": 1 }
+    "newBusinesses": { "current": 1, "previous": 1 },
+    "daily": [                                   // NUEVO (historia 5): un día por fila
+      { "day": 1, "current": { "appointments": 20, "onlineBookings": 5, "newClients": 3 },
+                  "previous": { "appointments": 18, "onlineBookings": 4, "newClients": 2 } },
+      { "day": 31, "current": null, "previous": { "appointments": 9, "onlineBookings": 2, "newClients": 0 } }
+    ]
   },
   "health": {                                    // NUEVO
     "emailsToday": { "sent": 38, "failed": 0, "queued": 0 },
     "cron": { "lastRunAt": "2026-10-14T03:50:06Z", "failures": 0 },
     "backup": { "ranAt": "2026-10-09T08:17:00Z", "ok": true, "sizeBytes": 2097152, "error": "" },
-    "security": { "failedLogins24h": 3, "accountsOnAlert": 0 }
+    "security": { "failedLogins24h": 3, "accountsOnAlert": 0 },
+    "emailsByDay": [ { "date": "2026-10-01", "sent": 31, "failed": 0 } ]   // NUEVO: 14 días, hoy el último
   }
 }
 ```

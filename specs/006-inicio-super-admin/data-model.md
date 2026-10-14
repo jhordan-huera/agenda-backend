@@ -30,6 +30,8 @@ interface PlatformStats {
   growth: {
     from: ISODate; to: ISODate; previousFrom: ISODate; previousTo: ISODate;
     appointments: GrowthPair; onlineBookings: GrowthPair; newClients: GrowthPair; newBusinesses: GrowthPair;
+    /** NUEVO (historia 5): día 1 al mayor entre hoy y el último del mes pasado; null donde no hay día. */
+    daily: { day: number; current: DailyCounts | null; previous: DailyCounts | null }[];
   };
   /** NUEVO: salud del sistema (D5). */
   health: {
@@ -37,8 +39,13 @@ interface PlatformStats {
     cron: { lastRunAt: ISODateTime | null; failures: number } ;
     backup: { ranAt: ISODateTime; ok: boolean; sizeBytes: number | null; error: string } | null;
     security: { failedLogins24h: number; accountsOnAlert: number };
+    /** NUEVO (historia 5): emails de los últimos 14 días (hoy el último), en Ecuador. */
+    emailsByDay: { date: ISODate; sent: number; failed: number }[];
   };
 }
+
+/** Lo de un día: citas agendadas, reservas online y pacientes nuevos (historia 5). */
+interface DailyCounts { appointments: number; onlineBookings: number; newClients: number }
 
 interface AdminBusinessSummary {
   // … lo de hoy, sin cambios

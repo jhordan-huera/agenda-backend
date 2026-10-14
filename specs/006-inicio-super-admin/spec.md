@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-13
 
-**Estado**: Implementada (2026-10-14)
+**Estado**: Implementada (2026-10-14). Ampliada el mismo día con gráficos (historia 5)
 
 **Repos**: agenda-backend (principal: cifras, salud del sistema y la migración 034), agenda-front
 (pantalla `/admin`) y la beta.
@@ -131,6 +131,25 @@ actividad, comprobar que cada uno aparece en su lista.
 
 ---
 
+### Historia 5 - Gráficos, no sólo tarjetas (Prioridad: P1)
+
+El dueño del producto pidió (2026-10-14) que cada bloque tenga también un gráfico.
+
+**Escenarios de aceptación**:
+
+1. **Crecimiento:** **dado** el inicio, **cuando** se abre, **entonces** un gráfico de líneas muestra,
+   día a día y acumulado, este mes frente al mes pasado. El mes pasado se ve completo, para saber
+   dónde terminó. Se elige qué mirar: citas agendadas, reservas online o pacientes nuevos.
+2. **Salud:** **dado** el inicio, **cuando** se abre, **entonces** un gráfico de barras muestra los
+   emails de los últimos 14 días, enviados y fallidos.
+3. **Negocios:** **dado** el inicio, **cuando** se abre, **entonces** un gráfico de barras muestra
+   las citas agendadas de cada negocio (hasta 8, los de más citas), este mes frente a los mismos días
+   del mes pasado.
+4. **Accesibilidad:** **dado** cualquier gráfico, **cuando** se usa con lector de pantalla o se quiere
+   el detalle, **entonces** tiene su descripción y «Ver como tabla», como los de Reportes.
+
+---
+
 ### Casos límite
 
 - **Primer mes de la plataforma** o meses sin datos: las comparaciones muestran «nuevo» o «igual»,
@@ -178,6 +197,14 @@ actividad, comprobar que cada uno aparece en su lista.
   sólo cifras y nombres de negocios.
 - **RF-013**: La beta DEBE mostrar la misma pantalla con sus datos de prueba. Donde no tenga un dato
   (cron, copias, emails reales), lo dice.
+- **RF-014**: El bloque de crecimiento DEBE tener un gráfico de líneas acumulado día a día: este mes
+  hasta hoy y el mes pasado completo, para citas agendadas, reservas online o pacientes nuevos.
+- **RF-015**: El bloque de salud DEBE tener un gráfico de barras con los emails enviados y fallidos de
+  los últimos 14 días (los fallidos, sin los descartados a propósito).
+- **RF-016**: El bloque de negocios para vender DEBE tener un gráfico de barras con las citas
+  agendadas de hasta 8 negocios activos, este mes frente a los mismos días del mes pasado.
+- **RF-017**: Cada gráfico DEBE poder leerse sin verlo: con su descripción para lectores de pantalla y
+  «Ver como tabla», o con las cifras escritas junto a cada barra.
 
 ### Entidades clave
 
