@@ -626,6 +626,8 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
     señal de vida a healthchecks.io. Cada ejecución queda en la tabla `cron_runs` (30 días).
   - **Avisos por ntfy de pacientes** (`src/services/booking-alerts.ts`), con los datos a medias:
     - **cada reserva por la página:** dice de cada persona si es «Paciente nuevo» o «Ya era paciente»;
+    - **cada cita agendada desde el panel:** lo mismo que una reserva, con quién la agendó y su rol
+      (sale del registro de actividad `appointment.created`);
     - **cada paciente registrado desde el panel:** dice quién lo registró y con qué rol.
 
     Hasta 10 de cada tipo por pasada; del resto sólo se dice cuántos son.

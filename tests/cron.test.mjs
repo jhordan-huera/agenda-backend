@@ -88,7 +88,7 @@ ok(
   "sin Gmail no envía nada: todo sigue en cola (recordatorios y sus copias)",
 );
 ok(
-  /Recordatorios: \d+ · reservas por la página: \d+ · pacientes nuevos del panel: \d+ · enviados/.test(run.output) && !/@/.test(run.output),
+  /Recordatorios: \d+ · reservas por la página: \d+ · pacientes nuevos del panel: \d+ · citas del panel: \d+ · enviados/.test(run.output) && !/@/.test(run.output),
   "el registro (público en GitHub) sólo lleva cifras, ningún email",
   run.output.slice(-300),
 );
@@ -96,7 +96,7 @@ ok(
 const gmailNotice = received.find((n) => /no tiene acceso a Gmail/.test(n.title));
 ok(
   gmailNotice?.priority === 4 &&
-    received.every((n) => n === gmailNotice || /^Agenda360: (nueva reserva|más reservas|nuevo paciente|más pacientes nuevos)$/.test(n.title)),
+    received.every((n) => n === gmailNotice || /^Agenda360: (nueva reserva|más reservas|nueva cita|más citas|nuevo paciente|más pacientes nuevos)$/.test(n.title)),
   "avisa que faltan las credenciales de Gmail",
   received.map((n) => n.title),
 );

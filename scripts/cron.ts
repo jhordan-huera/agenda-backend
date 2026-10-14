@@ -167,8 +167,9 @@ export function buildNotice(report: ScheduledTasksReport, options: { gmailConfig
 }
 
 /**
- * Un aviso por cada reserva desde la página pública y por cada paciente registrado desde el panel (ver
- * booking-alerts.ts) y, si hubo más de los que se detallan, otro con cuántos faltan.
+ * Un aviso por cada reserva desde la página pública, cada cita agendada desde el panel y cada paciente
+ * registrado desde el panel (ver booking-alerts.ts) y, si hubo más de los que se detallan, otro con
+ * cuántos faltan.
  */
 export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
   const notices: Notice[] = [...(report.bookingNotices ?? [])];
@@ -179,6 +180,18 @@ export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
       message: `…y ${plural(rest, "reserva más", "reservas más")} por la página (detalle en el panel de cada negocio).`,
       priority: 3,
       tags: ["calendar"],
+      click: "/admin/businesses",
+    });
+  }
+  const appointmentNotices = report.appointmentNotices ?? [];
+  notices.push(...appointmentNotices);
+  const restAppointments = (report.panelAppointments ?? 0) - appointmentNotices.length;
+  if (restAppointments > 0) {
+    notices.push({
+      title: "Agenda360: más citas",
+      message: `…y ${plural(restAppointments, "cita más", "citas más")} agendadas desde el panel (detalle en la agenda de cada negocio).`,
+      priority: 3,
+      tags: ["date"],
       click: "/admin/businesses",
     });
   }
@@ -253,7 +266,7 @@ async function main(): Promise<void> {
 
     console.info(
       `Recordatorios: ${report.reminders} · reservas por la página: ${report.onlineBookings ?? 0} · ` +
-        `pacientes nuevos del panel: ${report.panelClients ?? 0} · ` +
+        `pacientes nuevos del panel: ${report.panelClients ?? 0} · citas del panel: ${report.panelAppointments ?? 0} · ` +
         `enviados desde la anterior: ${report.sentSinceLastRun} · ` +
         `negocios con error: ${report.reminderFailures} · ` +
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +

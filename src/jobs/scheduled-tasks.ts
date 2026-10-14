@@ -1,7 +1,15 @@
 import { many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { deleteExpiredRateLimits } from "../http/rate-limit-store.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
-import { findOnlineBookings, findPanelClients, newClientNotice, onlineBookingNotice, type BookingNotice } from "../services/booking-alerts.ts";
+import {
+  findOnlineBookings,
+  findPanelAppointments,
+  findPanelClients,
+  newClientNotice,
+  onlineBookingNotice,
+  panelAppointmentNotice,
+  type BookingNotice,
+} from "../services/booking-alerts.ts";
 import { deleteStalePendingAttachments } from "../services/clinical-attachment-service.ts";
 import { deleteUnusedImageUploads } from "../services/image-service.ts";
 import { deleteStalePendingReceipts, purgeOldReceipts } from "../services/payment-service.ts";
@@ -85,6 +93,10 @@ export interface ScheduledTasksReport {
   panelClients?: number;
   /** El aviso de cada uno (hasta MAX_CLIENT_NOTICES), con quién lo registró y sus datos a medias. */
   clientNotices?: BookingNotice[];
+  /** Citas agendadas desde el panel desde la ejecución anterior. */
+  panelAppointments?: number;
+  /** El aviso de cada una (hasta MAX_APPOINTMENT_NOTICES), con quién la agendó y los pacientes a medias. */
+  appointmentNotices?: BookingNotice[];
   /** Fecha de la ejecución anterior (null si es la primera). */
   since: string | null;
   /** Emails que siguen en cola al terminar (reintentos o lote máximo alcanzado). */
@@ -228,6 +240,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   // Después de enviar la cola: el aviso dice si los emails de cada reserva ya salieron.
   const online = await findOnlineBookings(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const panel = await findPanelClients(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
+  const panelAppointments = await findPanelAppointments(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
     reminderFailures: reminders.failures,
@@ -242,6 +255,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     bookingNotices: online.bookings.map(onlineBookingNotice),
     panelClients: panel.total,
     clientNotices: panel.clients.map(newClientNotice),
+    panelAppointments: panelAppointments.total,
+    appointmentNotices: panelAppointments.appointments.map(panelAppointmentNotice),
     since: previous?.ranAt ?? null,
     pending: totals?.pending ?? 0,
     security,
