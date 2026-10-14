@@ -113,7 +113,7 @@ export const serviceColumns = columns({
   showPrice: "show_price",
   modes: "modes",
   homeVisitFee: "home_visit_fee",
-  clinicalTemplateId: "clinical_template_id",
+  peoplePerSession: "people_per_session",
   isActive: "is_active",
   createdAt: "created_at",
 });

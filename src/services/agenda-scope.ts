@@ -50,8 +50,9 @@ export async function agendaScope(db: Db, actor: Actor, businessId: string): Pro
  * historia clínica. `professionalParam` y `userParam` son los números de parámetro ($n) con esos valores.
  */
 export function ownClientCondition(alias: string, professionalParam: number, userParam: number): string {
-  // También los otros pacientes de las citas de su agenda (citas con varios pacientes): los agrega el
-  // panel, nunca la reserva online, así que esas citas no quedan pendientes de acceso por ellos.
+  // También los otros pacientes de las citas de su agenda (citas con varios pacientes). Los de una
+  // sesión en pareja reservada por la página tienen su propia marca (appointment_clients.
+  // client_access_pending, migración 033), con la misma regla que el principal.
   return `(${alias}.created_by = $${userParam}
            or exists (select 1 from appointments own
                        where own.client_id = ${alias}.id and own.professional_id = $${professionalParam}
@@ -59,31 +60,44 @@ export function ownClientCondition(alias: string, professionalParam: number, use
            or exists (select 1 from appointment_clients ownextra
                         join appointments own on own.id = ownextra.appointment_id
                        where ownextra.client_id = ${alias}.id and own.professional_id = $${professionalParam}
-                         and not own.client_access_pending))`;
+                         and not own.client_access_pending and not ownextra.client_access_pending))`;
 }
 
 /**
- * Condición SQL "el cliente `alias` tiene en su agenda una reserva online que todavía no le da acceso":
- * el profesional ve la cita con el nombre del paciente, pero no su ficha ni su historia.
+ * Condición SQL "el cliente `alias` tiene en su agenda una reserva online que todavía no le da acceso",
+ * como paciente principal o como otra persona de una sesión en pareja: el profesional ve la cita con
+ * el nombre del paciente, pero no su ficha ni su historia.
  */
 export function pendingClientCondition(alias: string, professionalParam: number): string {
-  return `exists (select 1 from appointments pending
-                   where pending.client_id = ${alias}.id and pending.professional_id = $${professionalParam}
-                     and pending.client_access_pending)`;
+  return `(exists (select 1 from appointments pending
+                    where pending.client_id = ${alias}.id and pending.professional_id = $${professionalParam}
+                      and pending.client_access_pending)
+           or exists (select 1 from appointment_clients pendingextra
+                        join appointments pending on pending.id = pendingextra.appointment_id
+                       where pendingextra.client_id = ${alias}.id and pending.professional_id = $${professionalParam}
+                         and (pendingextra.client_access_pending or pending.client_access_pending)))`;
 }
 
 /**
  * Una reserva online pendiente (client_access_pending) pasa a dar acceso al paciente cuando la
  * confirma o la gestiona alguien del negocio que no es el profesional de esa agenda: propietario,
  * administrador, recepción o el super admin en modo soporte. Si el propio profesional la confirma, o
- * si la cita queda cancelada, sigue igual. Se llama después de guardar el cambio de la cita.
+ * si la cita queda cancelada, sigue igual. Vale también para las otras personas de una sesión en
+ * pareja reservada por la página. Se llama después de guardar el cambio de la cita.
  */
 export async function releaseClientAccess(db: Db, actor: Actor, appointmentId: string): Promise<void> {
   if (actor.role === "professional") return;
+  const managed = `a.status <> 'cancelled'
+        and not exists (select 1 from professionals p where p.id = a.professional_id and p.user_id = $2)`;
   await db.query(
     `update appointments a set client_access_pending = false
-      where a.id = $1 and a.client_access_pending and a.status <> 'cancelled'
-        and not exists (select 1 from professionals p where p.id = a.professional_id and p.user_id = $2)`,
+      where a.id = $1 and a.client_access_pending and ${managed}`,
+    [appointmentId, actor.userId],
+  );
+  await db.query(
+    `update appointment_clients ac set client_access_pending = false
+       from appointments a
+      where ac.appointment_id = $1 and a.id = ac.appointment_id and ac.client_access_pending and ${managed}`,
     [appointmentId, actor.userId],
   );
 }

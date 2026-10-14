@@ -7,7 +7,7 @@ import { DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY, getTimezoneInfo } from "../shared/
 import { isPriceVisible } from "../shared/lib/format.ts";
 import { addMinutesToTime, getZonedNow } from "../shared/lib/time.ts";
 import { documentIdError } from "../shared/lib/identity.ts";
-import { clientLookupSchema, publicBookingSchema } from "../shared/lib/validations/booking.ts";
+import { clientLookupSchema, publicBookingSchema, type BookingPerson } from "../shared/lib/validations/booking.ts";
 import type {
   Appointment,
   BlockedTime,
@@ -25,10 +25,11 @@ import type {
   PublicService,
   Service,
 } from "../shared/types/index.ts";
+import { saveExtraClients } from "./appointment-clients.ts";
 import { describeAppointment, logAudit } from "./audit.ts";
 import { withLegacyBankAccount } from "./bank-accounts.ts";
 import { lockBusiness, parseInput } from "./context.ts";
-import { listSchedules } from "./business-data-service.ts";
+import { listSchedules, peopleFor } from "./business-data-service.ts";
 import { receiptStorage } from "./file-storage.ts";
 import { notifyAppointmentChange } from "./notifications.ts";
 import { assertAppointmentLimit, assertClientLimit, planOf } from "./plan-limits.ts";
@@ -122,23 +123,35 @@ async function findClientByDocument(db: Db, businessId: string, documentId: stri
 /**
  * Una misma persona (identificada por su cédula) no reserva desde la página más citas en un día de
  * las que permite el negocio (`maxClientBookingsPerDay`; 0 = sin límite). Cuenta todas sus citas
- * activas de ese día, también las que agendó el profesional. Va dentro de la transacción, después
- * de lockBusiness: dos reservas a la vez de la misma persona no se cuelan juntas.
+ * activas de ese día, también las que agendó el profesional y las sesiones en pareja o en familia en
+ * las que va como otra paciente. Va dentro de la transacción, después de lockBusiness: dos reservas a
+ * la vez de la misma persona no se cuelan juntas. `otherName`: la otra persona de una reserva en
+ * pareja, como la escribió quien reserva (null: quien reserva).
  */
-async function assertClientDailyLimit(db: Db, business: Business, clientId: string, date: string): Promise<void> {
+async function assertClientDailyLimit(
+  db: Db,
+  business: Business,
+  clientId: string,
+  date: string,
+  otherName: string | null = null,
+): Promise<void> {
   const limit = business.bookingSettings.maxClientBookingsPerDay ?? DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY;
   if (limit <= 0) return;
   const sameDay = await one<{ count: number }>(
     db,
-    `select count(*)::int as count from appointments
-      where business_id = $1 and client_id = $2 and date = $3 and status in ('pending', 'confirmed', 'completed')`,
+    `select count(*)::int as count from appointments a
+      where a.business_id = $1 and a.date = $3 and a.status in ('pending', 'confirmed', 'completed')
+        and (a.client_id = $2
+             or exists (select 1 from appointment_clients ac where ac.appointment_id = a.id and ac.client_id = $2))`,
     [business.id, clientId, date],
   );
   if ((sameDay?.count ?? 0) < limit) return;
-  const already = limit === 1 ? "Ya tienes una cita" : `Ya tienes ${limit} citas`;
+  const count = limit === 1 ? "una cita" : `${limit} citas`;
   throw new AppError(
     "daily_limit",
-    `${already} ese día con ${business.name}. Si necesitas otra, escríbele al negocio o elige otro día.`,
+    otherName === null
+      ? `Ya tienes ${count} ese día con ${business.name}. Si necesitas otra, escríbele al negocio o elige otro día.`
+      : `${otherName} ya tiene ${count} ese día con ${business.name}. Si necesitan otra, escríbanle al negocio o elijan otro día.`,
   );
 }
 
@@ -216,13 +229,22 @@ const REPEATED_BOOKING_MINUTES = 30;
  * La misma reserva otra vez: se perdió la respuesta (mala conexión) y el paciente volvió a
  * confirmar. Su propia cita ocupa esa hora, así que se busca una cita activa reservada online hace
  * poco con su cédula y el mismo servicio, fecha, hora y modalidad (y el mismo profesional, si lo
- * eligió). Sólo las recientes, y sólo si coinciden el email o el teléfono (ver book).
+ * eligió), y con las mismas otras personas (sus cédulas, en cualquier orden; ninguna en una cita
+ * individual). Sólo las recientes, y sólo si coinciden el email o el teléfono (ver book).
  */
 async function findRepeatedBooking(
   db: Db,
   business: Business,
   serviceId: string,
-  data: { documentId: string; date: string; startTime: string; isVirtual: boolean; homeVisit: unknown; professionalId: string | null },
+  data: {
+    documentId: string;
+    date: string;
+    startTime: string;
+    isVirtual: boolean;
+    homeVisit: unknown;
+    professionalId: string | null;
+    extraPatients: { documentId: string }[];
+  },
 ): Promise<(Appointment & { clientEmail: string; clientPhone: string }) | null> {
   const chosen = business.bookingSettings.chooseProfessional !== false ? data.professionalId : null;
   return one<Appointment & { clientEmail: string; clientPhone: string }>(
@@ -235,10 +257,78 @@ async function findRepeatedBooking(
         and a.is_virtual = $6 and (a.home_visit is not null) = $7
         and ($8::text is null or a.professional_id::text = $8)
         and a.created_at > now() - make_interval(mins => $9)
+        and coalesce((select array_agg(ec.document_id order by ec.document_id)
+                        from appointment_clients ac join clients ec on ec.id = ac.client_id
+                       where ac.appointment_id = a.id), '{}')
+            = coalesce((select array_agg(doc order by doc) from unnest($10::text[]) doc), '{}')
       order by a.created_at desc
       limit 1`,
-    [business.id, data.documentId, serviceId, data.date, data.startTime, data.isVirtual, Boolean(data.homeVisit), chosen, REPEATED_BOOKING_MINUTES],
+    [
+      business.id,
+      data.documentId,
+      serviceId,
+      data.date,
+      data.startTime,
+      data.isVirtual,
+      Boolean(data.homeVisit),
+      chosen,
+      REPEATED_BOOKING_MINUTES,
+      data.extraPatients.map((person) => person.documentId),
+    ],
   );
+}
+
+/**
+ * La persona de la reserva por su cédula, como siempre: si ya existe en el negocio, sólo se reutiliza
+ * (sin tocar sus datos de contacto) si coinciden su email o su teléfono; con la cédula de otra persona
+ * no se reserva a su nombre ni se sabe nada de ella. Si no existe, se crea (con los topes de pacientes
+ * nuevos del día y del plan). Vale igual para quien reserva y para las otras personas de una sesión en
+ * pareja o en familia (`otherName`: cómo la escribió quien reserva; null: quien reserva).
+ */
+async function resolveBookingClient(
+  db: Db,
+  business: Business,
+  person: BookingPerson,
+  options: { otherName: string | null; address: string },
+): Promise<Client> {
+  const { otherName } = options;
+  const documentError = documentIdError(person.documentId, business.timezone);
+  if (documentError) throw new AppError("validation", otherName === null ? documentError : `${otherName}: ${documentError}`);
+  const found = await findClientByDocument(db, business.id, person.documentId);
+  if (found) {
+    if (sameContact(found, person, business.timezone)) return found;
+    throw new AppError(
+      "forbidden",
+      otherName === null
+        ? UNCONFIRMED_IDENTITY_MESSAGE
+        : `No pudimos confirmar los datos de ${otherName}. Revisa su email y su teléfono o escríbenos por WhatsApp.`,
+    );
+  }
+  // Cliente antiguo sin cédula con el mismo email y el mismo nombre: se le añade la cédula en lugar
+  // de duplicarlo. Con otro nombre es otra persona (una madre y su hijo con un solo email): se crea
+  // aparte, para no mezclar sus citas ni sus historias clínicas.
+  const legacy = (
+    await many<Client>(
+      db,
+      `select ${clientColumns()} from clients where business_id = $1 and lower(email) = $2 and document_id = ''`,
+      [business.id, person.email],
+    )
+  ).filter((candidate) => normalizePersonName(candidate.name) === normalizePersonName(person.name));
+  if (legacy.length === 1) {
+    return (await one<Client>(db, `update clients set document_id = $2 where id = $1 returning ${clientColumns()}`, [
+      legacy[0].id,
+      person.documentId,
+    ]))!;
+  }
+  await assertOnlineNewClientLimit(db, business.id);
+  await withPublicLimitMessage(() => assertClientLimit(db, business.id));
+  return (await one<Client>(
+    db,
+    `insert into clients (business_id, name, document_id, email, phone, address, source)
+     values ($1, $2, $3, $4, $5, $6, 'booking_page')
+     returning ${clientColumns()}`,
+    [business.id, person.name, person.documentId, person.email, person.phone, options.address],
+  ))!;
 }
 
 /**
@@ -300,9 +390,16 @@ function toPublicProfessional(professional: Professional): PublicProfessional {
   return { id, displayName, title, avatarUrl, allServices, serviceIds };
 }
 
-/** Con el precio oculto, ni el precio ni el recargo a domicilio salen del servidor. */
-function toPublicService({ clinicalTemplateId: _template, isActive: _active, createdAt: _created, ...service }: Service): PublicService {
-  return isPriceVisible(service) ? service : { ...service, price: 0, homeVisitFee: 0 };
+/**
+ * Con el precio oculto, ni el precio ni el recargo a domicilio salen del servidor. Las personas por
+ * sesión, con su valor efectivo: 1 si el negocio no tiene las citas con varios pacientes.
+ */
+function toPublicService(
+  business: Business,
+  { isActive: _active, createdAt: _created, ...service }: Service,
+): PublicService {
+  const shown = { ...service, peoplePerSession: peopleFor(business, service) };
+  return isPriceVisible(shown) ? shown : { ...shown, price: 0, homeVisitFee: 0 };
 }
 
 function toPublicBlockedTime({ reason: _reason, createdAt: _created, ...block }: BlockedTime): PublicBlockedTime {
@@ -363,7 +460,7 @@ export const publicBookingService = {
       professional: publicProfessionals[0],
       services: services
         .filter((service) => professionals.some((professional) => offersService(professional, service.id)))
-        .map(toPublicService),
+        .map((service) => toPublicService(business, service)),
       schedules: (await listSchedules(pool, business.id)).filter((schedule) => active.has(schedule.professionalId)),
       blockedTimes: (await blockedTimesFrom(pool, business.id, today))
         .filter((block) => block.professionalId === null || active.has(block.professionalId))
@@ -375,7 +472,9 @@ export const publicBookingService = {
 
   /**
    * Revalida la disponibilidad, los topes del día y el plan, reutiliza el cliente de la cédula (si
-   * coinciden su email o su teléfono) o lo crea, crea la cita y envía los emails.
+   * coinciden su email o su teléfono) o lo crea, crea la cita y envía los emails. En un servicio para
+   * 2 o 3 personas (spec 005), lo mismo con cada una: quien reserva es el paciente principal y las
+   * demás quedan como los otros pacientes de la cita. Todo o nada: si algo falla, no se crea nadie.
    */
   async book(slug: string, input: unknown): Promise<BookingConfirmation> {
     const data = parseInput(publicBookingSchema, input);
@@ -404,6 +503,21 @@ export const publicBookingService = {
               : service.modes.includes("home")
                 ? "Marca en el mapa dónde será la visita a domicilio."
                 : "Elige cómo quieres la cita.",
+        );
+      }
+
+      // Personas por sesión: las del servicio, si el negocio tiene las citas con varios pacientes.
+      const people = peopleFor(business, service);
+      const missing = people - 1 - data.extraPatients.length;
+      if (missing < 0) {
+        throw new AppError("validation", people === 1 ? "Este servicio es para una persona." : `Este servicio es para ${people} personas.`);
+      }
+      if (missing > 0) {
+        // Una página abierta antes de que el servicio fuera para varias personas: no las pidió.
+        const who = people === 2 ? "la otra persona" : missing === 2 ? "las otras dos personas" : "una de las personas";
+        throw new AppError(
+          "validation",
+          `Este servicio es para ${people} personas: faltan los datos de ${who}. Recarga la página e inténtalo de nuevo.`,
         );
       }
 
@@ -454,51 +568,24 @@ export const publicBookingService = {
       if (!professional) throw new AppError("conflict", "Esa hora acaba de ocuparse. Por favor elige otra.");
       await withPublicLimitMessage(() => assertAppointmentLimit(db, business.id, data.date));
 
-      // El cliente se identifica con su cédula. Si ya existe en el negocio, sólo se reutiliza (sin
-      // tocar sus datos de contacto) si coinciden su email o su teléfono: con la cédula de otra
-      // persona no se reserva a su nombre ni se sabe nada de ella. Si no existe, se crea.
-      const documentError = documentIdError(data.documentId, business.timezone);
-      if (documentError) throw new AppError("validation", documentError);
-      let client = await findClientByDocument(db, business.id, data.documentId);
-      if (client && !sameContact(client, data, business.timezone)) {
-        throw new AppError("forbidden", UNCONFIRMED_IDENTITY_MESSAGE);
-      }
-      if (!client) {
-        // Cliente antiguo sin cédula con el mismo email y el mismo nombre: se le añade la cédula en lugar
-        // de duplicarlo. Con otro nombre es otra persona (una madre y su hijo con un solo email): se crea
-        // aparte, para no mezclar sus citas ni sus historias clínicas.
-        const legacy = (
-          await many<Client>(
-            db,
-            `select ${clientColumns()} from clients where business_id = $1 and lower(email) = $2 and document_id = ''`,
-            [business.id, data.email],
-          )
-        ).filter((candidate) => normalizePersonName(candidate.name) === normalizePersonName(data.name));
-        if (legacy.length === 1) {
-          client = (await one<Client>(
-            db,
-            `update clients set document_id = $2 where id = $1 returning ${clientColumns()}`,
-            [legacy[0].id, data.documentId],
-          ))!;
-        } else {
-          await assertOnlineNewClientLimit(db, business.id);
-          await withPublicLimitMessage(() => assertClientLimit(db, business.id));
-          client = (await one<Client>(
-            db,
-            `insert into clients (business_id, name, document_id, email, phone, address, source)
-             values ($1, $2, $3, $4, $5, $6, 'booking_page')
-             returning ${clientColumns()}`,
-            [business.id, data.name, data.documentId, data.email, data.phone, data.homeVisit?.address ?? ""],
-          ))!;
-        }
-      }
+      // Cada persona se identifica con su cédula (ver resolveBookingClient): primero quien reserva.
+      const client = await resolveBookingClient(db, business, data, { otherName: null, address: data.homeVisit?.address ?? "" });
       await assertClientDailyLimit(db, business, client.id, data.date);
       if (!client.address && data.homeVisit) {
         // La dirección de la visita queda en la ficha del cliente si aún no tenía una.
         await db.query("update clients set address = $2 where id = $1", [client.id, data.homeVisit.address]);
       }
+      const extraClientIds: string[] = [];
+      for (const person of data.extraPatients) {
+        const extra = await resolveBookingClient(db, business, person, { otherName: person.name, address: "" });
+        if (extra.id === client.id || extraClientIds.includes(extra.id)) {
+          throw new AppError("validation", "Cada persona debe tener su propia cédula.");
+        }
+        await assertClientDailyLimit(db, business, extra.id, data.date, person.name);
+        extraClientIds.push(extra.id);
+      }
 
-      const appointment = (await one<Appointment>(
+      const created = (await one<Appointment>(
         db,
         `insert into appointments
            (business_id, client_id, service_id, professional_id, date, start_time, end_time, status, notes, price,
@@ -520,6 +607,8 @@ export const publicBookingService = {
           data.isVirtual,
         ],
       ))!;
+      // Las otras personas, antes de los avisos (cada una recibe el suyo).
+      const appointment = extraClientIds.length ? await saveExtraClients(db, created, extraClientIds, []) : created;
       const emailSent = await notifyAppointmentChange(db, null, appointment, "booking_page");
       await logAudit(db, {
         businessId: business.id,

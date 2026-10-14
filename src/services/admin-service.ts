@@ -297,7 +297,6 @@ export const adminService = {
           showPrice: true,
           modes: ["business"],
           homeVisitFee: 0,
-          clinicalTemplateId: null,
           isActive: true,
         })),
       });

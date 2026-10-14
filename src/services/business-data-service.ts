@@ -18,6 +18,7 @@ import type {
   Appointment,
   AppointmentStatus,
   BlockedTime,
+  Business,
   Client,
   ClientActivity,
   ClientRequiredFields,
@@ -36,7 +37,6 @@ import {
   diffChanges,
   scheduleChanges,
   type AppointmentForAudit,
-  type ServiceForAudit,
 } from "./audit-changes.ts";
 import {
   agendaScope,
@@ -304,17 +304,6 @@ export const clientService = {
 
 /* --------------------------------- Servicios --------------------------------- */
 
-/** El formato de historia clínica de un servicio: de la plataforma o propio del negocio. */
-async function assertServiceTemplate(db: Db, businessId: string, templateId: string | null): Promise<void> {
-  if (!templateId) return;
-  const template = await one(
-    db,
-    "select 1 from clinical_templates where id = $1 and (business_id is null or business_id = $2)",
-    [templateId, businessId],
-  );
-  if (!template) throw new AppError("validation", "Ese formato de historia clínica no existe.");
-}
-
 export const serviceService = {
   async list(ctx: RequestContext, businessId: string): Promise<Service[]> {
     await authorize(pool, ctx, businessId);
@@ -328,12 +317,12 @@ export const serviceService = {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "services.manage", { lock: true });
       const data = parseInput(serviceSchema, input);
-      await assertServiceTemplate(db, businessId, data.clinicalTemplateId);
+      const people = (await canSetPeoplePerSession(db, businessId)) ? (data.peoplePerSession ?? 1) : 1;
       const service = (await one<Service>(
         db,
         `insert into services
            (business_id, name, description, duration_minutes, price, show_price, modes, home_visit_fee,
-            clinical_template_id, is_active)
+            is_active, people_per_session)
          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          returning ${serviceColumns()}`,
         [
@@ -345,8 +334,8 @@ export const serviceService = {
           data.showPrice,
           data.modes,
           data.homeVisitFee,
-          data.clinicalTemplateId,
           data.isActive,
+          people,
         ],
       ))!;
       await logAudit(db, {
@@ -366,12 +355,16 @@ export const serviceService = {
       const actor = await authorize(db, ctx, businessId, "services.manage", { lock: true });
       const data = parseInput(serviceSchema, input);
       const before = await findOwned<Service>(db, "services", serviceColumns(), businessId, serviceId, "Servicio no encontrado.");
-      await assertServiceTemplate(db, businessId, data.clinicalTemplateId);
+      // Sin el campo (un panel anterior) o sin el permiso del negocio, se conserva el que tenía.
+      const people =
+        data.peoplePerSession !== undefined && (await canSetPeoplePerSession(db, businessId))
+          ? data.peoplePerSession
+          : before.peoplePerSession;
       const service = (await one<Service>(
         db,
         `update services
             set name = $2, description = $3, duration_minutes = $4, price = $5,
-                show_price = $6, modes = $7, home_visit_fee = $8, clinical_template_id = $9, is_active = $10
+                show_price = $6, modes = $7, home_visit_fee = $8, is_active = $9, people_per_session = $10
           where id = $1
           returning ${serviceColumns()}`,
         [
@@ -383,8 +376,8 @@ export const serviceService = {
           data.showPrice,
           data.modes,
           data.homeVisitFee,
-          data.clinicalTemplateId,
           data.isActive,
+          people,
         ],
       ))!;
       const summary =
@@ -398,7 +391,7 @@ export const serviceService = {
         entityType: "service",
         entityId: serviceId,
         summary,
-        changes: diffChanges(await serviceForAudit(db, before), await serviceForAudit(db, service), SERVICE_FIELDS),
+        changes: diffChanges(before, service, SERVICE_FIELDS),
       });
       return service;
     });
@@ -603,11 +596,20 @@ async function appointmentForAudit(db: Db, appointment: Appointment): Promise<Ap
 }
 
 /** El servicio con el nombre de su formato de historia clínica. */
-async function serviceForAudit(db: Db, service: Service): Promise<ServiceForAudit> {
-  const template = service.clinicalTemplateId
-    ? await one<{ name: string }>(db, "select name from clinical_templates where id = $1", [service.clinicalTemplateId])
-    : null;
-  return { ...service, clinicalTemplateName: template?.name ?? null };
+/**
+ * Personas por sesión de un servicio, tal como cuentan (spec 005): las que tiene guardadas si el negocio
+ * tiene las citas con varios pacientes (el interruptor del super admin); si no, 1. Al apagar el
+ * interruptor el dato se conserva, para cuando se vuelva a encender.
+ */
+export const peopleFor = (business: Pick<Business, "multiClientAppointments">, service: Pick<Service, "peoplePerSession">) =>
+  business.multiClientAppointments ? service.peoplePerSession : 1;
+
+/** El negocio puede marcar servicios para varias personas (lo habilita el super admin). */
+async function canSetPeoplePerSession(db: Db, businessId: string): Promise<boolean> {
+  const row = await one<{ enabled: boolean }>(db, "select multi_client_appointments as enabled from businesses where id = $1", [
+    businessId,
+  ]);
+  return row?.enabled ?? false;
 }
 
 const STATUS_VERBS: Record<AppointmentStatus, string> = {

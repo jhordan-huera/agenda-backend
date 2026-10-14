@@ -597,7 +597,7 @@ function seedTenant(
     showPrice: true,
     modes,
     homeVisitFee,
-    clinicalTemplateId: null,
+    peoplePerSession: 1,
     isActive,
     createdAt: daysAgoISO(age - 1),
   }),

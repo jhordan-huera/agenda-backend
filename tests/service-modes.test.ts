@@ -46,7 +46,7 @@ await owner("PATCH", B, { bookingSettings: { ...business.bookingSettings, minNot
 const visitor = agent();
 
 console.log("Servicios");
-const base = { description: "", durationMinutes: 45, homeVisitFee: 0, clinicalTemplateId: null, isActive: true };
+const base = { description: "", durationMinutes: 45, homeVisitFee: 0, isActive: true };
 let r = await owner("POST", `${B}/services`, { ...base, name: "Sin modalidad", price: 10, showPrice: true, modes: [] });
 ok(r.status === 400 && /modalidad/.test(r.body.error.message), "sin modalidad → 400", r.body);
 r = await owner("POST", `${B}/services`, { ...base, name: "Terapia online", price: 0, showPrice: true, modes: ["virtual"] });

@@ -60,9 +60,7 @@ export const CLIENT_FIELDS: ChangeField<Client>[] = [
 ];
 
 /** El servicio con el nombre de su formato clínico (lo resuelve quien llama). */
-export type ServiceForAudit = Service & { clinicalTemplateName: string | null };
-
-export const SERVICE_FIELDS: ChangeField<ServiceForAudit>[] = [
+export const SERVICE_FIELDS: ChangeField<Service>[] = [
   { key: "name", label: "Nombre" },
   { key: "description", label: "Descripción", hideValues: true },
   { key: "durationMinutes", label: "Duración", format: formatDuration },
@@ -70,7 +68,7 @@ export const SERVICE_FIELDS: ChangeField<ServiceForAudit>[] = [
   { key: "showPrice", label: "Precio visible", format: yesNo },
   { key: "modes", label: "Modalidad", format: (value: ServiceMode[]) => describeServiceModes(value) },
   { key: "homeVisitFee", label: "Recargo a domicilio", format: money },
-  { key: "clinicalTemplateName", label: "Formato de historia clínica" },
+  { key: "peoplePerSession", label: "Personas por sesión" },
   { key: "isActive", label: "Activo", format: yesNo },
 ];
 

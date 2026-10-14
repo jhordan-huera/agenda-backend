@@ -294,8 +294,8 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   los ve quien tiene acceso clínico (un administrador sin él, no).
 - **Formatos propios, por servicio y archivos** (migración 010): en los planes Pro y Business el
   propietario crea y edita sus formatos (`/clinical-templates`, cada cambio es una versión nueva; un
-  campo existente no cambia de tipo) o duplica uno de la plataforma. (`services.clinical_template_id` sigue en la API, pero el panel
-  ya no lo ofrece: se usa el formato del negocio.) Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
+  campo existente no cambia de tipo) o duplica uno de la plataforma. (Los servicios no tienen formato propio: siempre se
+  propone el del negocio. La columna `services.clinical_template_id` quedó sin uso.) Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
   Storage (en local, carpeta `storage/historias-clinicas/` y rutas `/api/files`); no se borran. Las
   subidas que nunca se completaron (más de un día en `pending`) las borra el cron: primero el archivo
   y después el registro (igual con los comprobantes).
@@ -393,13 +393,36 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
     - lo cobrado se suma sólo al paciente principal.
   - **Alcance:** un profesional con «sólo sus pacientes» ve a los adicionales de su agenda.
   - **Borrado:** borrar a un adicional sólo lo quita de la cita.
+- **Servicios en pareja o en familia y su reserva online** (migración 033, spec
+  `specs/005-servicios-en-pareja`).
+  - **El servicio:** `services.people_per_session` (`peoplePerSession`, de 1 a 3, por defecto 1).
+    - Sólo vale con el interruptor de las citas con varios pacientes (`peopleFor(business, service)`).
+    - Sin el interruptor, o si el cuerpo no trae el campo, se conserva el guardado.
+    - El perfil público manda el valor efectivo: 1 sin el interruptor.
+  - **La reserva** (`POST /public/businesses/:slug/bookings`):
+    - en un servicio de 2 o 3 personas, el cuerpo trae `extraPatients` (`{ documentId, name, email, phone }`);
+    - quien reserva es el paciente principal;
+    - cada persona se reconoce por su cédula con la misma regla (`resolveBookingClient`: email o
+      teléfono que coincidan, ficha antigua sin cédula, o paciente nuevo con los topes del día y del
+      plan);
+    - las demás quedan en `appointment_clients`, todo en una transacción;
+    - el límite de citas por persona al día cuenta también las sesiones en las que va como otra
+      paciente;
+    - el reintento compara las cédulas de todas.
+  - **Emails:**
+    - los datos de pago van sólo al paciente principal, también en las citas del panel;
+    - el email de solicitud de las demás personas dice quién reservó (`bookedBy`);
+    - el tope de emails a pacientes nuevos cuenta a todas las personas.
+  - **«Sólo sus pacientes»:** cada otra persona de una reserva online que ya existía queda con
+    `appointment_clients.client_access_pending` (trigger de la migración 033, con las reglas de la
+    028) hasta que el negocio gestione la cita: el profesional ve su nombre, pero no su ficha.
+  - **ntfy:** el aviso de la reserva tiene una línea por persona.
 - **Colores de marca** (migración 018): `businesses.brand_colors` (jsonb, `{ primary, highlight }` en
   `#rrggbb`, con un check en la base; null = los de Agenda360). Se cambian con `PATCH
   /businesses/:id` (`brandColors`, permiso `business.manage`), quedan en la actividad y llegan al
   perfil público para que la página de reservas use los colores del negocio.
 - **Formato de tu negocio** (migración 017): `businesses.clinical_default_template_id` guarda el
-  formato que se propone en cada evolución nueva (salvo en las citas de un servicio con formato
-  propio). Lo elige el propietario con `PUT /businesses/:id/clinical-default-template` (cualquier
+  formato que se propone en cada evolución nueva, en todas las citas. Lo elige el propietario con `PUT /businesses/:id/clinical-default-template` (cualquier
   plan, de la plataforma o propio y activo); si no eligió ninguno, o desactiva el elegido, se usa el
   recomendado para su especialidad. La lista de formatos marca cuál es con `isDefault`.
 - **Odontograma, mapa del cuerpo y escalas** (migración 011): tipos de campo `odontogram` (FDI, por
@@ -601,6 +624,11 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
     directamente a la base y a Gmail, pone en cola y envía los recordatorios, reintenta los correos
     que la API no pudo enviar y limpia lo caducado. **Avisa por ntfy** de lo enviado o fallido y da
     señal de vida a healthchecks.io. Cada ejecución queda en la tabla `cron_runs` (30 días).
+  - **Avisos por ntfy de pacientes** (`src/services/booking-alerts.ts`), con los datos a medias:
+    - **cada reserva por la página:** dice de cada persona si es «Paciente nuevo» o «Ya era paciente»;
+    - **cada paciente registrado desde el panel:** dice quién lo registró y con qué rol.
+
+    Hasta 10 de cada tipo por pasada; del resto sólo se dice cuántos son.
 - Gmail gratuito permite unos 500 emails al día; para más volumen conviene un proveedor
   transaccional (Resend, SES…): sólo cambia `mailer.ts`.
 

@@ -70,7 +70,8 @@ export async function thirdPartyEmailHold(db: Db, type: EmailType): Promise<stri
 
 /**
  * Motivo por el que no debe salir el email de una reserva online a un paciente nuevo (tope por
- * negocio en 24 h), o null si puede salir o si el paciente no es nuevo.
+ * negocio en 24 h), o null si puede salir o si el paciente no es nuevo. Cuenta los emails de las citas
+ * con algún paciente nuevo: el principal o una de las otras personas de una sesión en pareja.
  */
 export async function newPatientEmailHold(db: Db, businessId: string, clientId: string): Promise<string | null> {
   const isNew = await one(
@@ -84,10 +85,12 @@ export async function newPatientEmailHold(db: Db, businessId: string, clientId: 
     `select count(*)::int as count
        from notifications n
        join appointments a on a.id = n.appointment_id
-       join clients c on c.id = a.client_id
       where n.business_id = $1 and n.created_at between now() - interval '24 hours' and now()
         and n.type in ('booking_created', 'appointment_confirmed')
-        and c.source = 'booking_page' and c.created_at between now() - interval '24 hours' and now()
+        and exists (select 1 from clients c
+                     where (c.id = a.client_id
+                            or c.id in (select ac.client_id from appointment_clients ac where ac.appointment_id = a.id))
+                       and c.source = 'booking_page' and c.created_at between now() - interval '24 hours' and now())
         and ${COUNTED}`,
     [businessId],
   );

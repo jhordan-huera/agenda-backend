@@ -1,6 +1,7 @@
 import { many, type Db } from "../db/pool.ts";
 import { formatPrice, formatShortDate } from "../shared/lib/format.ts";
-import type { Appointment, EmailType } from "../shared/types/index.ts";
+import { ROLE_LABELS } from "../shared/lib/permissions.ts";
+import type { Appointment, BusinessRole, EmailType } from "../shared/types/index.ts";
 import { scrubEmails } from "./mailer.ts";
 import { maskEmail, maskPhone, shortName } from "./masking.ts";
 
@@ -39,9 +40,11 @@ export interface OnlineBooking {
   startTime: string;
   place: keyof typeof PLACE_LABELS;
   status: Appointment["status"];
-  /** El paciente se creó con esta reserva (no estaba en el negocio). */
-  newClient: boolean;
-  client: { name: string; email: string; phone: string };
+  /**
+   * Las personas de la reserva: quien reservó primero y, en una sesión en pareja o en familia, las
+   * demás. `newClient`: se creó con esta reserva (no estaba en el negocio).
+   */
+  clients: { name: string; email: string; phone: string; newClient: boolean }[];
   /** Los emails de la reserva y cómo están: `reason`, por qué no salió (un tope diario, un fallo). */
   emails: { type: EmailType; to: string; status: "queued" | "sent" | "failed"; reason: string | null }[];
 }
@@ -63,8 +66,10 @@ function describeEmailStatus(email: OnlineBooking["emails"][number]): string {
 }
 
 export function onlineBookingNotice(booking: OnlineBooking): BookingNotice {
-  const { client } = booking;
-  const patient = [shortName(client.name), client.email && maskEmail(client.email), maskPhone(client.phone)].filter(Boolean).join(" · ");
+  const patients = booking.clients.map((client) => {
+    const patient = [shortName(client.name), client.email && maskEmail(client.email), maskPhone(client.phone)].filter(Boolean).join(" · ");
+    return `${client.newClient ? "Paciente nuevo" : "Ya era paciente"}: ${patient}`;
+  });
   const emails = booking.emails
     .filter((email) => EMAIL_ROLES[email.type])
     .map((email) => `• ${EMAIL_ROLES[email.type]} → ${maskEmail(email.to)}${describeEmailStatus(email)}`);
@@ -72,7 +77,7 @@ export function onlineBookingNotice(booking: OnlineBooking): BookingNotice {
     title: "Agenda360: nueva reserva",
     message: [
       `${booking.businessName} · ${formatShortDate(booking.date)} ${booking.startTime}`,
-      `${booking.newClient ? "Paciente nuevo" : "Ya era paciente"}: ${patient}`,
+      ...patients,
       `${booking.serviceName} · ${booking.durationMinutes} min · ${booking.price > 0 ? formatPrice(booking.price, booking.currency) : "gratis"}`,
       [booking.professionalName && `Con ${booking.professionalName}`, PLACE_LABELS[booking.place]].filter(Boolean).join(" · "),
       booking.status === "pending" ? "Pendiente de confirmar" : booking.status === "confirmed" ? "Confirmada" : "Ya cancelada",
@@ -88,7 +93,8 @@ export function onlineBookingNotice(booking: OnlineBooking): BookingNotice {
 /**
  * Las reservas por la página creadas en (since, until], las más antiguas primero (hasta `limit`), y
  * cuántas son en total. Sin `since` (la primera pasada), las del último día. Un paciente es nuevo si
- * se creó con la reserva: misma transacción, mismo instante.
+ * se creó con la reserva: misma transacción, mismo instante. Con las otras personas de una sesión en
+ * pareja o en familia, en el orden en que se muestran.
  */
 export async function findOnlineBookings(
   db: Db,
@@ -115,6 +121,7 @@ export async function findOnlineBookings(
     clientName: string;
     clientEmail: string;
     clientPhone: string;
+    extraClients: OnlineBooking["clients"];
   }>(
     db,
     `select a.id, count(*) over ()::int as total, b.id as "businessId", b.name as "businessName", b.currency,
@@ -122,7 +129,12 @@ export async function findOnlineBookings(
             to_char(a.date, 'YYYY-MM-DD') as date, to_char(a.start_time, 'HH24:MI') as "startTime",
             a.is_virtual as "isVirtual", a.home_visit is not null as "homeVisit", a.status,
             (c.source = 'booking_page' and c.created_at = a.created_at) as "newClient",
-            c.name as "clientName", c.email as "clientEmail", c.phone as "clientPhone"
+            c.name as "clientName", c.email as "clientEmail", c.phone as "clientPhone",
+            coalesce((select json_agg(json_build_object('name', ec.name, 'email', ec.email, 'phone', ec.phone,
+                                                        'newClient', ec.source = 'booking_page' and ec.created_at = a.created_at)
+                                      order by ac.created_at, ac.client_id)
+                        from appointment_clients ac join clients ec on ec.id = ac.client_id
+                       where ac.appointment_id = a.id), '[]') as "extraClients"
        from appointments a
        join businesses b on b.id = a.business_id
        join services s on s.id = a.service_id
@@ -154,10 +166,100 @@ export async function findOnlineBookings(
       startTime: row.startTime,
       place: row.isVirtual ? "virtual" : row.homeVisit ? "home" : "business",
       status: row.status,
-      newClient: row.newClient,
-      client: { name: row.clientName, email: row.clientEmail, phone: row.clientPhone },
+      clients: [
+        { name: row.clientName, email: row.clientEmail, phone: row.clientPhone, newClient: row.newClient },
+        ...row.extraClients,
+      ],
       emails: emails.filter((email) => email.appointmentId === row.id).map(({ appointmentId: _id, ...email }) => email),
     }),
   );
   return { bookings, total: rows[0].total };
+}
+
+/* --------------------------------------------- Pacientes nuevos del panel -- */
+
+/**
+ * Aviso por ntfy de cada paciente que se registra desde el panel (lo pidió el usuario, 2026-10-13):
+ * quién lo registró y el paciente, a medias. Los que crea la página de reservas ya salen en el aviso
+ * de su reserva («Paciente nuevo»). Lo envía el cron, como los de las reservas.
+ */
+export const MAX_CLIENT_NOTICES = 10;
+
+export interface PanelClient {
+  businessId: string;
+  businessName: string;
+  name: string;
+  email: string;
+  phone: string;
+  /** Quién lo registró (null: no se sabe, p. ej. su usuario ya no existe). */
+  createdBy: { name: string; role: BusinessRole | null; superAdmin: boolean } | null;
+}
+
+export function newClientNotice(client: PanelClient): BookingNotice {
+  const patient = [shortName(client.name), client.email && maskEmail(client.email), maskPhone(client.phone)].filter(Boolean).join(" · ");
+  const by = client.createdBy;
+  const who = !by
+    ? ""
+    : by.superAdmin && !by.role
+      ? " por el super admin (modo soporte)"
+      : ` por ${shortName(by.name)}${by.role ? ` (${ROLE_LABELS[by.role]})` : ""}`;
+  return {
+    title: "Agenda360: nuevo paciente",
+    message: [client.businessName, `Paciente nuevo: ${patient}`, `Registrado desde el panel${who}`].join("\n"),
+    priority: 3,
+    tags: ["bust_in_silhouette"],
+    click: `/admin/businesses/${client.businessId}`,
+  };
+}
+
+/**
+ * Los pacientes registrados desde el panel en (since, until], los más antiguos primero (hasta
+ * `limit`), y cuántos son en total. Sin `since` (la primera pasada), los del último día.
+ */
+export async function findPanelClients(
+  db: Db,
+  since: string | null,
+  until: string,
+  limit = MAX_CLIENT_NOTICES,
+): Promise<{ clients: PanelClient[]; total: number }> {
+  const rows = await many<{
+    total: number;
+    businessId: string;
+    businessName: string;
+    name: string;
+    email: string;
+    phone: string;
+    creatorName: string | null;
+    creatorRole: BusinessRole | null;
+    superAdmin: boolean | null;
+  }>(
+    db,
+    `select count(*) over ()::int as total, b.id as "businessId", b.name as "businessName", c.name, c.email, c.phone,
+            nullif(trim(u.first_name || ' ' || u.last_name), '') as "creatorName", bu.role as "creatorRole",
+            u.platform_role = 'super_admin' as "superAdmin"
+       from clients c
+       join businesses b on b.id = c.business_id
+       left join users u on u.id = c.created_by
+       left join business_users bu on bu.business_id = c.business_id and bu.user_id = c.created_by
+      where c.source = 'dashboard'
+        and c.created_at > coalesce($1::timestamptz, now() - interval '1 day') and c.created_at <= $2
+      order by c.created_at
+      limit $3`,
+    [since, until, limit],
+  );
+  if (rows.length === 0) return { clients: [], total: 0 };
+  return {
+    clients: rows.map((row) => ({
+      businessId: row.businessId,
+      businessName: row.businessName,
+      name: row.name,
+      email: row.email,
+      phone: row.phone,
+      createdBy:
+        row.creatorName === null && !row.superAdmin
+          ? null
+          : { name: row.creatorName ?? "", role: row.creatorRole, superAdmin: Boolean(row.superAdmin) },
+    })),
+    total: rows[0].total,
+  };
 }

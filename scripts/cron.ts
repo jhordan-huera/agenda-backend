@@ -167,8 +167,8 @@ export function buildNotice(report: ScheduledTasksReport, options: { gmailConfig
 }
 
 /**
- * Un aviso por cada reserva desde la página pública (ver booking-alerts.ts) y, si hubo más de las que
- * se detallan, otro con cuántas faltan.
+ * Un aviso por cada reserva desde la página pública y por cada paciente registrado desde el panel (ver
+ * booking-alerts.ts) y, si hubo más de los que se detallan, otro con cuántos faltan.
  */
 export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
   const notices: Notice[] = [...(report.bookingNotices ?? [])];
@@ -179,6 +179,18 @@ export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
       message: `…y ${plural(rest, "reserva más", "reservas más")} por la página (detalle en el panel de cada negocio).`,
       priority: 3,
       tags: ["calendar"],
+      click: "/admin/businesses",
+    });
+  }
+  const clientNotices = report.clientNotices ?? [];
+  notices.push(...clientNotices);
+  const restClients = (report.panelClients ?? 0) - clientNotices.length;
+  if (restClients > 0) {
+    notices.push({
+      title: "Agenda360: más pacientes nuevos",
+      message: `…y ${plural(restClients, "paciente nuevo más", "pacientes nuevos más")} registrados desde el panel (detalle en cada negocio).`,
+      priority: 3,
+      tags: ["bust_in_silhouette"],
       click: "/admin/businesses",
     });
   }
@@ -241,6 +253,7 @@ async function main(): Promise<void> {
 
     console.info(
       `Recordatorios: ${report.reminders} · reservas por la página: ${report.onlineBookings ?? 0} · ` +
+        `pacientes nuevos del panel: ${report.panelClients ?? 0} · ` +
         `enviados desde la anterior: ${report.sentSinceLastRun} · ` +
         `negocios con error: ${report.reminderFailures} · ` +
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +

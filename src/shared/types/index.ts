@@ -349,8 +349,11 @@ export interface Service {
   modes: ServiceMode[];
   /** Recargo por atender a domicilio; se suma al precio. */
   homeVisitFee: number;
-  /** Formato de historia clínica propuesto al registrar la evolución de una cita de este servicio. */
-  clinicalTemplateId: string | null;
+  /**
+   * Personas por sesión: 1 (individual), 2 (pareja) o 3 (familia). Sólo vale si el negocio tiene
+   * multiClientAppointments; en la página de reservas llega ya con el valor efectivo (1 sin él).
+   */
+  peoplePerSession: number;
   isActive: boolean;
   createdAt: ISODateTime;
 }
@@ -912,7 +915,7 @@ export type PublicBusiness = Omit<
 /** Sin su cuenta, su email ni sus avisos. */
 export type PublicProfessional = Pick<Professional, "id" | "displayName" | "title" | "avatarUrl" | "allServices" | "serviceIds">;
 /** Con el precio oculto (`showPrice` false), `price` y `homeVisitFee` llegan a 0. */
-export type PublicService = Omit<Service, "clinicalTemplateId" | "isActive" | "createdAt">;
+export type PublicService = Omit<Service, "isActive" | "createdAt">;
 /** Sin el motivo: el cliente sólo necesita saber que esas horas no están disponibles. */
 export type PublicBlockedTime = Omit<BlockedTime, "reason" | "createdAt">;
 

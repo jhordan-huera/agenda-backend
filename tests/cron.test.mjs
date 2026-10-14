@@ -87,8 +87,19 @@ ok(
   Number(sql("select count(*) from notifications where status = 'queued'")) === queuedBefore + first.report.reminders + reminderCopies() - copiesBefore,
   "sin Gmail no envía nada: todo sigue en cola (recordatorios y sus copias)",
 );
-ok(/Recordatorios: \d+ · reservas por la página: \d+ · enviados/.test(run.output) && !/@/.test(run.output), "el registro (público en GitHub) sólo lleva cifras, ningún email", run.output.slice(-300));
-ok(received.length === 1 && received[0].priority === 4 && /no tiene acceso a Gmail/.test(received[0].title), "avisa que faltan las credenciales de Gmail", received[0]);
+ok(
+  /Recordatorios: \d+ · reservas por la página: \d+ · pacientes nuevos del panel: \d+ · enviados/.test(run.output) && !/@/.test(run.output),
+  "el registro (público en GitHub) sólo lleva cifras, ningún email",
+  run.output.slice(-300),
+);
+// Además del de Gmail, los avisos de las reservas y los pacientes nuevos de los datos demo (recién creados).
+const gmailNotice = received.find((n) => /no tiene acceso a Gmail/.test(n.title));
+ok(
+  gmailNotice?.priority === 4 &&
+    received.every((n) => n === gmailNotice || /^Agenda360: (nueva reserva|más reservas|nuevo paciente|más pacientes nuevos)$/.test(n.title)),
+  "avisa que faltan las credenciales de Gmail",
+  received.map((n) => n.title),
+);
 run = await runScript();
 let second = lastRun();
 ok(run.code === 0 && second.report.reminders === 0 && Math.abs(Date.parse(second.report.since) - Date.parse(first.ranAt)) < 1000, "la siguiente cuenta desde la anterior y no repite recordatorios", second.report);

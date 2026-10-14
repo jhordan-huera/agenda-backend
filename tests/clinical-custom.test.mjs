@@ -164,21 +164,12 @@ r = await ricardo("POST", `${B}/clients/${patient.id}/clinical-record/attachment
 ok(r.status === 402, "subir archivos → 402", r.body);
 setPlan("business");
 
-console.log("Formato por servicio");
+console.log("Los servicios no tienen formato propio (se usa el del negocio)");
 const service = (await ricardo("GET", `${B}/services`)).body[0];
-const serviceBody = (patch) => ({ ...service, ...patch });
-r = await ricardo("PUT", `${B}/services/${service.id}`, serviceBody({ clinicalTemplateId: "odontologia-consulta" }));
-ok(r.status === 200 && r.body.clinicalTemplateId === "odontologia-consulta", "asignar un formato de la plataforma", r.body);
-r = await ricardo("PUT", `${B}/services/${service.id}`, serviceBody({ clinicalTemplateId: own.id }));
-ok(r.status === 200 && r.body.clinicalTemplateId === own.id, "o uno propio", r.body);
-r = await ricardo("PUT", `${B}/services/${service.id}`, serviceBody({ clinicalTemplateId: "no-existe" }));
-ok(r.status === 400, "uno que no existe → 400", r.body);
-const { a: laura, session: ls } = await login("laura@demo.com");
-const lauraService = (await laura("GET", `/businesses/${ls.businessId}/services`)).body[0];
-r = await laura("PUT", `/businesses/${ls.businessId}/services/${lauraService.id}`, { ...lauraService, clinicalTemplateId: own.id });
-ok(r.status === 400, "el formato propio de otro negocio → 400", r.body);
-r = await ricardo("PUT", `${B}/services/${service.id}`, serviceBody({ clinicalTemplateId: null }));
-ok(r.status === 200 && r.body.clinicalTemplateId === null, "quitarlo", r.body);
+ok(!("clinicalTemplateId" in service), "el servicio ya no trae formato de historia clínica", service);
+// Un panel anterior todavía lo manda: se ignora.
+r = await ricardo("PUT", `${B}/services/${service.id}`, { ...service, clinicalTemplateId: own.id });
+ok(r.status === 200 && !("clinicalTemplateId" in r.body), "un panel anterior que lo manda guarda igual, sin formato", r.body);
 
 console.log("Archivos");
 r = await ricardo("GET", `${B}/clients/${patient.id}/clinical-record`);

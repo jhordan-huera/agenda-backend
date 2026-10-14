@@ -46,10 +46,16 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   online no reconoce al paciente por la cédula ni muestra sus datos: siempre pide nombre, email y
   teléfono.
 - Las fechas de consentimiento y de las evoluciones clínicas las pone el sistema.
-- Cada email al paciente sobre su cita (salvo los recordatorios) sale con copia al profesional.
+- Cada email al paciente sobre su cita, también los recordatorios, sale con copia al profesional
+  (los recordatorios, desde el 2026-10-13).
 - Una cita puede tener hasta 3 pacientes (sesiones de pareja), sólo en los negocios que el super
   admin habilite con su interruptor; el negocio no lo cambia. Cada paciente recibe sus avisos, la
   copia al profesional sale una vez y la hora se ocupa una sola vez (2026-10-13).
+- Con ese interruptor, un servicio puede ser para 2 o 3 personas. La página de reservas pide los
+  datos de cada una y reconoce a cada persona por su cédula como a quien reserva (si no coinciden
+  su email o su teléfono, no se usa su ficha); las que no existen se registran como nuevas. Quien
+  reserva es el paciente principal y sólo él recibe los datos de pago. En el panel, si faltan
+  pacientes, se avisa sin bloquear (2026-10-13).
 - En la portada no hay testimonios, cifras ni precios inventados.
 
 ### IV. Se comprueba en local, nunca en producción
@@ -145,4 +151,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.2.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-13
+**Versión**: 1.3.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-13
