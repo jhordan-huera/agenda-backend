@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-14
 
-**Estado**: Implementada (2026-10-14)
+**Estado**: Publicada (2026-10-15, PR backend #28 y front #25)
 
 **Repos**: agenda-backend (principal: validar e importar) y agenda-front (la pantalla de importar,
 leer el archivo y la vista previa). La beta, para las demostraciones.

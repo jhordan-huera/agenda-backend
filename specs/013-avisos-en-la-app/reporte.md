@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev · **Fecha**: 2026-10-14
+**Estado**: Publicada (2026-10-15, PR backend #28 y front #25) · **Fecha**: 2026-10-14
 
 **Repos**: los dos (agenda-backend y agenda-front; la beta no cambia) · **Migración**: Sí:
 `040_push_notifications.sql`
