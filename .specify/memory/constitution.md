@@ -24,6 +24,9 @@ Agenda360 guarda datos de salud (historia clínica, citas, contacto de pacientes
   "ju***@gmail.com", "***5555", sólo los últimos 4 dígitos del teléfono desde el 2026-10-14). Los
   del celular sólo llevan el nombre a medias: nunca su contacto, su cédula ni nada de la historia
   clínica.
+- En la campana del panel (spec 014) el paciente va con su nombre completo, porque está dentro del
+  panel, donde el equipo ya lo ve. Nunca su contacto, su cédula ni nada de la historia clínica
+  (2026-10-15).
 - La analítica (Vercel Analytics / Speed Insights) recibe rutas sin identificadores ni tokens y sin
   parámetros.
 - Las páginas públicas (reservas, pago y «Tu cita») no exponen datos internos del negocio ni de otros pacientes.
@@ -115,6 +118,16 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   el celular (activarlos en un aparato, cambiar sus tipos, desactivarlos y el aviso de prueba). Lo
   que pasa solo (la puesta al día del aparato al abrir el panel, la pausa al cerrar sesión, los
   envíos del cron) y las consultas no se registran (2026-10-15).
+- El panel del negocio y el de /admin tienen una campana con los avisos de los últimos 30 días, sin
+  tener que activar nada; cada persona ve lo suyo y lleva su propio leído:
+  - el propietario, todo el negocio, y «Cita nueva» y el resumen de su agenda;
+  - Recepción y los administradores, las reservas, los comprobantes, las confirmaciones y las
+    cancelaciones del paciente de todas las agendas;
+  - quien tiene una agenda, lo de su agenda (también «Cita nueva», si la agendó otra persona, y las
+    citas por cerrar);
+  - el super admin, sus cuatro avisos en /admin, y en modo soporte no ve la del negocio.
+
+  Leer no se registra en la actividad (2026-10-15).
 - En la portada no hay testimonios, cifras ni precios inventados.
 
 ### IV. Se comprueba en local, nunca en producción
@@ -218,4 +231,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.9.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-15
+**Versión**: 1.10.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-15
