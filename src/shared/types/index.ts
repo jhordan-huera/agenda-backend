@@ -306,7 +306,10 @@ export interface Subscription {
   businessId: string;
   plan: PlanId;
   status: SubscriptionStatus;
+  /** Para el cobro (otra spec): hoy no se muestra, porque no hay renovación. */
   currentPeriodEnd: ISODateTime | null;
+  /** Desde cuándo está en su plan: el alta o el último cambio de plan (spec 015). */
+  planSince: ISODateTime;
   /** Agendas contratadas (plan Business): las fija el super admin. null: las del plan. */
   maxProfessionals: number | null;
 }
@@ -697,7 +700,8 @@ export interface AuditLogPage<T extends AuditLog = AuditLog> {
 
 /**
  * Antecedentes del paciente (uno por cliente). Datos de salud: datos sensibles. Sólo los ven
- * el propietario y los miembros que él autoriza; nunca la plataforma (super admin).
+ * el propietario, los miembros que él autoriza y el super admin en modo soporte («Gestionar
+ * negocio»), que no los ve desde el panel /admin.
  */
 export interface ClinicalProfile {
   businessId: string;
@@ -946,8 +950,9 @@ export interface ClinicalRecord {
 export type PlanRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
 
 /**
- * Solicitud de cambio de plan: el propietario la pide desde Configuración → Suscripción y el
- * super admin la aprueba (se aplica el plan) o la rechaza. Hay como mucho una pendiente por negocio.
+ * Solicitud de cambio de plan: el super admin la aprueba (se aplica el plan) o la rechaza. Hay como
+ * mucho una pendiente por negocio. El panel del negocio ya no tiene la pestaña Suscripción (no ve
+ * planes ni precios): hoy nadie la crea desde la web, aunque la API la sigue aceptando.
  */
 export interface PlanChangeRequest {
   id: string;
@@ -1026,6 +1031,12 @@ export interface PlatformStats {
   health: {
     /** Emails de hoy: enviados, fallidos (sin los descartados a propósito) y los que siguen en cola. */
     emailsToday: { sent: number; failed: number; queued: number };
+    /**
+     * El cupo diario de la cuenta de Gmail (spec 015): los envíos de las últimas 24 h frente al cupo, el
+     * límite de los emails al paciente (el cupo menos la reserva del equipo) y los que esperan cupo en la
+     * cola, al paciente y al negocio (copias al profesional y avisos).
+     */
+    emailQuota: { quota: number; sent24h: number; patientLimit: number; waiting: { patient: number; business: number } };
     /** Última pasada del cron (null: ninguna) y sus errores (negocios con fallos y emails que no salieron). */
     cron: { lastRunAt: ISODateTime | null; failures: number };
     /** Última copia de seguridad registrada (null: ninguna todavía). */

@@ -54,6 +54,7 @@ import type {
   User,
 } from "../shared/types/index.ts";
 import { createUserAccount, hashPassword, isEmailRegistered } from "./accounts.ts";
+import { emailQuotaStatus } from "./email-limits.ts";
 import { ADMIN_AUDIT_QUERY, parseAuditFilters, queryAuditLogs } from "./activity-service.ts";
 import { findTeamMember, listTeamMembers } from "./account-service.ts";
 import { logAudit } from "./audit.ts";
@@ -64,7 +65,7 @@ import { releaseImages } from "./image-service.ts";
 import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
 import { appOrigin, PASSWORD_MASK, queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
-import { assertRoleAllowed, assertUserLimit } from "./plan-limits.ts";
+import { assertRoleAllowed, assertUserLimit, countsForPlanSql } from "./plan-limits.ts";
 import { applyPlanChange } from "./subscriptions.ts";
 
 /**
@@ -121,7 +122,8 @@ const growthPeriodsSql = (tz: string) => `periods as (
 /**
  * Resumen de negocios (con propietario, suscripción, uso del plan, última actividad y crecimiento:
  * citas agendadas en lo que va del mes frente a los mismos días del mes pasado, ver growthPeriodsSql).
- * El mes en curso del uso del plan se calcula en la zona horaria de cada negocio.
+ * El mes en curso del uso del plan se calcula en la zona horaria de cada negocio, y los pacientes se
+ * cuentan como el tope del plan (countsForPlanSql): «Cerca del límite» no da falsos positivos.
  */
 async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBusinessSummary[]> {
   const rows = await many<
@@ -143,7 +145,7 @@ async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBu
                 and a.date >= date_trunc('month', now() at time zone b.timezone)::date
                 and a.date < (date_trunc('month', now() at time zone b.timezone) + interval '1 month')::date
             ) as "appointmentsThisMonth",
-            (select count(*) from clients c where c.business_id = b.id) as clients,
+            (select count(*) from clients c where c.business_id = b.id and ${countsForPlanSql("c")}) as clients,
             (select count(*) from business_users bu where bu.business_id = b.id) as users,
             (select count(*) from professionals p where p.business_id = b.id and p.is_active) as professionals,
             (select max(l.created_at) from audit_logs l where l.business_id = b.id) as "lastActivityAt",
@@ -288,11 +290,12 @@ const LOGIN_ALERT_ATTEMPTS = 10;
 
 /**
  * Salud del sistema (spec 006), sólo con cifras: emails de hoy (enviados, fallidos sin los descartados
- * a propósito y los que siguen en cola), la última pasada del cron y sus errores, la última copia de
- * seguridad registrada y los intentos fallidos de inicio de sesión.
+ * a propósito y los que siguen en cola), el cupo de Gmail (spec 015: los envíos de 24 h y los que
+ * esperan), la última pasada del cron y sus errores, la última copia de seguridad registrada y los
+ * intentos fallidos de inicio de sesión.
  */
 async function systemHealth(): Promise<PlatformStats["health"]> {
-  const [row, backup, emailDays] = await Promise.all([
+  const [row, backup, emailDays, emailQuota] = await Promise.all([
     one<{
       sent: number;
       failed: number;
@@ -326,9 +329,11 @@ async function systemHealth(): Promise<PlatformStats["health"]> {
       `select ran_at as "ranAt", ok, size_bytes as "sizeBytes", error from backup_runs order by ran_at desc limit 1`,
     ),
     emailsByDay(),
+    emailQuotaStatus(pool),
   ]);
   return {
     emailsToday: { sent: row!.sent, failed: row!.failed, queued: row!.queued },
+    emailQuota,
     cron: { lastRunAt: row!.cronAt, failures: row!.cronFailures ?? 0 },
     backup: backup ?? null,
     security: { failedLogins24h: row!.failedLogins, accountsOnAlert: row!.accountsOnAlert },
@@ -403,8 +408,9 @@ export const adminService = {
       platformGrowth(),
       systemHealth(),
     ]);
+    // El reparto por plan, sólo con los activos: va junto a «N negocios activos» (spec 015).
     const businessesByPlan = Object.fromEntries(PLANS.map((plan) => [plan.id, 0])) as Record<PlanId, number>;
-    for (const business of businesses) businessesByPlan[getPlan(business.plan ?? "free").id]++;
+    for (const business of businesses) if (business.status === "active") businessesByPlan[getPlan(business.plan ?? "free").id]++;
     const active = businesses.filter((b) => b.status === "active").length;
     return {
       businesses: {

@@ -48,11 +48,17 @@ const envSchema = z.object({
   TURNSTILE_HOSTNAMES: z.string().trim().optional(),
   // Sólo para las pruebas: un servidor local que imita a Cloudflare.
   TURNSTILE_VERIFY_URL: z.url().default("https://challenges.cloudflare.com/turnstile/v0/siteverify"),
-  // Emails a personas de fuera de la plataforma (pacientes, bienvenidas) en 24 h, entre todos los
-  // negocios: frena el spam desde la cuenta de Gmail (que tiene su propio tope diario).
-  THIRD_PARTY_EMAILS_PER_DAY: z.coerce.number().int().min(1).default(400),
-  // De ésos, los que provoca alguien de fuera (reservas online y registros) en 24 h: así quien llene
-  // el tope con reservas falsas no deja sin recordatorios ni avisos a los negocios (spec 009).
+  // Cupo diario de la cuenta que envía (spec 015): un Gmail gratuito, unos 500 envíos en 24 h; con
+  // Google Workspace, unos 2.000. Se mira al enviar (src/services/mailer.ts): lo que no cabe espera.
+  EMAIL_DAILY_QUOTA: z.coerce.number().int().min(1).default(500),
+  // Lo que se guarda del cupo para el equipo (contraseñas, seguridad, planes): los emails al paciente
+  // usan como mucho el cupo menos esto.
+  EMAIL_TEAM_RESERVE: z.coerce.number().int().min(0).default(20),
+  // Lo que se guarda para el paciente (recordatorios, confirmaciones): las copias al profesional y los
+  // avisos al negocio usan como mucho el cupo menos esto.
+  EMAIL_PATIENT_RESERVE: z.coerce.number().int().min(0).default(100),
+  // Emails al paciente que provoca alguien de fuera (reservas online y registros) en 24 h: así quien
+  // llene la cuenta con reservas falsas no deja sin recordatorios ni avisos a los negocios (spec 009).
   PUBLIC_EMAILS_PER_DAY: z.coerce.number().int().min(1).default(150),
   // Clave para cifrar el secreto de la verificación en dos pasos en la base (spec 009). Obligatoria
   // en la nube; con una base local se usa una clave fija de desarrollo.
@@ -73,7 +79,17 @@ const envSchema = z.object({
   // El contacto que piden los servicios de avisos (mailto: o https:). Por defecto, APP_URL si es
   // https y, si no, el email de GMAIL_USER.
   VAPID_SUBJECT: z.string().trim().optional(),
-});
+})
+  // Las reservas, de menor a mayor y por debajo del cupo: el equipo puede más que el paciente, y el
+  // paciente más que el negocio (ver EMAIL_PRIORITY en src/services/email-limits.ts).
+  .superRefine((env, ctx) => {
+    if (env.EMAIL_PATIENT_RESERVE >= env.EMAIL_DAILY_QUOTA) {
+      ctx.addIssue({ code: "custom", path: ["EMAIL_PATIENT_RESERVE"], message: "debe ser menor que EMAIL_DAILY_QUOTA" });
+    }
+    if (env.EMAIL_TEAM_RESERVE > env.EMAIL_PATIENT_RESERVE) {
+      ctx.addIssue({ code: "custom", path: ["EMAIL_TEAM_RESERVE"], message: "no puede ser mayor que EMAIL_PATIENT_RESERVE" });
+    }
+  });
 
 // Una variable vacía cuenta como no puesta: en GitHub Actions, un secreto que no existe llega como "".
 const parsed = envSchema.safeParse(Object.fromEntries(Object.entries(process.env).filter(([, value]) => value !== "")));
@@ -214,9 +230,13 @@ export const config = {
   gmail,
   /** CAPTCHA de las reservas online y del registro. null: desactivado. */
   turnstile,
-  /** Tope de emails a personas de fuera de la plataforma en 24 h (ver src/services/email-limits.ts). */
-  thirdPartyEmailsPerDay: env.THIRD_PARTY_EMAILS_PER_DAY,
-  /** De ésos, los que provoca el público: reservas online y registros (ver email-limits.ts). */
+  /**
+   * Cupo diario de Gmail con sus reservas (spec 015, ver EMAIL_PRIORITY en src/services/email-limits.ts):
+   * en 24 h, el equipo hasta `quota`, el paciente hasta `quota - teamReserve` y el negocio hasta
+   * `quota - patientReserve`.
+   */
+  emailQuota: { quota: env.EMAIL_DAILY_QUOTA, teamReserve: env.EMAIL_TEAM_RESERVE, patientReserve: env.EMAIL_PATIENT_RESERVE },
+  /** Emails al paciente que provoca el público en 24 h: reservas online y registros (ver email-limits.ts). */
   publicEmailsPerDay: env.PUBLIC_EMAILS_PER_DAY,
   /**
    * Clave del cifrado del secreto de la verificación en dos pasos (ver services/secret-box.ts). null:

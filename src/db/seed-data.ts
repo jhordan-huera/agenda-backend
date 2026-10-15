@@ -570,6 +570,8 @@ function seedTenant(
     plan: tenant.plan,
     status: "active",
     currentPeriodEnd: tenant.plan === "free" ? null : new Date(Date.now() + 20 * 86_400_000).toISOString(),
+    // Como la migración 042: el último cambio de plan es current_period_end - 30 días; en Free, el alta.
+    planSince: tenant.plan === "free" ? createdAt : new Date(Date.now() - 10 * 86_400_000).toISOString(),
     maxProfessionals: tenant.maxProfessionals ?? null,
   });
   if (tenant.plan !== "free" && !tenant.createdByAdmin) {

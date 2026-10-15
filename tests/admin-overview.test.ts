@@ -1,9 +1,12 @@
 // Inicio del super admin con datos importantes (spec 006): el crecimiento del mes (lo que va del mes
 // frente a los mismos días del mes pasado), la salud del sistema (emails de hoy, cron, copia de
 // seguridad, intentos fallidos) y el crecimiento de cada negocio. Sólo el super admin, sin datos de pacientes.
+// Spec 015: «En Pro desde el…», «Cerca del límite» contado como el tope del plan y el reparto por plan
+// sólo con los activos.
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { cedulaFor } from "./helpers/cedula.mjs";
-import type { AdminBusinessSummary, PlatformStats } from "../src/shared/types/index.ts";
+import type { AdminBusinessSummary, PlanId, PlatformStats } from "../src/shared/types/index.ts";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
@@ -179,6 +182,71 @@ ok(
   "intentos fallidos en 24 h y cuentas en alerta (10 o más en la última hora)",
   { loginsBefore, now: health.security },
 );
+
+console.log("Datos correctos para el super admin (spec 015)");
+{
+  // «En Pro desde el…»: la migración 042 rellena plan_since con current_period_end - 30 días (la hora
+  // del último cambio de plan) o, en Free, con el alta del negocio. Se prueba su UPDATE tal cual.
+  const migration = readFileSync(new URL("../db/migrations/042_plan_since.sql", import.meta.url), "utf8");
+  const backfill = migration.slice(migration.indexOf("update subscriptions"), migration.indexOf(";", migration.indexOf("update subscriptions")) + 1);
+  sql(backfill);
+  ok(
+    sql(
+      `select count(*) from subscriptions s join businesses b on b.id = s.business_id
+        where s.plan_since is distinct from coalesce(s.current_period_end - interval '30 days', b.created_at)`,
+    ) === "0" && Number(sql("select count(*) from subscriptions")) > 3,
+    "la migración: el último cambio de plan (current_period_end - 30 días) o, en Free, el alta del negocio",
+  );
+  const bellaId = sql("select id from businesses where slug = 'estudio-bella'");
+  const detail = async () => (await admin("GET", `/admin/businesses/${bellaId}`)).body as AdminBusinessSummary;
+  const before = (await detail()).subscription!;
+  r = await admin("PUT", `/admin/businesses/${bellaId}/plan`, { plan: "pro" });
+  const changed = (await detail()).subscription!;
+  const sinceAgo = (Date.now() - Date.parse(changed.planSince)) / 1000;
+  ok(r.status === 200 && changed.plan === "pro" && sinceAgo >= 0 && sinceAgo < 60 && changed.planSince !== before.planSince, "al cambiar de plan, «desde» es ahora", [before, changed]);
+  r = await admin("PUT", `/admin/businesses/${bellaId}/plan`, { plan: "pro" });
+  ok(r.status === 200 && (await detail()).subscription!.planSince === changed.planSince, "elegir el mismo plan no cambia la fecha", r.body);
+  r = await admin("PUT", `/admin/businesses/${bellaId}/plan`, { plan: "free" });
+  ok(r.status === 200, "(vuelve a Free)", r.body);
+
+  // «Cerca del límite»: los pacientes, como el tope del plan (plan-limits.ts).
+  const usageOf = async () => ({
+    admin: ((await admin("GET", "/admin/businesses")).body as AdminBusinessSummary[]).find((b) => b.business.id === clinicId)!.usage.clients,
+    plan: (await owner("GET", `/businesses/${clinicId}/subscription/usage`)).body.clients as number,
+  });
+  const start = await usageOf();
+  const fake = sql(
+    `insert into clients (business_id, name, email, source) values ('${clinicId}', 'Reserva Falsa Cupo', 'falsa.cupo@correo.ec', 'booking_page') returning id`,
+  ).split("\n")[0];
+  const [serviceId, professionalId] = sql(
+    `select s.id || ',' || p.id from services s, professionals p where s.business_id = '${clinicId}' and p.business_id = '${clinicId}' limit 1`,
+  ).split(",");
+  sql(
+    `insert into appointments (business_id, client_id, service_id, professional_id, date, start_time, end_time, status, price, source)
+     values ('${clinicId}', '${fake}', '${serviceId}', '${professionalId}', current_date + 300, '06:00', '06:30', 'cancelled', 0, 'booking_page')`,
+  );
+  const withFake = await usageOf();
+  ok(
+    start.admin === start.plan && withFake.admin === start.admin && withFake.plan === start.plan,
+    "un paciente de una reserva falsa (sin citas activas) no cuenta: el super admin ve lo mismo que el tope del plan",
+    { start, withFake },
+  );
+  sql(`insert into clients (business_id, name, source) values ('${clinicId}', 'Paciente del Panel Cupo', 'dashboard')`);
+  const withReal = await usageOf();
+  ok(withReal.admin === start.admin + 1 && withReal.plan === start.plan + 1, "uno del panel sí cuenta, en los dos", withReal);
+
+  // El reparto por plan, sólo con los activos (como «N negocios activos»).
+  const sumByPlan = (stats: PlatformStats) => Object.values(stats.businessesByPlan).reduce((a, b) => a + b, 0);
+  let overview = await stats();
+  ok(overview.businesses.suspended >= 1 && sumByPlan(overview) === overview.businesses.active, "el reparto por plan suma los activos, sin los suspendidos", overview.businesses);
+  const clinicPlan = sql(`select plan from subscriptions where business_id = '${clinicId}'`) as PlanId;
+  const inPlan = overview.businessesByPlan[clinicPlan];
+  r = await admin("PATCH", `/admin/businesses/${clinicId}/status`, { status: "suspended" });
+  overview = await stats();
+  ok(r.status === 200 && overview.businessesByPlan[clinicPlan] === inPlan - 1 && sumByPlan(overview) === overview.businesses.active, "al suspender un negocio, sale de su plan en el reparto", overview.businessesByPlan);
+  r = await admin("PATCH", `/admin/businesses/${clinicId}/status`, { status: "active" });
+  ok(r.status === 200 && (await stats()).businessesByPlan[clinicPlan] === inPlan, "y vuelve al reactivarlo", r.body);
+}
 
 console.log("Privacidad");
 const raw = JSON.stringify(await stats());
