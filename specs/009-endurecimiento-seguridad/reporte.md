@@ -129,7 +129,7 @@ el 5199 y una base de prueba con los datos de demostración. Nunca en Vercel ni 
 
 ## Pendientes y riesgos
 
-- **Fase 2 de la firma de la IP:** hecha en `dev` el 2026-10-14, después de publicar.
+- **Fase 2 de la firma de la IP:** publicada el 2026-10-14 (backend PR #26 y front PR #24).
   - **Qué cambia:** el front ya no manda el secreto fijo y el backend ya no lo acepta (`client-ip.ts`,
     incluida la guarda de Lambda).
   - **Pruebas:** las que simulaban la IP con el secreto ahora la firman (`tests/helpers/proxy.mjs`).
