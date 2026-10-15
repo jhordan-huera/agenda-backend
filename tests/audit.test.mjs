@@ -1,6 +1,7 @@
 // Auditoría: sesiones (sólo super admin, con IP y navegador), qué cambió en cada edición,
 // filtros y "Cargar más", registros no editables y limpieza por antigüedad.
 import { execFileSync } from "node:child_process";
+import { viaProxy as signedProxy } from "./helpers/proxy.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
@@ -12,14 +13,19 @@ const ok = (cond, label, extra) => {
   }
 };
 const CHROME = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
-/** Como si llegara por el proxy del frontend desde esa IP. */
-const viaProxy = (ip) => ({ "x-agendo-proxy-secret": process.env.PROXY_SECRET, "x-agendo-client-ip": ip, "User-Agent": CHROME });
+/** Como si llegara por el proxy del frontend desde esa IP (la firma se calcula en cada petición). */
+const viaProxy = (ip) => () => ({ ...signedProxy(ip), "User-Agent": CHROME });
 function agent(extraHeaders = {}) {
   let cookie = "";
   return async (method, path, body) => {
     const res = await fetch(BASE + path, {
       method,
-      headers: { "Content-Type": "application/json", "X-Requested-With": "fetch", ...extraHeaders, ...(cookie ? { Cookie: cookie } : {}) },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "fetch",
+        ...(typeof extraHeaders === "function" ? extraHeaders() : extraHeaders),
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     for (const c of res.headers.getSetCookie()) cookie = c.split(";")[0];

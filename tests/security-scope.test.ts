@@ -7,6 +7,7 @@ import { cedulaFor } from "./helpers/cedula.mjs";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
 import type { Client, Professional, PublicBusinessProfile } from "../src/shared/types/index.ts";
+import { viaProxy } from "./helpers/proxy.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 const ORIGIN = BASE.replace(/\/api$/, "");
@@ -28,8 +29,7 @@ function agent() {
       headers: {
         "Content-Type": "application/json",
         "X-Requested-With": "fetch",
-        "x-agendo-proxy-secret": process.env.PROXY_SECRET ?? "",
-        "x-agendo-client-ip": `198.51.100.${ipCounter++ % 250}`,
+        ...viaProxy(`198.51.100.${ipCounter++ % 250}`),
         ...(cookie ? { Cookie: cookie } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),

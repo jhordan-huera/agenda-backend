@@ -566,11 +566,10 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   llega desde el proxy del frontend en `x-agendo-client-ip`, firmada con `PROXY_SECRET` y la hora
   (`x-agendo-client-ts`, `x-agendo-client-sig`: HMAC-SHA256 de `<ip>.<segundos>`, válida 2 minutos;
   `src/http/secrets.ts` y `client-ip.ts`): nadie puede falsear su IP, y una firma vista no sirve
-  después. Fase 1 de la spec 009: también vale el secreto fijo de antes (`x-agendo-proxy-secret`);
-  se quita cuando el frontend con la firma esté publicado.
+  después. El secreto fijo en una cabecera que se usaba antes (`x-agendo-proxy-secret`) ya no vale
+  (fase 2 de la spec 009).
 - **Function URL de Lambda cerrada:** en Lambda la API responde 403 a todo lo que no traiga la firma
-  del proxy (o, en la fase 1, `x-agendo-proxy-secret` correcto, comparado en tiempo constante),
-  salvo `GET /api/health`: sólo se entra por el frontend.
+  del proxy (comparada en tiempo constante), salvo `GET /api/health`: sólo se entra por el frontend.
 - **En la nube no arranca desprotegida** (spec 009, `src/config.ts`): en Vercel o Lambda, si faltan
   las claves de Turnstile, `PROXY_SECRET` o `TWO_FACTOR_KEY`, si `DATABASE_SSL` no es `true` (con una
   base remota) o si `DATABASE_URL` lleva `sslmode`, el proceso termina con «Configuración insegura

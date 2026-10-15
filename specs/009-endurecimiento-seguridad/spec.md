@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-14
 
-**Estado**: Implementada (2026-10-14)
+**Estado**: Publicada (2026-10-14, PR backend #25 y front #23)
 
 **Repos**:
 - agenda-backend (principal): inicio de sesión, avisos, reserva pública, emails, configuración y la

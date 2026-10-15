@@ -3,6 +3,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import { buildNotice, describeSentEmails } from "../scripts/cron.ts";
 import { cedulaFor } from "./helpers/cedula.mjs";
+import { viaProxy as signedProxy } from "./helpers/proxy.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 const PROXY_SECRET = process.env.PROXY_SECRET;
@@ -118,7 +119,7 @@ received.length = 0;
 for (let i = 0; i < 10; i++) {
   await fetch(`${BASE}/auth/login`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Requested-With": "fetch", "x-agendo-proxy-secret": PROXY_SECRET, "x-agendo-client-ip": `198.51.100.${i + 1}` },
+    headers: { "Content-Type": "application/json", "X-Requested-With": "fetch", ...signedProxy(`198.51.100.${i + 1}`) },
     body: JSON.stringify({ email: "ricardo@demo.com", password: `mala-${i}`, remember: false }),
   });
 }
@@ -209,12 +210,12 @@ const lookup = (headers) =>
     headers: { "Content-Type": "application/json", "X-Requested-With": "fetch", ...headers },
     body: JSON.stringify({ documentId: cedulaFor("proxy") }),
   }).then((res) => res.status);
-const viaProxy = (ip, secret = PROXY_SECRET) => ({ "x-agendo-proxy-secret": secret, "x-agendo-client-ip": ip });
+const viaProxy = (ip, secret = PROXY_SECRET) => signedProxy(ip, secret);
 const statuses = [];
 for (let i = 0; i < 31; i++) statuses.push(await lookup(viaProxy("203.0.113.7")));
 ok(statuses.slice(0, 30).every((s) => s === 200) && statuses[30] === 429, "cada visitante tiene su propio límite (30 búsquedas)", statuses.slice(28));
 ok((await lookup(viaProxy("203.0.113.8"))) === 200, "otro visitante detrás del mismo proxy no queda bloqueado");
-ok((await lookup(viaProxy("203.0.113.7", "secreto-falso-de-mas-de-24-caracteres"))) === 200, "sin el secreto, la cabecera se ignora (no se puede falsear la IP)");
+ok((await lookup(viaProxy("203.0.113.7", "secreto-falso-de-mas-de-24-caracteres"))) === 200, "sin la firma correcta, la cabecera se ignora (no se puede falsear la IP)");
 
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas del cron pasaron");
 process.exitCode = failures ? 1 : 0;

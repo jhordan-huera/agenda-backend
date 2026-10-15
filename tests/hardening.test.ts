@@ -72,7 +72,7 @@ try {
   const old = String(Math.floor(Date.now() / 1000) - 200);
   ok((await failFrom("", { "x-agendo-client-ip": "192.0.2.78", "x-agendo-client-ts": old, "x-agendo-client-sig": sign("192.0.2.78", old) })) !== "192.0.2.78", "una firma de hace más de 2 minutos no sirve");
   ok((await failFrom("", { "x-agendo-client-ip": "192.0.2.79", "x-agendo-client-ts": now, "x-agendo-client-sig": sign("192.0.2.1", now) })) !== "192.0.2.79", "ni la firma de otra IP");
-  ok((await failFrom("", { "x-agendo-client-ip": "192.0.2.80", "x-agendo-proxy-secret": PROXY_SECRET })) === "192.0.2.80", "el secreto de antes sigue valiendo (fase 1)");
+  ok((await failFrom("", { "x-agendo-client-ip": "192.0.2.80", "x-agendo-proxy-secret": PROXY_SECRET })) !== "192.0.2.80", "el secreto fijo de antes ya no vale (fase 2)");
 
   console.log("En la nube no arranca desprotegida");
   const cloud = {
