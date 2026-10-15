@@ -156,6 +156,11 @@ ok(
 );
 ok(health.cron.lastRunAt === null && health.backup === null, "sin pasadas del cron ni copias registradas: null", health);
 ok(
+  health.database !== null && health.database.sizeBytes > 0 && health.database.limitBytes === 500 * 1024 * 1024,
+  "la base de datos: lo que ocupa frente al tope de 500 MB del plan gratuito de Supabase",
+  health.database,
+);
+ok(
   health.emailsByDay.length === 14 && health.emailsByDay.at(-1)?.date === after.growth.to &&
     health.emailsByDay.at(-1)?.sent === health.emailsToday.sent && health.emailsByDay.at(-1)?.failed === health.emailsToday.failed,
   "los emails de 14 días, con hoy al final igual a «Emails de hoy»",

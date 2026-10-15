@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { config } from "../config.ts";
 import {
   auditLogColumns,
   businessColumns,
@@ -291,11 +292,11 @@ const LOGIN_ALERT_ATTEMPTS = 10;
 /**
  * Salud del sistema (spec 006), sólo con cifras: emails de hoy (enviados, fallidos sin los descartados
  * a propósito y los que siguen en cola), el cupo de Gmail (spec 015: los envíos de 24 h y los que
- * esperan), la última pasada del cron y sus errores, la última copia de seguridad registrada y los
- * intentos fallidos de inicio de sesión.
+ * esperan), la última pasada del cron y sus errores, la última copia de seguridad registrada, lo que
+ * ocupa la base de datos frente al tope del plan de Supabase y los intentos fallidos de inicio de sesión.
  */
 async function systemHealth(): Promise<PlatformStats["health"]> {
-  const [row, backup, emailDays, emailQuota] = await Promise.all([
+  const [row, backup, emailDays, emailQuota, database] = await Promise.all([
     one<{
       sent: number;
       failed: number;
@@ -330,12 +331,15 @@ async function systemHealth(): Promise<PlatformStats["health"]> {
     ),
     emailsByDay(),
     emailQuotaStatus(pool),
+    // Si no se puede medir (permisos), la tarjeta dice «No se pudo medir» y lo demás sigue.
+    one<{ sizeBytes: number }>(pool, `select pg_database_size(current_database())::float8 as "sizeBytes"`).catch(() => null),
   ]);
   return {
     emailsToday: { sent: row!.sent, failed: row!.failed, queued: row!.queued },
     emailQuota,
     cron: { lastRunAt: row!.cronAt, failures: row!.cronFailures ?? 0 },
     backup: backup ?? null,
+    database: database ? { sizeBytes: Math.round(database.sizeBytes), limitBytes: config.databaseLimitBytes } : null,
     security: { failedLogins24h: row!.failedLogins, accountsOnAlert: row!.accountsOnAlert },
     emailsByDay: emailDays,
   };

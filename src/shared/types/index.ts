@@ -1041,6 +1041,11 @@ export interface PlatformStats {
     cron: { lastRunAt: ISODateTime | null; failures: number };
     /** Última copia de seguridad registrada (null: ninguna todavía). */
     backup: { ranAt: ISODateTime; ok: boolean; sizeBytes: number | null; error: string } | null;
+    /**
+     * Lo que ocupa la base de datos frente al tope del plan gratuito de Supabase (500 MB por defecto,
+     * DATABASE_LIMIT_MB). null: no se pudo medir.
+     */
+    database: { sizeBytes: number; limitBytes: number } | null;
     /** Intentos fallidos de inicio de sesión en 24 h y cuentas con 10 o más en la última hora. */
     security: { failedLogins24h: number; accountsOnAlert: number };
     /** Emails de los últimos 14 días (hoy el último), en Ecuador: enviados y fallidos (sin los descartados). */

@@ -51,6 +51,8 @@ const envSchema = z.object({
   // Cupo diario de la cuenta que envía (spec 015): un Gmail gratuito, unos 500 envíos en 24 h; con
   // Google Workspace, unos 2.000. Se mira al enviar (src/services/mailer.ts): lo que no cabe espera.
   EMAIL_DAILY_QUOTA: z.coerce.number().int().min(1).default(500),
+  /** Tope de la base de datos del plan de Supabase, en MB (la tarjeta «Base de datos» de Salud). */
+  DATABASE_LIMIT_MB: z.coerce.number().int().min(1).default(500),
   // Lo que se guarda del cupo para el equipo (contraseñas, seguridad, planes): los emails al paciente
   // usan como mucho el cupo menos esto.
   EMAIL_TEAM_RESERVE: z.coerce.number().int().min(0).default(20),
@@ -236,6 +238,7 @@ export const config = {
    * `quota - patientReserve`.
    */
   emailQuota: { quota: env.EMAIL_DAILY_QUOTA, teamReserve: env.EMAIL_TEAM_RESERVE, patientReserve: env.EMAIL_PATIENT_RESERVE },
+  databaseLimitBytes: env.DATABASE_LIMIT_MB * 1024 * 1024,
   /** Emails al paciente que provoca el público en 24 h: reservas online y registros (ver email-limits.ts). */
   publicEmailsPerDay: env.PUBLIC_EMAILS_PER_DAY,
   /**
