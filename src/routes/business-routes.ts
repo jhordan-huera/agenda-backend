@@ -1,4 +1,4 @@
-import { Router } from "express";
+import express, { Router } from "express";
 import { clientIp } from "../http/client-ip.ts";
 import { handle, limitRequests, queryParam } from "../http/handlers.ts";
 import { requireSuperAdminTwoFactor } from "../http/session.ts";
@@ -7,6 +7,8 @@ import { auditLogService, notificationService } from "../services/activity-servi
 import { clinicalAttachmentService } from "../services/clinical-attachment-service.ts";
 import { clinicalService } from "../services/clinical-service.ts";
 import { clinicalTemplateService } from "../services/clinical-template-service.ts";
+import { clientImportService } from "../services/client-import-service.ts";
+import { requireUser } from "../services/context.ts";
 import {
   appointmentService,
   blockedTimeService,
@@ -161,6 +163,24 @@ businessRoutes.get(
 businessRoutes.post(
   "/:businessId/clients",
   handle((req) => clientService.create(req.ctx, req.params.businessId, req.body)),
+);
+// Importar pacientes desde un Excel o un CSV (spec 012): primero la sesión (un anónimo no hace leer
+// 4 MB), después el límite por conexión y por último el cuerpo, de hasta 4 MB (el resto de la API, 2 MB:
+// ver app.ts). El rol y el negocio los comprueba el servicio.
+businessRoutes.post(
+  "/:businessId/clients/import",
+  (req, _res, next) => {
+    requireUser(req.ctx);
+    next();
+  },
+  limitRequests({
+    name: "importar-pacientes",
+    windowMinutes: 15,
+    max: 20,
+    message: "Demasiadas importaciones seguidas. Espera unos minutos.",
+  }),
+  express.json({ limit: "4mb" }),
+  handle((req) => clientImportService.importMany(req.ctx, req.params.businessId, req.body)),
 );
 businessRoutes.get(
   "/:businessId/clients/:clientId",

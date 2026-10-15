@@ -344,6 +344,44 @@ export interface Client {
    * ficha, hasta que el negocio lo une a ella o cancela la cita. null: paciente normal.
    */
   claimedClientId: string | null;
+  /** De dónde salió: el panel, la página de reservas o una importación desde un archivo (spec 012). */
+  source: ClientSource;
+}
+
+/**
+ * Origen de un paciente. "import": lo creó una importación desde un Excel o un CSV (spec 012); no
+ * cuenta como paciente nuevo del mes en el Inicio, pero sí en el total y en el tope del plan.
+ */
+export type ClientSource = "dashboard" | "booking_page" | "import";
+
+/**
+ * Una fila de la importación de pacientes (spec 012), tal como la manda el panel: con las columnas ya
+ * asignadas y los datos como vienen en el archivo (la limpieza la hacen los dos lados con las mismas
+ * reglas, ver lib/validations/client-import.ts). `row`: el número de fila en la hoja, como lo muestra Excel.
+ */
+export interface ClientImportRow {
+  row: number;
+  name: string;
+  documentId: string;
+  email: string;
+  phone: string;
+  address: string;
+  /** La columna Notas y las columnas «Añadir a las notas», una por línea («Título: valor»). */
+  notes: string;
+}
+
+/** Resultado de una importación (o de su revisión): los números de fila son los de la hoja. */
+export interface ClientImportResult {
+  /** Pacientes creados (en la revisión, los que se crearán). */
+  created: number;
+  /** Ya eran pacientes del negocio: no se tocan. `clientId`: su ficha. */
+  existing: { row: number; clientId: string }[];
+  /** La misma persona que una fila anterior del archivo (`firstRow`, la que se usa). */
+  repeated: { row: number; firstRow: number }[];
+  /** No pasan las reglas del formulario del paciente. `reason` nunca repite el valor de la celda. */
+  errors: { row: number; reason: string }[];
+  /** No entran por el tope de pacientes del plan. */
+  overLimit: number[];
 }
 
 /** Modalidades de un servicio: en el local, en casa del cliente o por videollamada. */

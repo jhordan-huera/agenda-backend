@@ -102,6 +102,8 @@ export const clientColumns = columns({
   isActive: "is_active",
   createdAt: "created_at",
   claimedClientId: "claimed_client_id",
+  // El panel, la página de reservas o una importación (spec 012).
+  source: "source",
 });
 
 export const serviceColumns = columns({

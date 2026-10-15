@@ -178,7 +178,7 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
 | Sesión | `GET /auth/session` (con `panelColors` para el super admin) · `POST /auth/login` · `register` · `logout` · `change-password` (sólo super admin) |
 | Perfil | `GET/PUT /users/:userId` |
 | Negocio | `POST /businesses` (onboarding) · `GET /businesses/slug-availability` · `GET/PATCH /businesses/:id` · `GET …/professional` |
-| Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status` con `notify`: `false` cambia el estado sin avisar al paciente) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
+| Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` (+ `POST …/clients/import`, importar pacientes desde un Excel o un CSV, spec 012) · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status` con `notify`: `false` cambia el estado sin avisar al paciente) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
 | Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) · `GET /public/payments/:token` (+ `receipts`) · `GET /public/appointments/:token` · `POST …/confirm` · `POST …/cancel` («Tu cita», spec 010) |
 | Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, último cron, última copia e intentos fallidos; spec 006) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
@@ -364,6 +364,34 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
     cada cita, para la marca «Confirmó el paciente».
   - Límites por conexión: `mi-cita` (60 vistas en 15 min) y `mi-cita-acciones` (20 confirmaciones o
     cancelaciones en 15 min).
+- **Importar pacientes desde un Excel o un CSV** (spec 012, migración 039,
+  `src/services/client-import-service.ts`): Clientes → «Importar pacientes», del propietario, los
+  administradores y el super admin en modo soporte (permiso `clients.import`; Recepción y el rol
+  Profesional reciben 403). El archivo se lee en el navegador y no se sube ni se guarda: la API recibe
+  sólo los datos de cada fila.
+  - `POST /businesses/:id/clients/import` con `{ rows: [{ row, name, documentId, email, phone, address,
+    notes }] }`: todas las filas no vacías de la hoja (de 1 a 5.000; `row` es el número de fila de
+    Excel), también las que la revisión marcó con error. Primero exige la sesión (sin ella, 401 sin leer
+    el cuerpo), después el límite `importar-pacientes` (20 cada 15 min por conexión) y por último lee el
+    JSON, de hasta **4 MB** sólo en esta ruta (`app.ts` la salta en el lector general de 2 MB).
+  - Cada fila se limpia y se valida con el mismo código que la revisión del panel
+    (`src/shared/lib/validations/client-import.ts`: `prepareImportRow` y `classifyImportRows`), con las
+    reglas del formulario del paciente del negocio (`clientSchemaFor` con los datos obligatorios y
+    `documentIdError`). La limpieza quita espacios, puntos y guiones de la cédula, le vuelve a poner el 0
+    que quitó Excel a una cédula de 9 dígitos en Ecuador (sólo si así es válida), pasa los teléfonos o
+    emails de más de una celda a las notas y cambia el punto del teléfono por un espacio.
+  - Todo o nada, en una transacción con el negocio bloqueado (`authorize` con `lock`): crea en una sola
+    sentencia los válidos y nuevos (`source = 'import'`, el mismo `created_at`, `on conflict` en la
+    cédula) hasta el cupo del plan (`remainingClientSlots`). Un paciente que ya existe no se toca: con
+    la misma cédula o, si no tiene cédula, con el mismo nombre, email y teléfono. Repetir la importación
+    (o dos a la vez) no duplica: lo que ya entró cuenta como «ya existía».
+  - Responde `{ created, existing: [{ row, clientId }], repeated: [{ row, firstRow }], errors: [{ row,
+    reason }], overLimit: [row] }`; `reason` nunca repite el valor de la celda.
+  - No sale ningún email. Si se creó al menos uno, una entrada `client.imported` en la actividad
+    («Importó 190 pacientes (3 ya existían, 5 con errores, 2 repetidas en el archivo)», sin nombres) y
+    un solo aviso por ntfy en la siguiente pasada del cron.
+  - Los importados cuentan para el tope del plan y en el total, pero no como «pacientes nuevos del mes»
+    en el Inicio del super admin (`/admin/stats`, decisión del dueño del producto).
 - **Almacenamiento** (`src/services/file-storage.ts`): tres buckets de Supabase Storage que se crean
   solos con su tamaño máximo y sus tipos de archivo: `historias-clinicas` (privado, o el de
   `STORAGE_BUCKET`), `comprobantes` (privado) e `imagenes` (público: logos y fotos). Las imágenes se
@@ -699,7 +727,12 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
     - **cada reserva por la página:** dice de cada persona si es «Paciente nuevo» o «Ya era paciente»;
     - **cada cita agendada desde el panel:** lo mismo que una reserva, con quién la agendó y su rol
       (sale del registro de actividad `appointment.created`);
-    - **cada paciente registrado desde el panel:** dice quién lo registró y con qué rol;
+    - **cada paciente registrado desde el panel:** dice quién lo registró y con qué rol (sólo
+      `source = 'dashboard'`: los importados no salen uno por uno);
+    - **cada importación de pacientes** (spec 012): «Agenda360: pacientes importados», con el negocio,
+      la cifra («Importó 200 pacientes (3 ya existían, 5 con errores)») y quién la hizo, sin datos de
+      pacientes. Sale del registro de actividad (`client.imported`); la línea del registro del cron
+      suma «importaciones: N»;
     - **cada cambio de estado de una cita** (spec 008): de qué estado a cuál, quién lo hizo y a quién
       salieron los emails, o «Sin avisar al paciente». Sale del registro de actividad (las entradas
       con «Estado» en `changes`), así que entran los botones de estado, el formulario de la cita y la
