@@ -178,7 +178,7 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
 | Sesión | `GET /auth/session` (con `panelColors` para el super admin) · `POST /auth/login` · `register` · `logout` · `change-password` (sólo super admin) |
 | Perfil | `GET/PUT /users/:userId` |
 | Negocio | `POST /businesses` (onboarding) · `GET /businesses/slug-availability` · `GET/PATCH /businesses/:id` · `GET …/professional` |
-| Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status` con `notify`: `false` cambia el estado sin avisar al paciente) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
+| Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status` con `notify`: `false` cambia el estado sin avisar al paciente; `POST …/:id/cancel-following` cancela ésa y las siguientes de su serie) · `appointment-series` (`POST …/preview` y `POST`, citas que se repiten, spec 011) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
 | Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) · `GET /public/payments/:token` (+ `receipts`) · `GET /public/appointments/:token` · `POST …/confirm` · `POST …/cancel` («Tu cita», spec 010) |
 | Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, último cron, última copia e intentos fallidos; spec 006) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
@@ -364,6 +364,36 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
     cada cita, para la marca «Confirmó el paciente».
   - Límites por conexión: `mi-cita` (60 vistas en 15 min) y `mi-cita-acciones` (20 confirmaciones o
     cancelaciones en 15 min).
+- **Citas que se repiten** (spec 011, migración 038, `src/services/appointment-series-service.ts`).
+  Desde «Nueva cita» del panel se agenda de una vez una serie: cada semana, cada 2 semanas o cada mes
+  (el mismo día del mes; si no existe, el último), de 2 a 24 citas contando la primera, desde hoy y
+  Pendiente o Confirmada. La reserva online no crea series.
+  - `POST /businesses/:id/appointment-series/preview`: la lista de fechas, sin cambiar nada. Cada
+    fecha con su marca (`free`, `busy` si hay otra cita del profesional, `blocked`, `day_off`,
+    `outside_hours` o `plan_limit`), su motivo («Ya hay una cita de 10:00 a 11:00», sin nombrar al
+    otro paciente) y, en las de otra cita, un bloqueo o fuera del horario, las horas libres de ese día
+    en la cuadrícula del negocio. Con el cupo de cada mes topado en 24 (`planRemaining`) y el tope del
+    plan (`monthlyLimit`). La lista la calcula `src/shared/lib/appointment-series.ts`, la misma
+    función que usan la creación, el panel y la beta.
+  - `POST /businesses/:id/appointment-series` (201): con las fechas que quedaron en la lista (sólo se
+    puede cambiar la hora o quitar fechas). En una transacción con el negocio bloqueado, como una cita
+    suelta: cada fecha se vuelve a comprobar y la que se ocupó, se bloqueó o pasó el cupo mientras se
+    revisaba la lista vuelve en `skipped`. Las de un bloqueo, un día sin atención o fuera del horario
+    sólo se crean con `allowOutsideHours` («Agendar igual»). Si no se puede crear ninguna, no se crea
+    nada (409, o 402 si todas pasaban el cupo).
+  - **Cada cita sigue siendo una cita normal** (su recordatorio, sus estados, sus avisos, su pago y su
+    «Tu cita») y se cambia sola. Llevan `series: { id, index, total, frequency }` («Cita 3 de 8»);
+    las sueltas, `series: null`. La serie (`appointment_series`) guarda la frecuencia, cuántas se
+    pidieron, cuántas se crearon y quién la creó.
+  - **Un solo email por paciente** (`appointment_series`, «Tus próximas 8 citas en …») con todas las
+    fechas, cada una con el enlace a su «Tu cita», con la copia al profesional (sin esos enlaces) y,
+    si corresponde, un solo aviso al profesional. Sólo con «Confirmaciones». Una sola entrada de
+    actividad (`appointment.series_created`) y un solo aviso de ntfy por serie.
+  - `POST /businesses/:id/appointments/:id/cancel-following` (`{ notify }`): «Cancelar ésta y las
+    siguientes», por su número en la serie y sólo las que siguen Pendientes o Confirmadas (el rol
+    Profesional, sólo las de su agenda). Un solo email por paciente (`appointment_series_cancelled`)
+    y una copia por profesional, con «Cancelaciones» y la casilla «Avisar al paciente»; una entrada
+    de actividad y un aviso de ntfy.
 - **Almacenamiento** (`src/services/file-storage.ts`): tres buckets de Supabase Storage que se crean
   solos con su tamaño máximo y sus tipos de archivo: `historias-clinicas` (privado, o el de
   `STORAGE_BUCKET`), `comprobantes` (privado) e `imagenes` (público: logos y fotos). Las imágenes se
@@ -704,7 +734,11 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
       salieron los emails, o «Sin avisar al paciente». Sale del registro de actividad (las entradas
       con «Estado» en `changes`), así que entran los botones de estado, el formulario de la cita y la
       cancelación desde «Tu cita» (spec 010), que se titula «Agenda360: cita cancelada por el
-      paciente» y dice «Cancelada por el paciente desde su email». «Confirmo que voy» no avisa.
+      paciente» y dice «Cancelada por el paciente desde su email». «Confirmo que voy» no avisa;
+    - **cada serie de citas del panel** (spec 011): un solo aviso («Agenda360: nueva serie de citas»)
+      con cuántas, cada cuánto, desde y hasta cuándo, cuántas no se crearon, quién y sus emails; sus
+      citas no tienen aviso propio. «Cancelar ésta y las siguientes» también avisa una sola vez
+      («Agenda360: serie de citas cancelada»), sin un cambio de estado por cada cita.
 
     Hasta 10 de cada tipo por pasada; del resto sólo se dice cuántos son.
   - **Avisos al paciente en cada cambio de estado** (spec 008): además de la confirmación, la

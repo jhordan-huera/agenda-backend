@@ -26,6 +26,9 @@ export const THIRD_PARTY_EMAIL_TYPES: readonly EmailType[] = [
   "appointment_pending",
   "appointment_completed",
   "appointment_no_show",
+  // Una serie de citas (spec 011): un email por paciente, no uno por cita.
+  "appointment_series",
+  "appointment_series_cancelled",
 ];
 
 /**

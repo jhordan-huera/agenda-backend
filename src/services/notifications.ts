@@ -2,7 +2,7 @@ import { config } from "../config.ts";
 import { appointmentColumns, businessColumns } from "../db/columns.ts";
 import { many, one, type Db } from "../db/pool.ts";
 import { canCancelOnline, isFollowUpDate } from "../shared/lib/constants/business.ts";
-import { emailTemplates, type AppointmentEmailData, type EmailContent } from "../shared/lib/email/templates.ts";
+import { emailTemplates, type AppointmentEmailData, type EmailContent, type SeriesEmailDate } from "../shared/lib/email/templates.ts";
 import { joinNames } from "../shared/lib/format.ts";
 import { addDaysISO, getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
 import type { Appointment, BankAccount, Business, EmailType } from "../shared/types/index.ts";
@@ -473,6 +473,182 @@ export async function notifyAppointmentChange(
   // El paciente nunca crea ni mueve citas: desde «Tu cita» no hay cita nueva que avisarle al profesional.
   if (origin !== "patient_link") await notifyProfessional(db, context, before, after, origin, actorUserId, copiedTo);
   return sentToClient;
+}
+
+/* ------------------------------------------------ Citas que se repiten (spec 011) -- */
+
+/**
+ * El enlace a «Tu cita» (spec 010) de cada persona en cada cita de una serie: el del principal es el
+ * token del pago y el de cada otra persona de la sesión, el suyo. null si ya no está en esa cita.
+ */
+async function seriesLinks(db: Db, appointments: Appointment[]): Promise<(appointment: Appointment, clientId: string) => string | null> {
+  const rows = await many<{ appointmentId: string; clientId: string; token: string }>(
+    db,
+    `select appointment_id as "appointmentId", client_id as "clientId", access_token as token
+       from appointment_clients where appointment_id = any($1::uuid[])`,
+    [appointments.map((appointment) => appointment.id)],
+  );
+  const extras = new Map(rows.map((row) => [`${row.appointmentId}:${row.clientId}`, row.token]));
+  return (appointment, clientId) => {
+    const token = appointment.clientId === clientId ? appointment.paymentToken : extras.get(`${appointment.id}:${clientId}`);
+    return token ? appointmentPageUrl(token) : null;
+  };
+}
+
+/** Las fechas de unas citas para los emails de la serie, con el enlace de cada una (o sin él). */
+const seriesDatesOf = (appointments: Appointment[], urlOf: (appointment: Appointment) => string | null = () => null): SeriesEmailDate[] =>
+  appointments.map((appointment) => ({
+    date: appointment.date,
+    startTime: appointment.startTime,
+    endTime: appointment.endTime,
+    url: urlOf(appointment),
+  }));
+
+/**
+ * Una serie de citas nueva desde el panel (spec 011, R7 y R8): en vez de un email por cita, uno solo a
+ * cada paciente con todas las fechas, cada una con su enlace a «Tu cita». Como al crear una cita suelta:
+ * - a cada persona de la sesión con su nombre, una vez por dirección; los datos de pago, sólo al
+ *   principal; sólo con «Confirmaciones» encendido;
+ * - la copia al profesional, una sola vez, con los nombres de todos y sin los enlaces de cada fecha
+ *   (son del paciente); no sale si el email al paciente no salió (p. ej. lo frenó el tope diario);
+ * - un solo aviso al profesional (si lo pide, no la agendó él y no le llegó ya la copia), con las fechas.
+ * Los emails van con el id de la primera cita: así los encuentran la bandeja y el aviso de ntfy.
+ * `appointments`: las citas creadas, en orden.
+ */
+export async function notifySeriesCreated(db: Db, appointments: Appointment[], actorUserId: string | null): Promise<void> {
+  const [first] = appointments;
+  if (!first) return;
+  const context = await loadAppointmentContext(db, first);
+  if (!context) return;
+  const { business } = context;
+  const data = buildEmailData(context, first);
+  const pending = first.status === "pending";
+  const written = new Set<string>();
+  let sentToClient = false;
+
+  if (business.notificationSettings.confirmations) {
+    const linkOf = await seriesLinks(db, appointments);
+    for (const recipient of context.recipients) {
+      if (!recipient.email || written.has(emailKey(recipient.email))) continue;
+      written.add(emailKey(recipient.email));
+      const own = recipient.clientId === first.clientId ? {} : { payment: null };
+      const queued = await queueEmail(db, {
+        businessId: business.id,
+        type: "appointment_series",
+        to: recipient.email,
+        appointmentId: first.id,
+        ...emailTemplates.appointmentSeries({
+          ...data,
+          ...own,
+          clientName: recipient.name,
+          pending,
+          dates: seriesDatesOf(appointments, (appointment) => linkOf(appointment, recipient.clientId)),
+        }),
+      });
+      if (queued) sentToClient = true;
+    }
+  }
+
+  let copiedTo = "";
+  const copyTo = context.professionalCopyEmail;
+  if (sentToClient && copyTo && !written.has(emailKey(copyTo))) {
+    await queueEmail(db, {
+      businessId: business.id,
+      type: "appointment_copy",
+      to: copyTo,
+      appointmentId: first.id,
+      ...emailTemplates.appointmentSeries({
+        ...data,
+        clientName: context.clientName,
+        pending,
+        dates: seriesDatesOf(appointments),
+        professionalCopy: { agendaUrl: agendaUrlOf(first), pending },
+      }),
+    });
+    copiedTo = copyTo;
+  }
+
+  if (!context.professionalEmail || !context.professionalNotify) return;
+  if (actorUserId && actorUserId === context.professionalUserId) return;
+  if (sameEmail(context.professionalEmail, copiedTo)) return;
+  await queueEmail(db, {
+    businessId: business.id,
+    type: "professional_new_appointment",
+    to: context.professionalEmail,
+    appointmentId: first.id,
+    ...emailTemplates.professionalNewAppointment({
+      ...data,
+      origin: "dashboard",
+      agendaUrl: `${appOrigin()}/dashboard/calendar?date=${first.date}`,
+      series: seriesDatesOf(appointments),
+    }),
+  });
+}
+
+/**
+ * «Cancelar ésta y las siguientes» (spec 011, R10): un solo email a cada paciente con las fechas en que
+ * está (una vez por dirección: cada cita se pudo cambiar sola) y una copia por profesional con las de su
+ * agenda. Sólo con «Cancelaciones» encendido; la casilla «Avisar al paciente» la mira quien llama. La
+ * copia de un profesional no sale si no salió ningún email de sus citas. `appointments`: las citas
+ * canceladas, en orden.
+ */
+export async function notifySeriesCancelled(db: Db, appointments: Appointment[]): Promise<void> {
+  const contexts: { appointment: Appointment; context: AppointmentContext }[] = [];
+  for (const appointment of appointments) {
+    const context = await loadAppointmentContext(db, appointment);
+    if (context) contexts.push({ appointment, context });
+  }
+  const business = contexts[0]?.context.business;
+  if (!business?.notificationSettings.cancellations) return;
+
+  const byEmail = new Map<string, { recipient: Recipient; context: AppointmentContext; appointments: Appointment[] }>();
+  for (const { appointment, context } of contexts) {
+    for (const recipient of context.recipients) {
+      if (!recipient.email) continue;
+      const entry = byEmail.get(emailKey(recipient.email)) ?? { recipient, context, appointments: [] };
+      entry.appointments.push(appointment);
+      byEmail.set(emailKey(recipient.email), entry);
+    }
+  }
+  const notified = new Set<string>();
+  for (const { recipient, context, appointments: own } of byEmail.values()) {
+    const queued = await queueEmail(db, {
+      businessId: business.id,
+      type: "appointment_series_cancelled",
+      to: recipient.email,
+      appointmentId: own[0].id,
+      ...emailTemplates.appointmentSeriesCancelled({
+        ...buildEmailData(context, own[0]),
+        clientName: recipient.name,
+        dates: seriesDatesOf(own),
+      }),
+    });
+    if (queued) for (const appointment of own) notified.add(appointment.id);
+  }
+
+  const byCopy = new Map<string, { context: AppointmentContext; appointments: Appointment[]; names: string[] }>();
+  for (const { appointment, context } of contexts) {
+    const to = context.professionalCopyEmail;
+    if (!to || !notified.has(appointment.id) || byEmail.has(emailKey(to))) continue;
+    const entry = byCopy.get(emailKey(to)) ?? { context, appointments: [], names: [] };
+    entry.appointments.push(appointment);
+    for (const recipient of context.recipients) if (!entry.names.includes(recipient.name)) entry.names.push(recipient.name);
+    byCopy.set(emailKey(to), entry);
+  }
+  for (const { context, appointments: own, names } of byCopy.values()) {
+    await queueEmail(db, {
+      businessId: business.id,
+      type: "appointment_copy",
+      to: context.professionalCopyEmail,
+      appointmentId: own[0].id,
+      ...emailTemplates.appointmentSeriesCancelled({
+        ...buildEmailData(context, own[0]),
+        clientName: joinNames(names),
+        dates: seriesDatesOf(own),
+        professionalCopy: { agendaUrl: agendaUrlOf(own[0]), pending: false },
+      }),
+    });
+  }
 }
 
 /**

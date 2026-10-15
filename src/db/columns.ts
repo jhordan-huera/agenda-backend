@@ -167,9 +167,20 @@ export const clientConfirmationsSql = (alias = "appointments") =>
            select ac.client_id::text, ac.confirmed_at, 1, ac.created_at from appointment_clients ac
             where ac.appointment_id = ${alias}.id and ac.confirmed_at is not null) cc), '[]'::json)`;
 
-/** Las columnas de la cita, sus otros pacientes (`extraClientIds`) y quiénes confirmaron (`clientConfirmations`). */
+/**
+ * La serie de la cita (spec 011): `{ id, index, total, frequency }`, con el total y la frecuencia leídos
+ * de appointment_series por su clave primaria; null en una cita suelta. `alias`: como en extraClientIdsSql.
+ */
+export const seriesSql = (alias = "appointments") =>
+  `(select json_build_object('id', s.id, 'index', ${alias}.series_index, 'total', s.created_count, 'frequency', s.frequency)
+      from appointment_series s where s.id = ${alias}.series_id)`;
+
+/**
+ * Las columnas de la cita, sus otros pacientes (`extraClientIds`), quiénes confirmaron
+ * (`clientConfirmations`) y su serie (`series`).
+ */
 export const appointmentColumns = (alias?: string) =>
-  `${appointmentBaseColumns(alias)}, ${extraClientIdsSql(alias)} as "extraClientIds", ${clientConfirmationsSql(alias)} as "clientConfirmations"`;
+  `${appointmentBaseColumns(alias)}, ${extraClientIdsSql(alias)} as "extraClientIds", ${clientConfirmationsSql(alias)} as "clientConfirmations", ${seriesSql(alias)} as "series"`;
 
 export const paymentReceiptColumns = columns({
   id: "id",

@@ -121,7 +121,16 @@ export interface NotificationSettings {
  * quedar pendiente; "unconfirmed": una cita confirmada (o atendida, o no asistió) vuelve a
  * pendiente de confirmar (spec 008).
  */
-export type WhatsAppNoticeKind = "confirmed" | "cancelled" | "rescheduled" | "completed" | "no_show" | "pending" | "unconfirmed";
+export type WhatsAppNoticeKind =
+  | "confirmed"
+  | "cancelled"
+  | "rescheduled"
+  | "completed"
+  | "no_show"
+  | "pending"
+  | "unconfirmed"
+  /** «Cancelar ésta y las siguientes» de una serie (spec 011): un mensaje con todas las fechas. */
+  | "series_cancelled";
 
 /** Un negocio suspendido no puede usar el panel ni recibir reservas online. */
 export type BusinessStatus = "active" | "suspended";
@@ -429,6 +438,11 @@ export interface Appointment {
    * backend anterior no la manda: el panel la trata como vacía.
    */
   clientConfirmations: ClientConfirmation[];
+  /**
+   * La serie con la que se agendó («cada semana, 8 sesiones», spec 011); null: una cita suelta. Un
+   * backend anterior no la manda: el panel la trata como null.
+   */
+  series: AppointmentSeriesRef | null;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
 }
@@ -437,6 +451,60 @@ export interface Appointment {
 export interface ClientConfirmation {
   clientId: string;
   confirmedAt: ISODateTime;
+}
+
+/**
+ * Cada cuánto se repite una serie de citas (spec 011). «Cada mes» es el mismo día del mes que la primera
+ * (el 15 de cada mes); si ese mes no lo tiene, el último.
+ */
+export type AppointmentSeriesFrequency = "weekly" | "biweekly" | "monthly";
+
+/** La serie de una cita (spec 011): «Cita 3 de 8 · cada semana». */
+export interface AppointmentSeriesRef {
+  id: string;
+  /** Su número en la serie: 1, 2, 3… sin huecos. */
+  index: number;
+  /** Cuántas citas se crearon con la serie («Cita 3 de 8»): sin las quitadas ni las que chocaron. */
+  total: number;
+  frequency: AppointmentSeriesFrequency;
+}
+
+/**
+ * La marca de una fecha en la lista de la serie, antes de crearla (spec 011): libre, otra cita del
+ * profesional, un bloqueo, un día que no atiende, fuera de su horario o más allá del cupo del plan.
+ */
+export type SeriesDateStatus = "free" | "busy" | "blocked" | "day_off" | "outside_hours" | "plan_limit";
+
+/** Una fecha de la lista de la serie (respuesta de la vista previa: no se guarda). */
+export interface SeriesDatePreview {
+  date: ISODate;
+  startTime: TimeString;
+  endTime: TimeString;
+  status: SeriesDateStatus;
+  /** Lo que se muestra («Ya hay una cita de 10:00 a 11:00», «Bloqueado: Vacaciones»…); null si está libre. */
+  reason: string | null;
+  /** Las horas libres de ese día para «Otra hora» (sólo en las marcadas busy, blocked y outside_hours). */
+  freeTimes: TimeString[];
+}
+
+/** Las citas que quedan en el cupo del plan en cada mes de la serie ("2026-11": 12), topadas en 24. */
+export type SeriesPlanRemaining = Record<string, number>;
+
+/** La lista de fechas de una serie, antes de crearla (POST …/appointment-series/preview). */
+export interface AppointmentSeriesPreview {
+  dates: SeriesDatePreview[];
+  /** null: el plan no tiene tope de citas al mes. */
+  planRemaining: SeriesPlanRemaining | null;
+  /** El tope de citas al mes del plan (20 en Free), para el motivo de la marca; null: sin tope. */
+  monthlyLimit: number | null;
+}
+
+/** La serie creada (POST …/appointment-series): las citas, en orden, y las fechas que no se crearon. */
+export interface AppointmentSeriesCreated {
+  series: { id: string; total: number; frequency: AppointmentSeriesFrequency };
+  created: Appointment[];
+  /** Llegaron y no se crearon: se ocuparon, se bloquearon o pasaron el cupo mientras se revisaba la lista. */
+  skipped: { date: ISODate; startTime: TimeString; reason: string }[];
 }
 
 export interface TimeRange {
@@ -508,7 +576,11 @@ export type EmailType =
   /** Cambio de seguridad en una cuenta de super admin: verificación en dos pasos o contraseña (spec 009). */
   | "account_security_changed"
   /** Aviso al negocio: el paciente canceló su cita desde «Tu cita», el enlace de sus emails (spec 010). */
-  | "patient_cancelled";
+  | "patient_cancelled"
+  /** Al paciente: todas las fechas de una serie de citas nueva, en un solo email (spec 011). */
+  | "appointment_series"
+  /** Al paciente: «Cancelar ésta y las siguientes» de una serie, con las fechas canceladas (spec 011). */
+  | "appointment_series_cancelled";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo

@@ -57,7 +57,7 @@ import { findProfessional, listProfessionals } from "./professional-service.ts";
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, "es");
 
 /** Busca un registro garantizando que pertenece al negocio (aislamiento multi-tenant). */
-async function findOwned<T>(db: Db, table: string, columns: string, businessId: string, id: string, notFound: string) {
+export async function findOwned<T>(db: Db, table: string, columns: string, businessId: string, id: string, notFound: string) {
   const row = isUuid(id)
     ? await one<T>(db, `select ${columns} from ${table} where id = $1 and business_id = $2`, [id, businessId])
     : null;
@@ -552,7 +552,7 @@ async function assertNoConflict(db: Db, appointment: Appointment) {
  * Agenda de una cita creada desde el panel. El rol Profesional sólo agenda en la suya. Si no se eligió:
  * la de quien la crea o, si el negocio tiene una sola activa, esa.
  */
-async function resolveAppointmentProfessional(
+export async function resolveAppointmentProfessional(
   db: Db,
   businessId: string,
   actor: Actor,
@@ -581,7 +581,7 @@ async function resolveAppointmentProfessional(
 }
 
 /** El profesional tiene que atender el servicio de la cita (como en el formulario y en la página de reservas). */
-async function assertOffersService(db: Db, businessId: string, professionalId: string, serviceId: string) {
+export async function assertOffersService(db: Db, businessId: string, professionalId: string, serviceId: string) {
   const professional = await findProfessional(db, businessId, professionalId);
   if (offersService(professional, serviceId)) return;
   const service = await one<{ name: string }>(db, "select name from services where id = $1", [serviceId]);
@@ -604,7 +604,8 @@ async function assertLimitOnChange(db: Db, before: Appointment, after: Appointme
   }
 }
 
-async function buildAppointmentFields(db: Db, businessId: string, input: unknown) {
+/** Los datos de una cita del formulario, con el paciente y el servicio comprobados (también los de una serie, spec 011). */
+export async function buildAppointmentFields(db: Db, businessId: string, input: unknown) {
   const data = parseInput(appointmentSchema, input);
   await findOwned<Client>(db, "clients", "id", businessId, data.clientId, "El cliente seleccionado no existe.");
   await findOwned<Service>(db, "services", "id", businessId, data.serviceId, "El servicio seleccionado no existe.");
@@ -627,7 +628,7 @@ async function buildAppointmentFields(db: Db, businessId: string, input: unknown
 }
 
 /** jsonb: el lugar de una visita a domicilio (o null si es en el local). */
-const homeVisitJson = (visit: HomeVisitAddress | null) => (visit ? JSON.stringify(visit) : null);
+export const homeVisitJson = (visit: HomeVisitAddress | null) => (visit ? JSON.stringify(visit) : null);
 
 /**
  * Guarda los campos editables de una cita y devuelve la fila actualizada. `rescheduled`: la fecha y
@@ -640,7 +641,7 @@ const homeVisitJson = (visit: HomeVisitAddress | null) => (visit ? JSON.stringif
  * (migración 037). La de las otras personas la borra un trigger `after`, que corre después del
  * `returning`: por eso la cita se vuelve a leer al final.
  */
-async function saveAppointment(db: Db, appointment: Appointment, rescheduled: boolean): Promise<Appointment> {
+export async function saveAppointment(db: Db, appointment: Appointment, rescheduled: boolean): Promise<Appointment> {
   await db.query(
     `update appointments
         set client_id = $2, service_id = $3, date = $4, start_time = $5, end_time = $6,
@@ -783,6 +784,7 @@ export const appointmentService = {
         receiptAt: null,
         paidAt: null,
         clientConfirmations: [],
+        series: null,
         createdAt: "",
         updatedAt: "",
       };
@@ -1038,6 +1040,7 @@ const WHATSAPP_NOTICE_LABELS: Record<WhatsAppNoticeKind, string> = {
   no_show: "para reagendar (No asistió)",
   pending: "que la cita vuelve a estar agendada",
   unconfirmed: "que la cita quedó pendiente de confirmar",
+  series_cancelled: "la cancelación de las citas de la serie",
 };
 
 /* --------------------------------- Horarios ---------------------------------- */

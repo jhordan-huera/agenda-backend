@@ -4,6 +4,7 @@ import { handle, limitRequests, queryParam } from "../http/handlers.ts";
 import { requireSuperAdminTwoFactor } from "../http/session.ts";
 import { businessService, subscriptionService, teamService, userService } from "../services/account-service.ts";
 import { auditLogService, notificationService } from "../services/activity-service.ts";
+import { appointmentSeriesService } from "../services/appointment-series-service.ts";
 import { clinicalAttachmentService } from "../services/clinical-attachment-service.ts";
 import { clinicalService } from "../services/clinical-service.ts";
 import { clinicalTemplateService } from "../services/clinical-template-service.ts";
@@ -296,6 +297,24 @@ businessRoutes.get(
 businessRoutes.get(
   "/:businessId/payment-receipts/:receiptId/url",
   handle((req) => paymentService.receiptUrl(req.ctx, req.params.businessId, req.params.receiptId)),
+);
+// Citas que se repiten (spec 011): la lista de fechas (no cambia nada), crear la serie y «Cancelar ésta
+// y las siguientes».
+businessRoutes.post(
+  "/:businessId/appointment-series/preview",
+  handle((req) => appointmentSeriesService.preview(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.post(
+  "/:businessId/appointment-series",
+  handle(async (req, res) => {
+    const created = await appointmentSeriesService.create(req.ctx, req.params.businessId, req.body);
+    res.status(201);
+    return created;
+  }),
+);
+businessRoutes.post(
+  "/:businessId/appointments/:appointmentId/cancel-following",
+  handle((req) => appointmentSeriesService.cancelFollowing(req.ctx, req.params.businessId, req.params.appointmentId, req.body)),
 );
 businessRoutes.post(
   "/:businessId/appointments/:appointmentId/whatsapp-notice",

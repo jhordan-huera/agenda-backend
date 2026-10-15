@@ -1,5 +1,6 @@
 // Copia de agenda-front/src/lib/validations/appointment.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
+import { SERIES_MAX, SERIES_MIN } from "../appointment-series.ts";
 import { dateField, homeVisitSchema, optionalText, requiredMoneyField, timeField } from "./fields.ts";
 
 export const appointmentStatusSchema = z.enum([
@@ -11,7 +12,16 @@ export const appointmentStatusSchema = z.enum([
 ]);
 
 /** El profesional abrió WhatsApp con el aviso de un cambio de la cita (queda en la actividad). */
-export const whatsAppNoticeSchema = z.enum(["confirmed", "cancelled", "rescheduled", "completed", "no_show", "pending", "unconfirmed"]);
+export const whatsAppNoticeSchema = z.enum([
+  "confirmed",
+  "cancelled",
+  "rescheduled",
+  "completed",
+  "no_show",
+  "pending",
+  "unconfirmed",
+  "series_cancelled",
+]);
 
 export const appointmentSchema = z
   .object({
@@ -53,3 +63,60 @@ export const appointmentSchema = z
   );
 
 export type AppointmentInput = z.infer<typeof appointmentSchema>;
+
+/* ------------------------------------------------- Citas que se repiten (spec 011) -- */
+
+export const seriesFrequencySchema = z.enum(["weekly", "biweekly", "monthly"], { error: "Elige cada cuánto se repite" });
+
+const SERIES_COUNT_MESSAGE = `Elige de ${SERIES_MIN} a ${SERIES_MAX} citas, contando la primera`;
+
+/** «Repetir»: cada cuánto y cuántas citas, de 2 a 24 contando la primera. */
+export const seriesRepeatSchema = z.object({
+  frequency: seriesFrequencySchema,
+  count: z.coerce
+    .number<string | number>({ error: SERIES_COUNT_MESSAGE })
+    .int(SERIES_COUNT_MESSAGE)
+    .min(SERIES_MIN, SERIES_COUNT_MESSAGE)
+    .max(SERIES_MAX, SERIES_COUNT_MESSAGE),
+});
+
+/**
+ * La cita de una serie: la misma de una cita nueva, con el estado sólo Pendiente o Confirmada (una serie
+ * es de citas por venir). Que la primera fecha sea desde hoy lo comprueba la API con la zona del negocio.
+ */
+const seriesAppointmentSchema = appointmentSchema.refine((data) => data.status === "pending" || data.status === "confirmed", {
+  path: ["status"],
+  message: "Una serie sólo puede quedar pendiente o confirmada.",
+});
+
+/** «Revisar fechas»: la lista de fechas de la serie, antes de crearla. */
+export const appointmentSeriesPreviewSchema = z.object({
+  appointment: seriesAppointmentSchema,
+  repeat: seriesRepeatSchema,
+});
+
+/** Una fecha de la lista final: su hora (la de la cita o la que se eligió) y si se agenda igual. */
+export const seriesDateSchema = z.object({
+  date: dateField,
+  startTime: timeField,
+  /** «Agendar igual» en un bloqueo, un día que no atiende o fuera del horario. */
+  allowOutsideHours: z.boolean().default(false),
+});
+
+/** «Crear N citas»: lo de la vista previa y las fechas que quedaron en la lista (de 2 a 24, sin repetir). */
+export const appointmentSeriesSchema = appointmentSeriesPreviewSchema.extend({
+  dates: z
+    .array(seriesDateSchema)
+    .min(SERIES_MIN, "Para una sola cita, quita «Repetir».")
+    .max(SERIES_MAX, `Una serie tiene como máximo ${SERIES_MAX} citas.`)
+    .refine((dates) => new Set(dates.map((item) => item.date)).size === dates.length, "Hay una fecha repetida en la lista."),
+});
+
+/** «Cancelar ésta y las siguientes»: `notify` es la casilla «Avisar al paciente» de la ficha (spec 008). */
+export const cancelFollowingSchema = z.object({
+  notify: z.boolean({ error: "Indica si se avisa al paciente" }).default(true),
+});
+
+export type SeriesRepeatInput = z.infer<typeof seriesRepeatSchema>;
+export type AppointmentSeriesPreviewInput = z.infer<typeof appointmentSeriesPreviewSchema>;
+export type AppointmentSeriesInput = z.infer<typeof appointmentSeriesSchema>;

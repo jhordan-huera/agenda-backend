@@ -6,10 +6,14 @@ import {
   findOnlineBookings,
   findPanelAppointments,
   findPanelClients,
+  findPanelSeries,
+  findSeriesCancellations,
   findStatusChanges,
   newClientNotice,
   onlineBookingNotice,
   panelAppointmentNotice,
+  panelSeriesNotice,
+  seriesCancelledNotice,
   statusChangeNotice,
   type BookingNotice,
 } from "../services/booking-alerts.ts";
@@ -100,6 +104,14 @@ export interface ScheduledTasksReport {
   panelAppointments?: number;
   /** El aviso de cada una (hasta MAX_APPOINTMENT_NOTICES), con quién la agendó y los pacientes a medias. */
   appointmentNotices?: BookingNotice[];
+  /** Series de citas agendadas desde el panel desde la ejecución anterior (spec 011): un aviso por serie. */
+  panelSeries?: number;
+  /** El aviso de cada una (hasta MAX_SERIES_NOTICES), con sus fechas, quién la agendó y los pacientes a medias. */
+  seriesNotices?: BookingNotice[];
+  /** «Cancelar ésta y las siguientes» desde la ejecución anterior (spec 011). */
+  seriesCancellations?: number;
+  /** El aviso de cada una (hasta MAX_SERIES_NOTICES): cuántas citas, desde cuándo, quién y sus emails. */
+  seriesCancelNotices?: BookingNotice[];
   /** Cambios de estado de citas desde la ejecución anterior (spec 008). */
   statusChanges?: number;
   /** El aviso de cada uno (hasta MAX_STATUS_NOTICES): de qué estado a cuál, quién y sus emails. */
@@ -252,6 +264,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const online = await findOnlineBookings(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const panel = await findPanelClients(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const panelAppointments = await findPanelAppointments(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
+  const panelSeries = await findPanelSeries(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
+  const seriesCancellations = await findSeriesCancellations(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const statusChanges = await findStatusChanges(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const accountChanges = await findAccountChanges(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const report: ScheduledTasksReport = {
@@ -270,6 +284,10 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     clientNotices: panel.clients.map(newClientNotice),
     panelAppointments: panelAppointments.total,
     appointmentNotices: panelAppointments.appointments.map(panelAppointmentNotice),
+    panelSeries: panelSeries.total,
+    seriesNotices: panelSeries.series.map(panelSeriesNotice),
+    seriesCancellations: seriesCancellations.total,
+    seriesCancelNotices: seriesCancellations.cancellations.map(seriesCancelledNotice),
     statusChanges: statusChanges.total,
     statusNotices: statusChanges.changes.map(statusChangeNotice),
     accountChanges: accountChanges.total,

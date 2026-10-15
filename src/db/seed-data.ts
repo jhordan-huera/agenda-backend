@@ -734,6 +734,7 @@ function seedTenant(
       receiptAt: null,
       paidAt: null,
       clientConfirmations: [],
+      series: null,
       createdAt,
       updatedAt: createdAt,
     };

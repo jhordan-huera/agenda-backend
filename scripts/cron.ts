@@ -36,6 +36,8 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   appointment_pending: ["Cita pendiente de confirmar", "Citas pendientes de confirmar"],
   appointment_completed: ["Gracias por la visita", "Gracias por la visita"],
   appointment_no_show: ["Aviso de No asistió", "Avisos de No asistió"],
+  appointment_series: ["Serie de citas", "Series de citas"],
+  appointment_series_cancelled: ["Serie de citas cancelada", "Series de citas canceladas"],
   booking_received: ["Aviso de nueva reserva (al negocio)", "Avisos de nueva reserva (al negocio)"],
   professional_new_appointment: ["Aviso de cita nueva (al profesional)", "Avisos de cita nueva (al profesional)"],
   appointment_copy: ["Copia al profesional", "Copias al profesional"],
@@ -60,7 +62,14 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
 const when = (email: SentEmail) => (email.date ? `${formatShortDate(email.date)}${email.startTime ? ` ${email.startTime}` : ""}` : null);
 
 /** Emails al paciente sobre su cita: los que llevan copia al profesional (ver notifications.ts). */
-const COPIED_TYPES = new Set<EmailType>(["booking_created", "appointment_confirmed", "appointment_updated", "appointment_cancelled"]);
+const COPIED_TYPES = new Set<EmailType>([
+  "booking_created",
+  "appointment_confirmed",
+  "appointment_updated",
+  "appointment_cancelled",
+  "appointment_series",
+  "appointment_series_cancelled",
+]);
 
 /**
  * Una línea por email: de qué negocio, de qué cita (cuándo y de quién) y a quién salió, con la copia
@@ -172,9 +181,9 @@ export function buildNotice(report: ScheduledTasksReport, options: { gmailConfig
 }
 
 /**
- * Un aviso por cada reserva desde la página pública, cada cita agendada desde el panel y cada paciente
- * registrado desde el panel (ver booking-alerts.ts) y, si hubo más de los que se detallan, otro con
- * cuántos faltan.
+ * Un aviso por cada reserva desde la página pública, cada cita y cada serie de citas agendada desde el
+ * panel, cada serie cancelada y cada paciente registrado desde el panel (ver booking-alerts.ts) y, si
+ * hubo más de los que se detallan, otro con cuántos faltan.
  */
 export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
   const notices: Notice[] = [...(report.bookingNotices ?? [])];
@@ -200,6 +209,18 @@ export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
       click: "/admin/businesses",
     });
   }
+  const seriesNotices = report.seriesNotices ?? [];
+  notices.push(...seriesNotices);
+  const restSeries = (report.panelSeries ?? 0) - seriesNotices.length;
+  if (restSeries > 0) {
+    notices.push({
+      title: "Agenda360: más series de citas",
+      message: `…y ${plural(restSeries, "serie más", "series más")} de citas agendadas desde el panel (detalle en la agenda de cada negocio).`,
+      priority: 3,
+      tags: ["repeat"],
+      click: "/admin/businesses",
+    });
+  }
   const statusNotices = report.statusNotices ?? [];
   notices.push(...statusNotices);
   const restStatus = (report.statusChanges ?? 0) - statusNotices.length;
@@ -207,6 +228,18 @@ export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
     notices.push({
       title: "Agenda360: más cambios de estado",
       message: `…y ${plural(restStatus, "cambio de estado más", "cambios de estado más")} en citas (detalle en la actividad de cada negocio).`,
+      priority: 3,
+      tags: ["arrows_counterclockwise"],
+      click: "/admin/activity",
+    });
+  }
+  const seriesCancelNotices = report.seriesCancelNotices ?? [];
+  notices.push(...seriesCancelNotices);
+  const restCancelled = (report.seriesCancellations ?? 0) - seriesCancelNotices.length;
+  if (restCancelled > 0) {
+    notices.push({
+      title: "Agenda360: más series canceladas",
+      message: `…y ${plural(restCancelled, "serie cancelada más", "series canceladas más")} desde el panel (detalle en la actividad de cada negocio).`,
       priority: 3,
       tags: ["arrows_counterclockwise"],
       click: "/admin/activity",
@@ -303,6 +336,7 @@ async function main(): Promise<void> {
     console.info(
       `Recordatorios: ${report.reminders} · reservas por la página: ${report.onlineBookings ?? 0} · ` +
         `pacientes nuevos del panel: ${report.panelClients ?? 0} · citas del panel: ${report.panelAppointments ?? 0} · ` +
+        `series del panel: ${report.panelSeries ?? 0} · series canceladas: ${report.seriesCancellations ?? 0} · ` +
         `cambios de estado: ${report.statusChanges ?? 0} · cambios de cuenta: ${report.accountChanges ?? 0} · ` +
         `enviados desde la anterior: ${report.sentSinceLastRun} · ` +
         `negocios con error: ${report.reminderFailures} · ` +

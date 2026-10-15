@@ -15,8 +15,16 @@ export type EmailBlock =
    * botón no funciona…» del final, que sigue siendo el del primer botón.
    */
   | { kind: "link"; label: string; url: string }
-  /** Recuadro de datos: "Etiqueta: valor" (con enlace opcional). */
-  | { kind: "details"; title?: string; rows: { label: string; value: string; href?: string; mono?: boolean }[] }
+  /**
+   * Recuadro de datos: "Etiqueta: valor" (con enlace opcional). En el texto, una fila con enlace muestra
+   * el enlace en lugar del valor; con `textWithHref`, el valor y después el enlace (las fechas de una
+   * serie, que llevan cada una a su página).
+   */
+  | {
+      kind: "details";
+      title?: string;
+      rows: { label: string; value: string; href?: string; mono?: boolean; textWithHref?: boolean }[];
+    }
   /** Aviso destacado (p. ej. motivo de un rechazo). */
   | { kind: "callout"; text: string; tone?: "info" | "warning" }
   /** Texto pequeño y gris. */
@@ -166,7 +174,14 @@ function renderBlockText(block: EmailBlock): string {
     case "link":
       return `${block.label}: ${block.url}`;
     case "details":
-      return [block.title, ...block.rows.map((row) => `${row.label}: ${row.href ?? row.value}`)].filter(Boolean).join("\n");
+      return [
+        block.title,
+        ...block.rows.map((row) =>
+          row.href && row.textWithHref ? `${row.label}: ${row.value} · ${row.href}` : `${row.label}: ${row.href ?? row.value}`,
+        ),
+      ]
+        .filter(Boolean)
+        .join("\n");
   }
 }
 

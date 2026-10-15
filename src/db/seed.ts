@@ -25,6 +25,7 @@ const TABLES = [
   "notifications",
   "appointment_clients",
   "appointments",
+  "appointment_series",
   "blocked_times",
   "schedules",
   "services",

@@ -89,7 +89,7 @@ ok(
   "sin Gmail no envía nada: todo sigue en cola (recordatorios y sus copias)",
 );
 ok(
-  /Recordatorios: \d+ · reservas por la página: \d+ · pacientes nuevos del panel: \d+ · citas del panel: \d+ · cambios de estado: \d+ · cambios de cuenta: \d+ · enviados/.test(run.output) && !/@/.test(run.output),
+  /Recordatorios: \d+ · reservas por la página: \d+ · pacientes nuevos del panel: \d+ · citas del panel: \d+ · series del panel: \d+ · series canceladas: \d+ · cambios de estado: \d+ · cambios de cuenta: \d+ · enviados/.test(run.output) && !/@/.test(run.output),
   "el registro (público en GitHub) sólo lleva cifras, ningún email",
   run.output.slice(-300),
 );
@@ -191,6 +191,20 @@ ok(
   copyLines.includes("Copia al profesional · 1\n• Mente Abierta · jue 15 oct 09:00 · Ana T. → dr***@gmail.com") && !/Copias al profesional/.test(copyLines),
   "sólo va aparte la copia cuyo email al paciente no está en esta tanda",
   copyLines,
+);
+const seriesEmails = [
+  sentEmail("appointment_series", "an***@gmail.com", "Ana T.", "2026-10-20", "10:00", "Mente Abierta", "s1"),
+  sentEmail("appointment_copy", "dr***@gmail.com", "Ana T.", "2026-10-20", "10:00", "Mente Abierta", "s1"),
+  sentEmail("appointment_series_cancelled", "an***@gmail.com", "Ana T.", "2026-11-03", "10:00", "Mente Abierta", "s3"),
+  sentEmail("appointment_copy", "dr***@gmail.com", "Ana T.", "2026-11-03", "10:00", "Mente Abierta", "s3"),
+];
+const seriesLines = describeSentEmails(seriesEmails, 4).join("\n");
+ok(
+  seriesLines.includes("Serie de citas · 1\n• Mente Abierta · mar 20 oct 10:00 · Ana T. → an***@gmail.com · copia: dr***@gmail.com") &&
+    seriesLines.includes("Serie de citas cancelada · 1\n• Mente Abierta · mar 3 nov 10:00 · Ana T. → an***@gmail.com · copia: dr***@gmail.com") &&
+    !/Copia al profesional/.test(seriesLines),
+  "las series (spec 011): «Serie de citas» y «Serie de citas cancelada», con su copia en la misma línea",
+  seriesLines,
 );
 ok(
   describeSentEmails(sample.slice(0, 1), 45).at(-1) === "…y 44 más (detalle en el panel: Actividad → Emails).",

@@ -1,7 +1,7 @@
 // Copia de agenda-front/src/lib/email/templates.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { APP_NAME } from "../constants/app.ts";
 import { BANK_ACCOUNT_TYPE_LABELS, describeTimezone } from "../constants/business.ts";
-import { capitalize, formatLongDate, formatPrice, formatTimeRange } from "../format.ts";
+import { capitalize, formatDate, formatLongDate, formatPrice, formatTimeRange } from "../format.ts";
 import { describeHomeVisit, getDirectionsUrl, getPlaceMapsUrl, hasMapPoint } from "../maps.ts";
 import type { BankAccount, HomeVisitAddress, ISODate } from "../../types/index.ts";
 import { composeEmail, type EmailBlock, type EmailContent, type EmailMessage } from "./layout.ts";
@@ -70,6 +70,20 @@ export interface AppointmentEmailData {
   toVerify?: boolean;
 }
 
+/**
+ * Una cita de una serie en los emails (spec 011): su fecha, su franja y el enlace a la página «Tu cita»
+ * de quien recibe el email (spec 010). Sin enlace en la copia al profesional: es del paciente.
+ */
+export interface SeriesEmailDate {
+  date: ISODate;
+  startTime: string;
+  endTime: string;
+  url?: string | null;
+}
+
+/** Las fechas de una serie (spec 011): `pending`, la serie quedó pendiente de confirmar. */
+export type SeriesEmailData = AppointmentEmailData & { dates: SeriesEmailDate[]; pending?: boolean };
+
 /* ------------------------------------------------------------------ Piezas -- */
 
 const PLATFORM_BRAND = { name: APP_NAME, caption: "Agenda y reservas online" };
@@ -109,10 +123,10 @@ const clientEmail = (data: AppointmentEmailData, message: MessageContent): Email
     footer: `Reserva gestionada con ${APP_NAME}.`,
   });
 
-/** " (hora de Ecuador, GMT-5)" en las citas virtuales; "" en las demás o sin zona. */
-function zoneSuffix(data: AppointmentEmailData): string {
+/** " (hora de Ecuador, GMT-5)" en las citas virtuales; "" en las demás o sin zona. `date`: el día (otra cita de una serie). */
+function zoneSuffix(data: AppointmentEmailData, date: ISODate = data.date): string {
   // El desfase de ese día (horario de verano): a mediodía UTC, nunca en pleno cambio de hora.
-  return data.isVirtual && data.timezone ? ` (${describeTimezone(data.timezone, new Date(`${data.date}T12:00:00Z`))})` : "";
+  return data.isVirtual && data.timezone ? ` (${describeTimezone(data.timezone, new Date(`${date}T12:00:00Z`))})` : "";
 }
 
 /** La hora de inicio, con la zona en las citas virtuales: "10:00 (hora de Ecuador, GMT-5)". */
@@ -127,16 +141,27 @@ const credentials = (email: string, password: string): EmailBlock => ({
   ],
 });
 
-/** Datos de la cita: servicio, profesional, fecha, hora, precio y lugar (con enlace al mapa). */
-function appointmentDetails(data: AppointmentEmailData, title = "Tu cita"): EmailBlock {
+/**
+ * Datos de la cita: servicio, profesional, fecha, hora, precio y lugar (con enlace al mapa). En una serie
+ * (spec 011) van una sola vez, sin la fecha ni la hora (`schedule: false`: cada cita tiene la suya).
+ */
+function appointmentDetails(
+  data: AppointmentEmailData,
+  title = "Tu cita",
+  options: { schedule?: boolean; priceLabel?: string } = {},
+): EmailBlock {
   const place = { address: data.businessAddress, lat: data.businessLat, lng: data.businessLng };
   const rows: Extract<EmailBlock, { kind: "details" }>["rows"] = [
     { label: "Servicio", value: data.serviceName },
     { label: "Profesional", value: data.professionalName },
-    { label: "Fecha", value: capitalize(formatLongDate(data.date)) },
-    { label: "Hora", value: `${formatTimeRange(data.startTime, data.endTime)}${zoneSuffix(data)}` },
   ];
-  if (data.showPrice) rows.push({ label: "Precio", value: formatPrice(data.price, data.currency) });
+  if (options.schedule !== false) {
+    rows.push(
+      { label: "Fecha", value: capitalize(formatLongDate(data.date)) },
+      { label: "Hora", value: `${formatTimeRange(data.startTime, data.endTime)}${zoneSuffix(data)}` },
+    );
+  }
+  if (data.showPrice) rows.push({ label: options.priceLabel ?? "Precio", value: formatPrice(data.price, data.currency) });
   if (data.isVirtual) {
     rows.push({ label: "Lugar", value: "Virtual (videollamada)" });
     rows.push(
@@ -198,6 +223,61 @@ function payment(data: AppointmentEmailData): EmailBlock[] {
     ...accounts,
     { kind: "button", label: "Enviar el comprobante", url },
     { kind: "note", text: "Cuando transfieras, sube ahí la foto o el PDF del comprobante (o envíalo por WhatsApp al negocio)." },
+  ];
+}
+
+/**
+ * Las citas de una serie (spec 011), una fila por cita: «Cita 1 · Martes 20 de octubre, 10:00 – 11:00»
+ * (con la zona en las virtuales y el año si la serie pasa a otro). Cada fila enlaza a «Tu cita» de quien
+ * recibe el email, salvo en la copia al profesional.
+ */
+function seriesDatesBlock(data: SeriesEmailData, title: string): EmailBlock {
+  const years = new Set(data.dates.map((item) => item.date.slice(0, 4)));
+  const pattern = years.size > 1 ? "EEEE d 'de' MMMM 'de' yyyy" : "EEEE d 'de' MMMM";
+  return {
+    kind: "details",
+    title,
+    rows: data.dates.map((item, index) => ({
+      label: `Cita ${index + 1}`,
+      value: `${capitalize(formatDate(item.date, pattern))}, ${formatTimeRange(item.startTime, item.endTime)}${zoneSuffix(data, item.date)}`,
+      href: data.professionalCopy ? undefined : (item.url ?? undefined),
+      textWithHref: true,
+    })),
+  };
+}
+
+/** «el martes 20 de octubre»: desde cuándo es la serie. */
+const seriesStart = (data: SeriesEmailData) => (data.dates[0] ? `el ${formatDate(data.dates[0].date, "EEEE d 'de' MMMM")}` : "");
+
+/**
+ * Pago por transferencia de una serie (spec 011): las cuentas una sola vez y el monto de cada cita. El
+ * comprobante se sube desde el enlace de cada fecha (cada cita tiene su pago).
+ */
+function seriesPayment(data: SeriesEmailData): EmailBlock[] {
+  if (!data.payment || data.payment.bankAccounts.length === 0) return [];
+  const { bankAccounts } = data.payment;
+  const amount = formatPrice(data.price, data.currency);
+  const accounts: EmailBlock[] =
+    bankAccounts.length === 1
+      ? [
+          {
+            kind: "details",
+            title: "Pago por transferencia",
+            rows: [...bankAccountRows(bankAccounts[0]), ...(data.showPrice ? [{ label: "Monto de cada cita", value: amount }] : [])],
+          },
+        ]
+      : [
+          { kind: "text", text: `Pago por transferencia: a cualquiera de estas ${bankAccounts.length} cuentas.` },
+          ...bankAccounts.map(
+            (account, index): EmailBlock => ({ kind: "details", title: `Cuenta ${index + 1}`, rows: bankAccountRows(account) }),
+          ),
+        ];
+  return [
+    ...accounts,
+    {
+      kind: "note",
+      text: `Transfiere ${data.showPrice ? amount : "el valor de la cita"} por cada cita y sube el comprobante desde el enlace de cada fecha (o envíalo por WhatsApp al negocio).`,
+    },
   ];
 }
 
@@ -534,11 +614,31 @@ export const emailTemplates = {
       ],
     }),
 
-  /** Al profesional: una cita nueva en su agenda (reservada online, agendada o pasada a él por otra persona). */
+  /**
+   * Al profesional: una cita nueva en su agenda (reservada online, agendada o pasada a él por otra
+   * persona). Con `series`, una serie de citas del panel, en un solo email (spec 011).
+   */
   professionalNewAppointment: (
-    data: AppointmentEmailData & { origin: "booking_page" | "dashboard"; agendaUrl: string },
-  ): EmailContent =>
-    platformEmail({
+    data: AppointmentEmailData & { origin: "booking_page" | "dashboard"; agendaUrl: string; series?: SeriesEmailDate[] },
+  ): EmailContent => {
+    if (data.series?.length) {
+      const series: SeriesEmailData = { ...data, dates: data.series, professionalCopy: undefined };
+      const count = data.series.length;
+      return platformEmail({
+        subject: `Nueva serie: ${data.clientName} · ${count} citas desde ${seriesStart(series)}`,
+        preheader: `${data.clientName} · ${data.serviceName} · ${count} citas.`,
+        title: "Tienes una nueva serie de citas",
+        greeting: `Hola ${data.professionalName}:`,
+        blocks: [
+          { kind: "text", text: `En ${data.businessName} agendaron una serie de ${count} citas en tu agenda.` },
+          // El profesional siempre ve el precio real, aunque no se muestre a los clientes.
+          appointmentDetails({ ...data, showPrice: true }, "Las citas", { schedule: false, priceLabel: "Precio de cada cita" }),
+          seriesDatesBlock({ ...series, dates: data.series.map((item) => ({ ...item, url: null })) }, "Fechas"),
+          { kind: "button", label: "Ver mi agenda", url: data.agendaUrl },
+        ],
+      });
+    }
+    return platformEmail({
       subject: `Nueva cita: ${data.clientName} · ${capitalize(formatLongDate(data.date))} ${data.startTime}`,
       preheader: `${data.clientName} · ${data.serviceName}.`,
       title: "Tienes una nueva cita",
@@ -555,7 +655,8 @@ export const emailTemplates = {
         appointmentDetails({ ...data, showPrice: true }, "La cita"),
         { kind: "button", label: "Ver mi agenda", url: data.agendaUrl },
       ],
-    }),
+    });
+  },
 
   /** Al profesional, cada mañana: sus citas del día. */
   professionalDailyAgenda: (data: {
@@ -703,6 +804,62 @@ export const emailTemplates = {
         { kind: "button", label: "Reservar una nueva cita", url: data.bookingUrl },
       ],
     }),
+
+  /**
+   * Una serie de citas nueva (spec 011): un solo email con todas las fechas, en vez de uno por cita. Cada
+   * fecha enlaza a su página «Tu cita» (spec 010), que lleva también a su pago. La copia al profesional,
+   * sin esos enlaces.
+   */
+  appointmentSeries: (data: SeriesEmailData): EmailContent => {
+    const count = data.dates.length;
+    const what = `${count} citas de ${data.serviceName} con ${data.professionalName}`;
+    const linked = !data.professionalCopy && data.dates.some((item) => item.url);
+    return clientEmail(data, {
+      subject: `Tus próximas ${count} citas en ${data.businessName}`,
+      preheader: `${count} citas desde ${seriesStart(data)} en ${data.businessName}.`,
+      title: data.pending ? "Tus citas quedaron agendadas" : "Tus citas están confirmadas",
+      greeting: `Hola ${data.clientName}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: data.pending
+            ? `Tus ${what} quedaron agendadas y pendientes de confirmar. Te avisaremos cuando estén confirmadas.`
+            : `Tus ${what} están confirmadas.`,
+        },
+        seriesDatesBlock(data, "Tus citas"),
+        ...(linked
+          ? [{ kind: "note", text: "Cada fecha lleva a su página: ahí ves esa cita y nos confirmas que vas." } satisfies EmailBlock]
+          : []),
+        appointmentDetails(data, "Datos de las citas", { schedule: false, priceLabel: "Precio de cada cita" }),
+        ...seriesPayment(data),
+        ...policy(data),
+      ],
+    });
+  },
+
+  /** «Cancelar ésta y las siguientes» de una serie (spec 011): un solo email con las fechas canceladas. */
+  appointmentSeriesCancelled: (data: SeriesEmailData): EmailContent => {
+    const count = data.dates.length;
+    const one = count === 1;
+    return clientEmail(data, {
+      subject: one ? `Se canceló 1 cita en ${data.businessName}` : `Se cancelaron ${count} citas en ${data.businessName}`,
+      preheader: `${one ? "Tu cita" : "Tus citas"} desde ${seriesStart(data)} en ${data.businessName}.`,
+      title: one ? "Se canceló tu cita" : "Se cancelaron tus citas",
+      greeting: `Hola ${data.clientName}:`,
+      blocks: [
+        {
+          kind: "callout",
+          tone: "warning",
+          text: one
+            ? `Se canceló tu cita de ${data.serviceName} en ${data.businessName}:`
+            : `Se cancelaron tus citas de ${data.serviceName} en ${data.businessName}:`,
+        },
+        seriesDatesBlock({ ...data, dates: data.dates.map((item) => ({ ...item, url: null })) }, one ? "Cita cancelada" : "Citas canceladas"),
+        { kind: "text", text: "Si quieres, puedes reservar una nueva cita:" },
+        { kind: "button", label: "Reservar una nueva cita", url: data.bookingUrl },
+      ],
+    });
+  },
 
   appointmentReminder: (data: AppointmentEmailData, when: "hoy" | "mañana" | null): EmailContent =>
     clientEmail(data, {
