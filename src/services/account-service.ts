@@ -47,7 +47,7 @@ import { authorize, parseInput, requireUser, type RequestContext } from "./conte
 import { assertRoleAllowed, countUsers, getPlanUsage } from "./plan-limits.ts";
 import { appOrigin, queueEmail } from "./notifications.ts";
 import { listProfessionals } from "./professional-service.ts";
-import { logSessionEvent, type ClientConnection } from "./session-security.ts";
+import { logSessionEvent, recordFailedSessionCheck, startSessionCheck, type ClientConnection } from "./session-security.ts";
 
 const ROLE_ORDER: Record<BusinessRole, number> = { owner: 0, admin: 1, professional: 2, staff: 3 };
 
@@ -111,9 +111,14 @@ export const userService = {
       const { currentPassword } = parseInput(currentPasswordSchema, {
         currentPassword: (input as { currentPassword?: unknown } | null)?.currentPassword ?? "",
       });
+      // Cuenta para el bloqueo de la cuenta, como al iniciar sesión (spec 009): con una sesión robada
+      // tampoco se puede adivinar la contraseña, ni gastar CPU con bcrypt sin límite.
+      const attempt = await startSessionCheck(me, connection);
       if (!(await isCurrentPassword(me.id, currentPassword))) {
+        await recordFailedSessionCheck(me, connection, "Contraseña incorrecta al cambiar el email de la cuenta");
         throw new AppError("validation", "La contraseña actual no es correcta. Para cambiar el email hace falta tu contraseña.");
       }
+      await attempt.succeeded();
     }
     // Las fotos que deja de usar (la suya y la de su agenda) se borran del almacenamiento después.
     const replaced: (string | null)[] = [];

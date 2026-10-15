@@ -63,7 +63,7 @@ authRoutes.post("/logout", async (req, res) => {
 authRoutes.post(
   "/change-password",
   loginLimit,
-  handle((req) => authService.changePassword(req.ctx, req.body)),
+  handle((req) => authService.changePassword(req.ctx, req.body, connectionOf(req))),
 );
 
 /* Verificación en dos pasos de la propia cuenta (hoy, sólo el super admin). */

@@ -5,7 +5,7 @@ import * as helmetModule from "helmet";
 import { config } from "./config.ts";
 import { pool } from "./db/pool.ts";
 import { errorHandler, notFoundHandler } from "./http/errors.ts";
-import { sameSecret } from "./http/secrets.ts";
+import { fromFrontendProxy } from "./http/client-ip.ts";
 import { loadSession, requireAjaxHeader } from "./http/session.ts";
 import { noStore } from "./http/no-store.ts";
 import { authRoutes } from "./routes/auth-routes.ts";
@@ -31,16 +31,15 @@ app.disable("x-powered-by");
 
 /**
  * En Lambda la Function URL es pública (sin autenticación de AWS): sólo se atiende lo que llega por
- * el proxy del frontend (middleware.ts), que firma cada petición con PROXY_SECRET. Así nadie se salta
+ * el proxy del frontend (middleware.ts), que firma cada petición con PROXY_SECRET (ver client-ip.ts). Así nadie se salta
  * la web (ni sus cabeceras de seguridad) llamando a la API directamente. Quedan abiertos
  * /api/health (comprobación tras publicar) y la raíz (comprobación de arranque del adaptador).
  */
 const PROXY_FREE_PATHS = new Set(["/", "/api/health"]);
 if (config.onLambda) {
-  const proxySecret = config.proxySecret;
-  if (proxySecret) {
+  if (config.proxySecret) {
     app.use((req, res, next) => {
-      if ((req.method === "GET" && PROXY_FREE_PATHS.has(req.path)) || sameSecret(req.get("x-agendo-proxy-secret"), proxySecret)) {
+      if ((req.method === "GET" && PROXY_FREE_PATHS.has(req.path)) || fromFrontendProxy(req)) {
         return next();
       }
       res.status(403).json({ error: { code: "forbidden", message: "Acceso no permitido: entra desde la web de Agenda360." } });
@@ -114,9 +113,15 @@ api.get("/health", async (_req, res) => {
 api.use("/files", fileRoutes);
 
 api.use(requireAjaxHeader);
+// Antes de la sesión: las respuestas públicas (algunas las guarda la CDN un rato) nunca llevan la
+// cookie de sesión renovada en Set-Cookie, sin depender de cómo trate la CDN esas respuestas (spec 009).
+// Ninguna ruta pública usa la sesión.
+api.use("/public", (req, _res, next) => {
+  req.ctx = { user: null, sessionId: null };
+  next();
+}, publicRoutes);
 api.use(loadSession);
 api.use("/auth", authRoutes);
-api.use("/public", publicRoutes);
 api.use("/users", userRoutes);
 api.use("/images", imageRoutes);
 api.use("/businesses", businessRoutes);

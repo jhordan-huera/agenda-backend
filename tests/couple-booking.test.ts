@@ -240,13 +240,34 @@ let appointmentsBefore = appointmentsCount();
 r = await book(couple.id, await freeSlot(couple.id, ricardoAgenda.id), person("Hector Intento"), [
   { ...person("Gina Escrita"), documentId: gina.documentId },
 ]);
-ok(
-  r.status === 403 && r.body?.error?.message === "No pudimos confirmar los datos de Gina Escrita. Revisa su email y su teléfono o escríbenos por WhatsApp.",
-  "con la cédula de otra paciente y otro contacto: se rechaza nombrándola como la escribió",
-  r.body,
-);
+// Con la cédula de otra paciente y otro contacto, la reserva sale igual y esa persona queda «Por
+// verificar» (spec 009): antes un 403 decía que la cédula era de una paciente.
+ok(r.status === 200, "con la cédula de otra paciente y otro contacto: la reserva sale igual que con una cédula nueva", r.body);
 ok(!JSON.stringify(r.body).includes(gina.email) && !JSON.stringify(r.body).includes("Victima"), "sin ningún dato de su ficha", r.body);
-ok(clientsCount() === before && appointmentsCount() === appointmentsBefore, "y no queda nada creado (ni Héctor, que era nuevo)");
+ok(
+  clientsCount() === before + 2 && appointmentsCount() === appointmentsBefore + 1,
+  "se crean Héctor y la otra persona aparte, con la cita",
+  { nuevos: clientsCount() - before },
+);
+ok(
+  sql(`select c.name from appointment_clients ac join clients c on c.id = ac.client_id where ac.appointment_id = '${r.body.appointmentId}' and c.claimed_client_id = '${gina.id}' and c.document_id = ''`) ===
+    "Gina Escrita",
+  "la otra persona queda «Por verificar», aparte de la ficha de Gina",
+);
+ok(!emailsOf(r.body.appointmentId).some((m) => m.endsWith(`|${gina.email}`)), "y a la ficha de Gina no le llega nada", emailsOf(r.body.appointmentId));
+// Unir a la ficha a la otra persona de la sesión (spec 009): la ficha de Gina ocupa su lugar en la cita.
+const ginaAppointment = r.body.appointmentId;
+const provisionalGina = sql(`select c.id from appointment_clients ac join clients c on c.id = ac.client_id where ac.appointment_id = '${ginaAppointment}' and c.claimed_client_id = '${gina.id}'`);
+const merged = await ricardo("POST", `${B}/clients/${provisionalGina}/confirm-claim`, { updatePhone: true });
+ok(merged.status === 200 && merged.body.id === gina.id, "el negocio une a la otra persona a la ficha de Gina", merged.body);
+ok(
+  sql(`select string_agg(client_id::text, ',') from appointment_clients where appointment_id = '${ginaAppointment}'`) === gina.id &&
+    count(`select count(*) from clients where id = '${provisionalGina}'`) === 0,
+  "Gina ocupa su lugar en la sesión y el paciente aparte desaparece",
+);
+// Fuera de los topes del día (pacientes nuevos y reservas online): las pruebas de abajo cuentan con ellos.
+sql(`update clients set created_at = now() - interval '2 days' where business_id = '${businessId}' and created_at = (select created_at from appointments where id = '${ginaAppointment}')`);
+sql(`update appointments set created_at = now() - interval '2 days' where id = '${ginaAppointment}'`);
 const repeatedDoc = person("Ivan Repetido");
 r = await book(couple.id, await freeSlot(couple.id, ricardoAgenda.id), repeatedDoc, [{ ...person("Juana Repetida"), documentId: repeatedDoc.documentId }]);
 ok(r.status === 400 && /propia cédula/.test(r.body?.error?.message ?? JSON.stringify(r.body)), "la misma cédula dos veces no", r.body);

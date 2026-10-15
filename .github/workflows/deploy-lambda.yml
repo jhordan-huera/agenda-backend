@@ -1,11 +1,13 @@
 # Publica el backend en AWS Lambda al hacer push a main (Vercel sigue publicando también, hasta que se
 # quite allí). Sin claves de AWS guardadas: GitHub asume un rol de IAM con OIDC (ver README,
 # "Backend en AWS Lambda"). En Settings → Secrets and variables → Actions:
-#   Variables: AWS_LAMBDA_FUNCTION (nombre de la función, p. ej. agenda-backend) y
-#              AWS_DEPLOY_ROLE_ARN (ARN del rol que asume GitHub)
-#   Secreto:   AWS_LAMBDA_URL (Function URL, para comprobar /api/health). Es secreto porque el
-#              repositorio es público y los registros de Actions muestran el valor de las variables.
-# Mientras no exista AWS_LAMBDA_FUNCTION, no hace nada.
+#   Variable:  AWS_LAMBDA_FUNCTION (nombre de la función, p. ej. agenda-backend)
+#   Secretos:  AWS_DEPLOY_ROLE_ARN (ARN del rol que asume GitHub; como variable también vale, pero el
+#              registro mostraría el número de la cuenta de AWS) y AWS_LAMBDA_URL (Function URL, para
+#              comprobar /api/health). Son secretos porque el repositorio es público y los registros
+#              de Actions muestran el valor de las variables.
+# Mientras no exista AWS_LAMBDA_FUNCTION, no hace nada. Sólo publica desde main, también si se lanza a
+# mano (spec 009): el rol de IAM, además, sólo debería aceptar la rama main.
 name: Publicar en AWS Lambda
 
 on:
@@ -23,7 +25,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: vars.AWS_LAMBDA_FUNCTION != ''
+    if: github.ref == 'refs/heads/main' && vars.AWS_LAMBDA_FUNCTION != ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -40,7 +42,7 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN || vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-west-2
 
       - name: Subir el código a Lambda

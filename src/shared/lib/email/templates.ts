@@ -57,6 +57,11 @@ export interface AppointmentEmailData {
    * de cada una de las demás personas (no reservaron ellas).
    */
   bookedBy?: string;
+  /**
+   * Reserva «Por verificar» (spec 009): alguna persona escribió la cédula de un paciente del negocio
+   * con otro email y otro teléfono. Sólo lo dice el email al negocio, para que la revise.
+   */
+  toVerify?: boolean;
 }
 
 /* ------------------------------------------------------------------ Piezas -- */
@@ -320,6 +325,42 @@ export const emailTemplates = {
       ],
     }),
 
+  /**
+   * Cambio de seguridad en una cuenta de super admin (spec 009): a la cuenta y al super admin
+   * principal, para que nadie se quede con una cuenta sin que se note.
+   */
+  accountSecurityChanged: (data: {
+    accountName: string;
+    accountEmail: string;
+    /** «Activó la verificación en dos pasos», «Cambió su contraseña»… */
+    change: string;
+    /** Fecha y hora ya escritas, en la hora de Ecuador. */
+    at: string;
+    ip: string;
+    browser: string;
+    reviewUrl: string;
+  }): EmailContent =>
+    platformEmail({
+      subject: `${APP_NAME}: cambio de seguridad en la cuenta de ${data.accountName}`,
+      preheader: `${data.change}.`,
+      title: "Cambio de seguridad en una cuenta de super admin",
+      blocks: [
+        { kind: "text", text: `En la cuenta de ${data.accountName}: ${data.change.charAt(0).toLowerCase()}${data.change.slice(1)}.` },
+        {
+          kind: "details",
+          rows: [
+            { label: "Cuenta", value: data.accountEmail },
+            { label: "Cambio", value: data.change },
+            { label: "Cuándo", value: data.at },
+            { label: "IP", value: data.ip, mono: true },
+            { label: "Navegador", value: data.browser },
+          ],
+        },
+        { kind: "callout", tone: "warning", text: "Si no fuiste tú, cambia la contraseña y avisa al super admin principal." },
+        { kind: "button", label: "Revisar la actividad", url: data.reviewUrl },
+      ],
+    }),
+
   planChangeRequested: (data: {
     businessName: string;
     requestedByName: string;
@@ -417,6 +458,17 @@ export const emailTemplates = {
         { kind: "text", text: `${data.clientName} reservó una cita desde tu página de reservas.` },
         // El negocio siempre ve el precio real, aunque no se muestre a los clientes.
         appointmentDetails({ ...data, showPrice: true }, "La reserva"),
+        ...(data.toVerify
+          ? [
+              {
+                kind: "callout",
+                tone: "warning",
+                text:
+                  "Por verificar: la cédula es de un paciente de tu negocio, pero el email y el teléfono no coinciden con su ficha. " +
+                  "La reserva quedó aparte: revísala en la agenda y únela a su ficha si es la misma persona.",
+              } satisfies EmailBlock,
+            ]
+          : []),
         { kind: "text", text: "Entra a tu agenda para confirmarla." },
       ],
     }),

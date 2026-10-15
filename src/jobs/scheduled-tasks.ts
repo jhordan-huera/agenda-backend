@@ -1,5 +1,6 @@
 import { many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { deleteExpiredRateLimits } from "../http/rate-limit-store.ts";
+import { accountChangeNotice, findAccountChanges } from "../services/account-alerts.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
 import {
   findOnlineBookings,
@@ -103,6 +104,10 @@ export interface ScheduledTasksReport {
   statusChanges?: number;
   /** El aviso de cada uno (hasta MAX_STATUS_NOTICES): de qué estado a cuál, quién y sus emails. */
   statusNotices?: BookingNotice[];
+  /** Cambios de seguridad en cuentas de super admin desde la ejecución anterior (spec 009). */
+  accountChanges?: number;
+  /** El aviso de cada uno (hasta MAX_ACCOUNT_NOTICES), con la cuenta enmascarada. */
+  accountNotices?: ReturnType<typeof accountChangeNotice>[];
   /** Fecha de la ejecución anterior (null si es la primera). */
   since: string | null;
   /** Emails que siguen en cola al terminar (reintentos o lote máximo alcanzado). */
@@ -248,6 +253,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const panel = await findPanelClients(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const panelAppointments = await findPanelAppointments(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const statusChanges = await findStatusChanges(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
+  const accountChanges = await findAccountChanges(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
     reminderFailures: reminders.failures,
@@ -266,6 +272,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     appointmentNotices: panelAppointments.appointments.map(panelAppointmentNotice),
     statusChanges: statusChanges.total,
     statusNotices: statusChanges.changes.map(statusChangeNotice),
+    accountChanges: accountChanges.total,
+    accountNotices: accountChanges.changes.map(accountChangeNotice),
     since: previous?.ranAt ?? null,
     pending: totals?.pending ?? 0,
     security,

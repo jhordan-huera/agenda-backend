@@ -25,6 +25,9 @@ export const userRoutes = Router();
 
 userRoutes.get(
   "/:userId",
+  // El perfil de otro usuario: al super admin le pide antes la verificación en dos pasos, como el
+  // resto del panel (spec 009). El propio, no: lo necesita para activarla.
+  (req, res, next) => (req.params.userId === req.ctx.user?.id ? next() : requireSuperAdminTwoFactor(req, res, next)),
   handle((req) => userService.getById(req.ctx, req.params.userId)),
 );
 // Cambiar el email pide la contraseña actual y queda en los eventos de sesión (con IP y navegador).
@@ -170,6 +173,11 @@ businessRoutes.put(
 businessRoutes.delete(
   "/:businessId/clients/:clientId",
   handle((req) => clientService.remove(req.ctx, req.params.businessId, req.params.clientId)),
+);
+// «Es el mismo paciente»: une un paciente «Por verificar» a la ficha cuya cédula escribió (spec 009).
+businessRoutes.post(
+  "/:businessId/clients/:clientId/confirm-claim",
+  handle((req) => clientService.confirmClaim(req.ctx, req.params.businessId, req.params.clientId, req.body)),
 );
 
 // Historia clínica (propietario, miembros autorizados y super admin en modo soporte)

@@ -338,6 +338,12 @@ export interface Client {
    * ficha y su historia no se abren hasta que recepción, un administrador o el propietario la gestione.
    */
   restricted?: true;
+  /**
+   * «Por verificar»: paciente creado por una reserva online con la cédula de otra ficha (su id) pero
+   * con un email y un teléfono que no coinciden con ella. Va aparte, sin cédula y sin acceso a esa
+   * ficha, hasta que el negocio lo une a ella o cancela la cita. null: paciente normal.
+   */
+  claimedClientId: string | null;
 }
 
 /** Modalidades de un servicio: en el local, en casa del cliente o por videollamada. */
@@ -487,7 +493,9 @@ export type EmailType =
   /** La cita quedó como atendida: gracias por la visita (spec 008). */
   | "appointment_completed"
   /** El paciente no asistió: invitación a elegir otra hora (spec 008). */
-  | "appointment_no_show";
+  | "appointment_no_show"
+  /** Cambio de seguridad en una cuenta de super admin: verificación en dos pasos o contraseña (spec 009). */
+  | "account_security_changed";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo

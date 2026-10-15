@@ -45,9 +45,10 @@ export interface OnlineBooking {
   status: Appointment["status"];
   /**
    * Las personas de la reserva: quien reservó primero y, en una sesión en pareja o en familia, las
-   * demás. `newClient`: se creó con esta reserva (no estaba en el negocio).
+   * demás. `newClient`: se creó con esta reserva (no estaba en el negocio). `toVerify`: «Por
+   * verificar» (spec 009), escribió la cédula de otra ficha con otros datos.
    */
-  clients: { name: string; email: string; phone: string; newClient: boolean }[];
+  clients: { name: string; email: string; phone: string; newClient: boolean; toVerify?: boolean }[];
   /** Los emails de la reserva y cómo están: `reason`, por qué no salió (un tope diario, un fallo). */
   emails: { type: EmailType; to: string; status: "queued" | "sent" | "failed"; reason: string | null }[];
 }
@@ -71,7 +72,8 @@ function describeEmailStatus(email: OnlineBooking["emails"][number]): string {
 export function onlineBookingNotice(booking: OnlineBooking): BookingNotice {
   const patients = booking.clients.map((client) => {
     const patient = [shortName(client.name), client.email && maskEmail(client.email), maskPhone(client.phone)].filter(Boolean).join(" · ");
-    return `${client.newClient ? "Paciente nuevo" : "Ya era paciente"}: ${patient}`;
+    const verify = client.toVerify ? " · Por verificar (la cédula es de un paciente con otros datos)" : "";
+    return `${client.newClient ? "Paciente nuevo" : "Ya era paciente"}: ${patient}${verify}`;
   });
   const emails = booking.emails
     .filter((email) => EMAIL_ROLES[email.type])
@@ -121,6 +123,7 @@ export async function findOnlineBookings(
     homeVisit: boolean;
     status: Appointment["status"];
     newClient: boolean;
+    toVerify: boolean;
     clientName: string;
     clientEmail: string;
     clientPhone: string;
@@ -132,9 +135,11 @@ export async function findOnlineBookings(
             to_char(a.date, 'YYYY-MM-DD') as date, to_char(a.start_time, 'HH24:MI') as "startTime",
             a.is_virtual as "isVirtual", a.home_visit is not null as "homeVisit", a.status,
             (c.source = 'booking_page' and c.created_at = a.created_at) as "newClient",
+            c.claimed_client_id is not null as "toVerify",
             c.name as "clientName", c.email as "clientEmail", c.phone as "clientPhone",
             coalesce((select json_agg(json_build_object('name', ec.name, 'email', ec.email, 'phone', ec.phone,
-                                                        'newClient', ec.source = 'booking_page' and ec.created_at = a.created_at)
+                                                        'newClient', ec.source = 'booking_page' and ec.created_at = a.created_at,
+                                                        'toVerify', ec.claimed_client_id is not null)
                                       order by ac.created_at, ac.client_id)
                         from appointment_clients ac join clients ec on ec.id = ac.client_id
                        where ac.appointment_id = a.id), '[]') as "extraClients"
@@ -170,7 +175,7 @@ export async function findOnlineBookings(
       place: row.isVirtual ? "virtual" : row.homeVisit ? "home" : "business",
       status: row.status,
       clients: [
-        { name: row.clientName, email: row.clientEmail, phone: row.clientPhone, newClient: row.newClient },
+        { name: row.clientName, email: row.clientEmail, phone: row.clientPhone, newClient: row.newClient, toVerify: row.toVerify },
         ...row.extraClients,
       ],
       emails: emails.filter((email) => email.appointmentId === row.id).map(({ appointmentId: _id, ...email }) => email),

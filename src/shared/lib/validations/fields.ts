@@ -23,6 +23,18 @@ export const requiredText = (label: string, min = 2, max = 120) =>
         .max(max, `${label} es demasiado largo`),
     );
 
+/**
+ * Nombre de una persona escrito por el público (reserva online y registro). Sale en los emails que
+ * la plataforma envía a otras direcciones («Hola Ana:», «Ana reservó para ti…»), así que sólo admite
+ * un nombre: sin saltos de línea, emails ni enlaces que conviertan ese email en un mensaje ajeno.
+ */
+const NOT_A_NAME = [/[\r\n]/, /@/, /:\/\//, /\bwww\./i, /\b[\p{L}\d-]+\.(com|net|org|ec|io|app|co|me|info|online|site|xyz|ly|link|biz|store|shop)\b/iu];
+export const personNameField = (label: string) =>
+  requiredText(label).refine(
+    (value) => !NOT_A_NAME.some((pattern) => pattern.test(value)),
+    `${label}: escribe sólo el nombre, sin enlaces ni emails`,
+  );
+
 export const optionalText = (max: number) =>
   z.string().transform(stripControlChars).pipe(z.string().trim().max(max, `Máximo ${max} caracteres`));
 

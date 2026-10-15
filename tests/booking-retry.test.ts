@@ -108,8 +108,9 @@ const later = await book(day.service.id, day.date, day.slots[0], ana);
 ok(later.status === 409, "media hora después ya no se reconoce como reintento (la confirmación trae el enlace de pago)", later.body);
 
 console.log("Un cliente antiguo sin cédula con el mismo email");
+// Desde la spec 009 la cédula sólo se le pone si coinciden el nombre, el email y el teléfono.
 const legacy = sql(
-  `insert into clients (business_id, name, email) values ('${businessId}', 'María José Pérez', 'familia.perez@correo.ec') returning id`,
+  `insert into clients (business_id, name, email, phone) values ('${businessId}', 'María José Pérez', 'familia.perez@correo.ec', '0994447777') returning id`,
 ).split("\n")[0];
 const son = await book(day.service.id, day.date, day.slots[1], {
   documentId: cedulaFor("mateo-perez"),
