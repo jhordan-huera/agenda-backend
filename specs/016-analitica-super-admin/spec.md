@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-15
 
-**Estado**: Aprobada (2026-10-15; plan aprobado)
+**Estado**: Implementada (2026-10-15)
 
 **Repos**:
 - **agenda-backend:** los cálculos, su preparación diaria y la ruta.

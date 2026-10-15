@@ -1,6 +1,7 @@
 import { many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { deleteExpiredRateLimits } from "../http/rate-limit-store.ts";
 import { accountChangeNotice, findAccountChanges } from "../services/account-alerts.ts";
+import { refreshAnalytics, type AnalyticsRefresh } from "../services/analytics-service.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
 import {
   clientImportNotice,
@@ -142,6 +143,11 @@ export interface ScheduledTasksReport {
    * sin la migración 041).
    */
   panelNotices?: { created: number; purged: number | null };
+  /**
+   * Analítica del super admin (spec 016): si esta pasada preparó la foto de hoy (después de las 06:00 de
+   * Ecuador, una vez al día), si ya estaba, si era temprano o si falló (el cron siguió con lo demás).
+   */
+  analytics?: AnalyticsRefresh;
   /** Registros de auditoría borrados por antigüedad (purge_audit_logs: sesiones 90 días, acciones 5 meses, historia clínica 5 años). */
   auditPurged: number;
   /** Emails con más de EMAIL_CONTENT_DAYS días a los que se les borró el contenido. */
@@ -298,6 +304,11 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     console.error(`[avisos] No se pudieron borrar los avisos del panel de más de 30 días (${(error as { code?: string })?.code ?? "error"}).`);
     return null;
   });
+  // La foto de la analítica (spec 016), una vez al día: si falla, el cron sigue y lo intenta en la próxima pasada.
+  const analytics = await refreshAnalytics().catch((error: unknown): AnalyticsRefresh => {
+    console.error(`[analítica] No se pudo preparar la foto de hoy (${(error as { code?: string })?.code ?? "error"}).`);
+    return { status: "failed", businesses: null, purged: 0 };
+  });
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
     reminderFailures: reminders.failures,
@@ -329,6 +340,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     security,
     push,
     panelNotices: { created: push.panel ?? 0, purged: panelPurged },
+    analytics,
     auditPurged: purged?.deleted ?? 0,
     emailContentPurged,
     receiptsPurged,

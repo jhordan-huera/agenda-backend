@@ -57,6 +57,7 @@ import type {
 import { createUserAccount, hashPassword, isEmailRegistered } from "./accounts.ts";
 import { emailQuotaStatus } from "./email-limits.ts";
 import { ADMIN_AUDIT_QUERY, parseAuditFilters, queryAuditLogs } from "./activity-service.ts";
+import { businessAnalytics } from "./analytics-service.ts";
 import { findTeamMember, listTeamMembers } from "./account-service.ts";
 import { logAudit } from "./audit.ts";
 import { insertBusiness, isSlugTaken } from "./business-factory.ts";
@@ -444,8 +445,8 @@ export const adminService = {
   async getBusiness(ctx: RequestContext, businessId: string): Promise<AdminBusinessDetail | null> {
     authorizeSuperAdmin(ctx);
     if (!isUuid(businessId)) return null;
-    // El resumen, el equipo y la actividad a la vez (no dependen entre sí).
-    const [[summary], members, recentActivity] = await Promise.all([
+    // El resumen, el equipo, la actividad y su parte de la analítica a la vez (no dependen entre sí).
+    const [[summary], members, recentActivity, analytics] = await Promise.all([
       summarizeBusinesses(pool, businessId),
       listTeamMembers(pool, businessId),
       many<AuditLog>(
@@ -456,9 +457,11 @@ export const adminService = {
           limit 15`,
         [businessId],
       ),
+      // «Frente a su tipo» (spec 016): de la última foto de 30 días, sin calcular nada.
+      businessAnalytics(businessId),
     ]);
     if (!summary) return null;
-    return { ...summary, members, recentActivity };
+    return { ...summary, members, recentActivity, analytics };
   },
 
   /**
