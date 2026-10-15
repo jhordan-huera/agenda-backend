@@ -59,7 +59,8 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   admin (2026-10-14).
 - Las fechas de consentimiento y de las evoluciones clínicas las pone el sistema.
 - Cada email al paciente sobre su cita, también los recordatorios, sale con copia al profesional
-  (los recordatorios, desde el 2026-10-13).
+  (los recordatorios, desde el 2026-10-13). La copia puede esperar en la cola si un día no hay cupo de
+  Gmail, pero nunca se descarta (2026-10-15).
 - Una cita puede tener hasta 3 pacientes (sesiones de pareja), sólo en los negocios que el super
   admin habilite con su interruptor; el negocio no lo cambia. Cada paciente recibe sus avisos, la
   copia al profesional sale una vez y la hora se ocupa una sola vez (2026-10-13).
@@ -175,6 +176,8 @@ Tipos, validaciones, constantes y plantillas de email se editan sólo en agenda-
 - Backend: Express 5 + PostgreSQL (Supabase, pooler). Node ejecuta `.ts` directamente.
 - Front: React + Vite + TanStack Query + Tailwind v4 + shadcn/Radix; PWA con service worker.
 - Despliegue: los dos repos en Vercel; sólo se publica la rama `main`.
+- Emails: el envío respeta el cupo diario de la cuenta de Gmail con tres niveles de prioridad
+  (equipo, paciente, negocio); lo que no cabe espera en la cola, nunca se descarta (2026-10-15).
 - Migraciones: archivos numerados en `agenda-backend/src/db/migrations`. El dueño del producto las
   aplica en Supabase (`npm run db:migrate`) **antes** de publicar el código que las usa; el plan
   siempre lo dice como paso aparte.
@@ -234,4 +237,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.11.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-15
+**Versión**: 1.12.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-15
