@@ -197,7 +197,8 @@ del código que la usa.
    Ponerla como `TWO_FACTOR_KEY` en tres sitios:
    - el backend en Vercel (Production);
    - Lambda, si se usa;
-   - el `.env` local, para `dev:prod`.
+   - el `.env` local, para `dev:prod`, pero sólo después de publicar el backend. Antes, `dev:prod`
+     cifraría el secreto al entrar como super admin y la versión publicada no podría leerlo.
 
    Guardarla también en un lugar seguro: si se pierde, los super admin tendrán que entrar con sus
    códigos de recuperación.

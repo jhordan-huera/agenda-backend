@@ -176,8 +176,13 @@ código que la usa.
    openssl rand -base64 48
    ```
 
-   Ponerla como `TWO_FACTOR_KEY` en el backend en Vercel (Production), en Lambda si se usa y en el
-   `.env` local. Guardarla también en un lugar seguro.
+   Ponerla como `TWO_FACTOR_KEY` en el backend en Vercel (Production) y en Lambda si se usa.
+   Guardarla también en un lugar seguro.
+   - **En el `.env` local, sólo después de publicar el backend.** Con la clave, `npm run dev:prod`
+     cifra el secreto de la verificación al entrar como super admin, y la versión publicada antes
+     no sabe leerlo: el super admin no podría entrar con la app.
+   - **Mientras tanto:** no entres como super admin con `dev:prod` ni actives la verificación desde
+     ahí. Sin la clave en el `.env`, `dev:prod` no lo permite.
 4. **Pasar `BACKUP_EMAIL` a secreto en GitHub.** El primer comando pide el valor:
 
    ```
