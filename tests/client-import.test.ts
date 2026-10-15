@@ -1,10 +1,12 @@
 // Importar pacientes desde un Excel o un CSV (spec 012): POST /businesses/:id/clients/import. Permisos,
 // el caso de la spec (200 filas con errores, repetidas y que ya existen), repetirla sin duplicar, dos a
 // la vez, la limpieza, los datos obligatorios del negocio, el tope del plan, los topes de la petición,
-// los avisos por ntfy y el Inicio del super admin. Todo con datos inventados.
+// «Importar también los que tienen datos por completar» (ampliación del 2026-10-15), los avisos por
+// ntfy y el Inicio del super admin. Todo con datos inventados.
 import { agent, checks, count, fakeNtfy, login, runCron, sql } from "./helpers/harness.ts";
 import { clientImportNotice, findClientImports, findPanelClients } from "../src/services/booking-alerts.ts";
 import { pool } from "../src/db/pool.ts";
+import { missingRequiredFields } from "../src/shared/lib/validations/client.ts";
 import {
   classifyImportRows,
   guessColumns,
@@ -53,6 +55,9 @@ const C = `/businesses/${ricardo.session.businessId}`;
 const businessIdOf = (slug: string) => sql(`select id from businesses where slug = '${slug}'`);
 const importTo = (browser: typeof jhordan, base: string, rows: ClientImportRow[]) =>
   browser("POST", `${base}/clients/import`, { rows }) as Promise<{ status: number; body: ClientImportResult & { error?: { code: string; message: string } } }>;
+/** Con la casilla «Importar también los que tienen datos por completar» (o con otro valor, para probar la validación). */
+const importWith = (browser: typeof jhordan, base: string, rows: ClientImportRow[], includeIncomplete: unknown) =>
+  browser("POST", `${base}/clients/import`, { rows, includeIncomplete }) as ReturnType<typeof importTo>;
 
 console.log("Código compartido");
 ok(
@@ -69,7 +74,7 @@ ok(
   "también en mayúsculas y sin tildes; «Nombre» con «Apellidos» son los nombres; dos teléfonos: se queda el primero",
   guessColumns(["Nombre", "Apellidos", "Teléfono", "Celular"]),
 );
-const empty: ClientImportResult = { created: 0, existing: [], repeated: [], errors: [], overLimit: [] };
+const empty: ClientImportResult = { created: 0, existing: [], repeated: [], errors: [], overLimit: [], incomplete: [] };
 ok(
   importSummary({ ...empty, created: 1 }) === "Importó 1 paciente" &&
     importSummary({ ...empty, created: 3, errors: [{ row: 2, reason: "x" }], overLimit: [4, 5] }) ===
@@ -77,6 +82,20 @@ ok(
     importSummary({ ...empty, created: 2, existing: [{ row: 2, clientId: "a" }], repeated: [{ row: 3, firstRow: 2 }] }) ===
       "Importó 2 pacientes (1 ya existía, 1 repetida en el archivo)",
   "el resumen: en singular cuando es una y sólo las partes que pasan de cero",
+);
+ok(
+  importSummary({
+    created: 3,
+    existing: [{ row: 2, clientId: "a" }],
+    errors: [{ row: 3, reason: "x" }],
+    repeated: [{ row: 4, firstRow: 2 }],
+    incomplete: [
+      { row: 5, missing: ["email"] },
+      { row: 6, missing: ["documentId", "email"] },
+    ],
+    overLimit: [7],
+  }) === "Importó 3 pacientes (1 ya existía, 1 con error, 1 repetida en el archivo, 2 por completar, 1 por el tope del plan)",
+  "con «por completar», en su lugar: ya existían, con errores, repetidas, por completar y tope del plan",
 );
 
 console.log("Permisos");
@@ -383,6 +402,207 @@ for (let i = 0; i < 21; i++) last = (await importTo(hammer, J, [])).status;
 ok(last === 429, "la petición 21 en 15 minutos desde la misma conexión: 429", last);
 const limited = await importTo(hammer, J, []);
 ok(limited.body.error?.message === "Demasiadas importaciones seguidas. Espera unos minutos.", "con su mensaje", limited.body);
+
+console.log("Importar también los que tienen datos por completar (ampliación del 2026-10-15)");
+const defaults = { documentId: true, email: true, phone: false, address: false };
+ok(
+  JSON.stringify(missingRequiredFields({ documentId: "", email: "a@correo.ec", phone: "  ", address: "" }, { ...defaults, phone: true })) ===
+    JSON.stringify(["documentId", "phone"]) &&
+    missingRequiredFields({ documentId: "", email: "", phone: "", address: "" }, { documentId: false, email: false, phone: false, address: false }).length === 0 &&
+    missingRequiredFields({ documentId: cedula("143", 1), email: "a@correo.ec", phone: "", address: "" }, defaults).length === 0,
+  "missingRequiredFields: los obligatorios del negocio que faltan, en el orden del formulario (en blanco cuenta como que falta)",
+);
+// El archivo de la prueba del 2026-10-15: diez pacientes con y sin cédula, email y teléfono, y una fila vacía.
+const hugo = cedula("143", 8);
+const tenPatients = [
+  row(2, { name: "Ana Torres", documentId: cedula("143", 1), email: "ana@correo.ec", phone: "0991111111" }),
+  row(3, { name: "Bruno Díaz", documentId: cedula("143", 2), email: "bruno@correo.ec" }),
+  row(4, { name: "Carla Mena", documentId: cedula("143", 3), phone: "0993333333" }),
+  row(5, { name: "Diego Paz", email: "diego@correo.ec", phone: "0994444444" }),
+  row(6, { name: "Elena Ruiz", phone: "0995555555" }),
+  row(7, { name: "Fabián León" }),
+  row(8, { name: "Gina Sol", documentId: wrongCheckDigit(cedula("143", 7)), email: "gina@correo.ec", phone: "0997777777" }),
+  row(9, { name: "Hugo Ríos", documentId: `${hugo.slice(0, 4)}-${hugo.slice(4)}`, email: "hugo@correo.ec", phone: "0998888888" }),
+  row(10, {}),
+  row(11, { name: "Iván Cruz", documentId: cedula("143", 9), email: "ivan@correo.ec", address: "Av. Amazonas N34-120" }),
+  row(12, { name: "Julia Vela", email: "julia@correo.ec" }),
+];
+const reviewOf = (rows: ClientImportRow[], allowIncomplete?: boolean, remaining: number | null = null) =>
+  classifyImportRows(rows, { required: defaults, timezone: ec, existing: [], remaining, ...(allowIncomplete === undefined ? {} : { allowIncomplete }) });
+/** Lo que devuelve la API: la clasificación sin las filas que se crean. */
+const asApi = ({ newClients: _newClients, ...result }: ReturnType<typeof reviewOf>) => result;
+const expectedIncomplete = [
+  { row: 4, missing: ["email"] },
+  { row: 5, missing: ["documentId"] },
+  { row: 6, missing: ["documentId", "email"] },
+  { row: 7, missing: ["documentId", "email"] },
+  { row: 12, missing: ["documentId"] },
+];
+const badDigit = [{ row: 8, reason: "La cédula no es válida. Revisa el número." }];
+const on = reviewOf(tenPatients, true);
+ok(
+  on.created === 9 && JSON.stringify(on.newClients.map((c) => c.row)) === JSON.stringify([2, 3, 4, 5, 6, 7, 9, 11, 12]),
+  "con la casilla entran 9 de los 10: también los que no traen la cédula o el email y el que sólo trae el nombre",
+  on.newClients.map((c) => c.row),
+);
+ok(JSON.stringify(on.incomplete) === JSON.stringify(expectedIncomplete), "5 por completar, cada uno con lo que le falta", on.incomplete);
+ok(
+  JSON.stringify(on.errors) === JSON.stringify(badDigit) && on.existing.length === 0 && on.repeated.length === 0 && on.overLimit.length === 0,
+  "la de la cédula mal escrita sigue con error, con el motivo de siempre",
+  on.errors,
+);
+ok(
+  on.newClients.find((c) => c.row === 9)?.documentId === hugo && on.newClients.find((c) => c.row === 7)?.documentId === "",
+  "lo que viene se limpia igual (la cédula con guión) y lo que falta queda en blanco",
+);
+const off = reviewOf(tenPatients, false);
+const today = [
+  { row: 4, reason: "El email es obligatorio" },
+  { row: 5, reason: "La cédula es obligatoria" },
+  { row: 6, reason: "La cédula es obligatoria" },
+  { row: 7, reason: "La cédula es obligatoria" },
+  ...badDigit,
+  { row: 12, reason: "La cédula es obligatoria" },
+];
+ok(
+  off.created === 4 && off.incomplete.length === 0 && JSON.stringify(off.errors) === JSON.stringify(today),
+  "sin la casilla, como hoy: entran 4 y las demás son errores con el motivo de hoy («La cédula es obligatoria»)",
+  off.errors,
+);
+ok(JSON.stringify(off) === JSON.stringify(reviewOf(tenPatients)), "allowIncomplete: false es lo mismo que no pasarlo");
+const badlyWritten = reviewOf(
+  [
+    row(2, { name: "Email Malo", email: "no-es-un-email" }),
+    row(3, { name: "Teléfono Malo", phone: "099 ABC 4567" }),
+    row(4, { name: "Cédula Letras", documentId: "17ABC23456" }),
+    row(5, { name: "Dígito Mal", documentId: wrongCheckDigit(cedula("143", 20)) }),
+    row(6, { email: "sin.nombre@correo.ec", phone: "0991234567" }),
+    row(7, { name: "Fabián León" }),
+    row(8, { name: "fabián  león" }),
+  ],
+  true,
+);
+ok(
+  JSON.stringify(badlyWritten.errors.map((e) => e.reason)) ===
+    JSON.stringify([
+      "Ingresa un email válido",
+      "Ingresa un teléfono válido",
+      "Cédula: escribe sólo números, sin letras ni guiones",
+      "La cédula no es válida. Revisa el número.",
+      "El nombre es obligatorio",
+    ]),
+  "con la casilla, lo mal escrito sigue con error y sin el nombre no entra",
+  badlyWritten.errors,
+);
+ok(
+  badlyWritten.created === 1 && JSON.stringify(badlyWritten.repeated) === JSON.stringify([{ row: 8, firstRow: 7 }]),
+  "dos con el mismo nombre y ningún otro dato son la misma persona: la segunda, «repetida»",
+  badlyWritten,
+);
+
+const notificationsBeforeIncomplete = count("select count(*) from notifications");
+const ricardoAgain = await as("ricardo@demo.com");
+r = await importTo(ricardoAgain, C, tenPatients);
+ok(
+  r.status === 200 && JSON.stringify(r.body) === JSON.stringify(asApi(off)),
+  "una petición sin includeIncomplete (como las de antes): lo mismo que hoy, 4 creados y 6 con error",
+  r.body,
+);
+r = await importWith(ricardoAgain, C, tenPatients, "sí");
+ok(
+  r.status === 400 && r.body.error?.code === "validation" && r.body.error.message === "Indica si se importan también los que tienen datos por completar.",
+  "includeIncomplete que no es verdadero o falso: 400",
+  r.body,
+);
+r = await importWith(ricardoAgain, C, tenPatients, false);
+ok(
+  r.status === 200 && r.body.created === 0 && r.body.existing.length === 4 && JSON.stringify(r.body.errors) === JSON.stringify(today),
+  "includeIncomplete: false, igual: los 4 ya existían y las demás siguen con error",
+  r.body,
+);
+r = await importWith(ricardoAgain, C, tenPatients, true);
+ok(
+  r.status === 200 && r.body.created === 5 && r.body.existing.length === 4 && JSON.stringify(r.body.incomplete) === JSON.stringify(expectedIncomplete),
+  "después, con la casilla: entran los 5 que faltaban, por completar",
+  r.body,
+);
+ok(
+  count(`select count(*) from audit_logs where business_id = '${ricardo.session.businessId}' and action = 'client.imported' and summary = 'Importó 5 pacientes (4 ya existían, 1 con error, 5 por completar)'`) === 1,
+  "la actividad: «Importó 5 pacientes (4 ya existían, 1 con error, 5 por completar)»",
+  sql(`select summary from audit_logs where business_id = '${ricardo.session.businessId}' and action = 'client.imported' order by created_at desc limit 1`),
+);
+
+const fisio = businessIdOf("fisioactiva");
+const tomas = await as("tomas@demo.com");
+const fisioClients = () => count(`select count(*) from clients where business_id = '${fisio}'`);
+const fisioBefore = fisioClients();
+const fisioAudit = () => count(`select count(*) from audit_logs where business_id = '${fisio}' and action = 'client.imported'`);
+r = await importWith(tomas, `/businesses/${fisio}`, tenPatients, true);
+ok(
+  r.status === 200 && r.body.created === 9 && JSON.stringify(r.body) === JSON.stringify(asApi(on)),
+  "la API, con la casilla: 9 creados (5 por completar) y 1 con error, lo mismo que la revisión",
+  r.body,
+);
+ok(
+  sql(
+    `select string_agg(name || '|' || document_id || '|' || email || '|' || phone, ';' order by name) from clients
+      where business_id = '${fisio}' and source = 'import'`,
+  ) ===
+    [
+      `Ana Torres|${cedula("143", 1)}|ana@correo.ec|0991111111`,
+      `Bruno Díaz|${cedula("143", 2)}|bruno@correo.ec|`,
+      `Carla Mena|${cedula("143", 3)}||0993333333`,
+      "Diego Paz||diego@correo.ec|0994444444",
+      "Elena Ruiz|||0995555555",
+      "Fabián León|||",
+      `Hugo Ríos|${hugo}|hugo@correo.ec|0998888888`,
+      `Iván Cruz|${cedula("143", 9)}|ivan@correo.ec|`,
+      "Julia Vela||julia@correo.ec|",
+    ].join(";") && fisioClients() === fisioBefore + 9,
+  "en la base: los 9 con origen «import» y con lo que traían (el de sólo el nombre, sin nada más)",
+);
+ok(
+  count(`select count(*) from audit_logs where business_id = '${fisio}' and action = 'client.imported' and summary = 'Importó 9 pacientes (1 con error, 5 por completar)'`) === 1 &&
+    fisioAudit() === 1,
+  "una entrada en la actividad: «Importó 9 pacientes (1 con error, 5 por completar)»",
+  sql(`select summary from audit_logs where business_id = '${fisio}' and action = 'client.imported'`),
+);
+ok(count("select count(*) from notifications") === notificationsBeforeIncomplete, "ningún email a los importados por completar");
+r = await importWith(tomas, `/businesses/${fisio}`, tenPatients, true);
+const idOf = (name: string) => sql(`select id from clients where business_id = '${fisio}' and name = '${name}'`);
+ok(
+  r.status === 200 && r.body.created === 0 && r.body.existing.length === 9 && r.body.incomplete.length === 0 && JSON.stringify(r.body.errors) === JSON.stringify(badDigit),
+  "repetir la importación con la casilla no crea ninguno: los 9 ya existían",
+  r.body,
+);
+ok(
+  r.body.existing.find((e) => e.row === 7)?.clientId === idOf("Fabián León") &&
+    r.body.existing.find((e) => e.row === 6)?.clientId === idOf("Elena Ruiz") &&
+    r.body.existing.find((e) => e.row === 12)?.clientId === idOf("Julia Vela"),
+  "también los que no tienen cédula, por el nombre, el email y el teléfono (y el de sólo el nombre, por el nombre)",
+  r.body.existing,
+);
+ok(fisioClients() === fisioBefore + 9 && fisioAudit() === 1, "ni un paciente más ni otra entrada en la actividad");
+
+const usageOf = async () => (await daniela("GET", `/businesses/${nutrivida}/subscription/usage`)).body as { clients: number; limits: { clients: number } };
+const room = 47 - (await usageOf()).clients;
+sql(`insert into clients (business_id, name) select '${nutrivida}', 'Relleno ' || g from generate_series(1, ${room}) g`);
+ok((await usageOf()).clients === 47 && (await usageOf()).limits.clients === 50, "un negocio Free con 47 pacientes (le caben 3)", await usageOf());
+const capped = reviewOf(tenPatients, true, 3);
+r = await importWith(daniela, `/businesses/${nutrivida}`, tenPatients, true);
+ok(
+  r.status === 200 && r.body.created === 3 && JSON.stringify(r.body.overLimit) === JSON.stringify([5, 6, 7, 9, 11, 12]) &&
+    JSON.stringify(r.body.incomplete) === JSON.stringify([{ row: 4, missing: ["email"] }]),
+  "el tope del plan cuenta también los por completar: entran los 3 primeros (uno de ellos por completar)",
+  r.body,
+);
+ok(JSON.stringify(r.body) === JSON.stringify(asApi(capped)), "la revisión del panel da lo mismo que la API");
+ok((await usageOf()).clients === 50, "el uso del plan dice 50", await usageOf());
+ok(
+  count(`select count(*) from audit_logs where business_id = '${nutrivida}' and action = 'client.imported' and summary = 'Importó 3 pacientes (1 con error, 1 por completar, 6 por el tope del plan)'`) === 1,
+  "la actividad: «Importó 3 pacientes (1 con error, 1 por completar, 6 por el tope del plan)»",
+  sql(`select summary from audit_logs where business_id = '${nutrivida}' and action = 'client.imported' order by created_at desc limit 1`),
+);
 
 console.log("Avisos por ntfy");
 const ntfySince = sql("select now()");

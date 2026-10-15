@@ -4,13 +4,15 @@ import { getTimezoneInfo } from "../constants/business.ts";
 import { normalizeSearch, plural } from "../format.ts";
 import { documentIdError, isValidEcuadorianCedula, normalizeDocumentId } from "../identity.ts";
 import type { ClientImportResult, ClientImportRow, ClientRequiredFields } from "../../types/index.ts";
-import { clientSchemaFor } from "./client.ts";
+import { clientSchemaFor, missingRequiredFields } from "./client.ts";
 
 /**
  * Importar pacientes desde un Excel o un CSV (spec 012). La revisión del panel y la API ejecutan este
  * mismo código: lo que se ve antes de importar es lo que hace la API (que no se fía y lo vuelve a
  * revisar todo). Cada fila pasa las reglas del formulario del paciente del negocio (clientSchemaFor y
- * documentIdError). Los motivos de error nunca repiten el valor de la celda.
+ * documentIdError), salvo que se elija «Importar también los que tienen datos por completar»
+ * (ampliación del 2026-10-15): entonces basta el nombre, lo que viene se valida igual y el paciente
+ * queda «Por completar» (missingRequiredFields). Los motivos de error nunca repiten el valor de la celda.
  */
 
 /** Filas por importación: con más, se pide partir el archivo. */
@@ -230,6 +232,9 @@ export interface ImportClassification extends ClientImportResult {
   newClients: ClientImportRow[];
 }
 
+/** Con «Importar también los que tienen datos por completar», sólo el nombre es obligatorio. */
+const NOTHING_REQUIRED: ClientRequiredFields = { documentId: false, email: false, phone: false, address: false };
+
 /**
  * «El mismo paciente» sin la cédula: el nombre (en minúsculas, sin tildes y con los espacios juntos),
  * el email (en minúsculas) y los dígitos del teléfono. Vacío con vacío también coincide.
@@ -247,6 +252,11 @@ const personKey = (person: { name: string; email: string; phone: string }) =>
  * 4. repetida: es la misma persona que una fila válida anterior del archivo (la misma regla);
  * 5. tope del plan: ya no queda cupo (`remaining`; null: sin tope);
  * 6. se crea.
+ * Con `allowIncomplete` (la casilla «Importar también los que tienen datos por completar»), la fila se
+ * valida sin los datos obligatorios del negocio (basta el nombre): lo que trae se valida igual, así que
+ * una cédula, un email o un teléfono mal escritos siguen con error. Si se crea y le falta algún dato
+ * obligatorio, además queda en `incomplete` con lo que le falta. Sin la opción, todo es como antes de la
+ * ampliación: esas filas son errores, con el mismo motivo («La cédula es obligatoria»).
  * `existing` basta con que traiga los pacientes con alguna de las cédulas de las filas y los que no
  * tienen cédula (así lo lee la API); el panel le pasa la lista entera.
  */
@@ -257,9 +267,11 @@ export function classifyImportRows(
     timezone: string;
     existing: readonly ImportExistingClient[];
     remaining: number | null;
+    allowIncomplete?: boolean;
   },
 ): ImportClassification {
-  const schema = clientSchemaFor(options.required);
+  const allowIncomplete = options.allowIncomplete ?? false;
+  const schema = clientSchemaFor(allowIncomplete ? NOTHING_REQUIRED : options.required);
   const byDocument = new Map<string, string>();
   const withoutDocument = new Map<string, string>();
   for (const client of options.existing) {
@@ -268,7 +280,15 @@ export function classifyImportRows(
   }
   const seenDocument = new Map<string, number>();
   const seenWithoutDocument = new Map<string, number>();
-  const result: ImportClassification = { created: 0, newClients: [], existing: [], repeated: [], errors: [], overLimit: [] };
+  const result: ImportClassification = {
+    created: 0,
+    newClients: [],
+    existing: [],
+    repeated: [],
+    errors: [],
+    overLimit: [],
+    incomplete: [],
+  };
   for (const raw of rows) {
     const row = prepareImportRow(raw, options.timezone);
     if (isEmptyImportRow(row)) continue;
@@ -310,20 +330,24 @@ export function classifyImportRows(
       address: data.address,
       notes: data.notes,
     });
+    const missing = allowIncomplete ? missingRequiredFields(data, options.required) : [];
+    if (missing.length > 0) result.incomplete.push({ row: row.row, missing });
   }
   return result;
 }
 
 /**
  * El resumen de la actividad (y del aviso de ntfy), sólo con cifras: «Importó 200 pacientes (3 ya
- * existían, 5 con errores)». Las partes que pasan de cero, en este orden: ya existían, con errores,
- * repetidas en el archivo y por el tope del plan.
+ * existían, 5 con errores, 12 por completar)». Las partes que pasan de cero, en este orden: ya
+ * existían, con errores, repetidas en el archivo, por completar (ya cuentan entre los importados) y por
+ * el tope del plan.
  */
 export function importSummary(result: ClientImportResult): string {
   const parts = [
     result.existing.length > 0 && `${result.existing.length} ${result.existing.length === 1 ? "ya existía" : "ya existían"}`,
     result.errors.length > 0 && `${plural(result.errors.length, "con error", "con errores")}`,
     result.repeated.length > 0 && `${plural(result.repeated.length, "repetida", "repetidas")} en el archivo`,
+    result.incomplete.length > 0 && `${result.incomplete.length} por completar`,
     result.overLimit.length > 0 && `${result.overLimit.length} por el tope del plan`,
   ].filter(Boolean);
   return `Importó ${plural(result.created, "paciente", "pacientes")}${parts.length > 0 ? ` (${parts.join(", ")})` : ""}`;
@@ -352,7 +376,11 @@ const clientImportRowSchema = z.object(
   { error: "Cada fila debe traer su número y sus datos." },
 );
 
-/** El cuerpo de POST …/clients/import: todas las filas no vacías, también las que tienen errores. */
+/**
+ * El cuerpo de POST …/clients/import: todas las filas no vacías, también las que tienen errores, y la
+ * casilla «Importar también los que tienen datos por completar» (`includeIncomplete`). Si no viene,
+ * vale false: una petición de antes de la ampliación hace lo mismo que entonces.
+ */
 export const clientImportSchema = z.object(
   {
     rows: z
@@ -360,6 +388,9 @@ export const clientImportSchema = z.object(
       .min(1, "El archivo no tiene filas con datos.")
       .max(MAX_IMPORT_ROWS, "Como mucho 5.000 filas por importación: parte el archivo en dos.")
       .refine((rows) => new Set(rows.map((row) => row.row)).size === rows.length, "Hay números de fila repetidos."),
+    includeIncomplete: z
+      .boolean({ error: "Indica si se importan también los que tienen datos por completar." })
+      .default(false),
   },
   { error: "Faltan las filas de la importación." },
 );

@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev, con la beta · **Fecha**: 2026-10-14 (la beta, 2026-10-15)
+**Estado**: Implementada en dev, con la beta y la ampliación del 2026-10-15 · **Fecha**: 2026-10-14 (la beta y la ampliación, 2026-10-15)
 
 **Repos**: los dos (agenda-backend y agenda-front) y la beta · **Migración**: Sí: `039_client_import.sql`
 
@@ -136,6 +136,51 @@ contra Supabase.
 - **Spec 011:** se hace en otra copia y toca los mismos archivos (tipos compartidos, avisos del cron,
   `columns.ts`, `seed-data.ts`, `business-routes.ts`). Al fusionar, revisar esos archivos y volver a
   pasar `npm run sync:shared`, `npm run typecheck` y `npm test`.
+
+## Ampliación del 2026-10-15: «Importar también los que tienen datos por completar»
+
+Antes de publicar, el dueño probó qué pasaba con una lista real: pacientes con y sin cédula, email o
+teléfono. Con los datos obligatorios de fábrica (cédula y email), de 10 pacientes entraban 3. Pidió que
+los incompletos entren marcados «Por completar» y que baste el nombre (constitución 1.11.0, R13–R18).
+
+**Qué cambia:**
+- **La revisión** cuenta aparte «N con datos por completar», con la fila y lo que falta.
+- **La casilla** «Importar también los que tienen datos por completar» viene encendida.
+- **El resultado** tiene «Ver los por completar».
+- **En Clientes** hay un filtro «Por completar» (con su estado vacío «Nadie por completar»), y la
+  marca en la lista y en las tarjetas.
+- **La ficha** dice «Faltan datos: cédula y email», con «Completar».
+- **El formulario** no cambia. Al guardar el paciente completo, la marca desaparece.
+
+| Requisito | Resultado | Cómo se comprobó |
+|---|---|---|
+| RF-012 – La revisión cuenta aparte los incompletos y ofrece la casilla | Cumple | Recorrido del front y de la beta (79 de 79 cada uno): «5 con datos por completar», con la fila y lo que falta, y la casilla encendida |
+| RF-013 – Basta el nombre; lo mal escrito sigue con error | Cumple | `client-import`: con la casilla entran 9 de los 10 del archivo de prueba (la cédula mal escrita, no); una fila sin nombre no entra; lo mal escrito sigue con error |
+| RF-014 – «Por completar» en Clientes y en la ficha; desaparece al completar | Cumple | Recorrido: el filtro y la marca; en las fichas de Carla y Elena, al completar el email o la cédula y el email, desaparecen el aviso y la marca |
+| RF-015 – Los datos obligatorios no cambian | Cumple | Recorrido: el formulario sigue pidiendo el email de Carla al guardar; `client-import`: sin la casilla (y sin `includeIncomplete` en la petición) el resultado es el de antes |
+
+Además, `client-import` comprueba:
+- dos filas con el mismo nombre y nada más: la segunda sale «repetida»;
+- repetir la importación no duplica, tampoco a los que no tienen cédula;
+- el tope del plan cuenta a los por completar;
+- el resumen de la actividad («… 5 por completar»);
+- no sale ningún email.
+
+En total, 27 comprobaciones nuevas (la suite tiene 93).
+
+**Cambios respecto al plan:**
+- **`missingRequiredFields`** devuelve las claves (`documentId`, `email`…). Los textos («Falta la
+  cédula y el email») los arma el front.
+- **Sin la casilla** se usa exactamente el esquema de antes, así que los motivos son idénticos.
+- **Los pacientes «Por verificar»** (spec 009) no se marcan «Por completar» aunque no tengan cédula. La
+  tienen vacía a propósito, y lo que toca con ellos es unirlos a su ficha.
+- **Añadidos pequeños:** la cifra «Por completar» en la revisión, «Ver los por completar», una frase en
+  el paso del archivo y el estado vacío del filtro.
+
+**Sin comprobar:** Clientes con los roles Recepción y Profesional (es la misma página).
+
+**Commits:** «Spec 012: importar también los que tienen datos por completar» en el backend y en el
+front. La beta queda en su carpeta, con la copia previa `beta-src-antes-012b.tgz`.
 
 ## Commits
 

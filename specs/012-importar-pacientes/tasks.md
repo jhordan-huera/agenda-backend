@@ -96,9 +96,9 @@ están en `research.md`.
 
 - [x] T024 Constitución 1.11.0 en `back/` y `front/`: la frase de la importación del principio III
   (plan, «Ampliación»).
-- [ ] T025 [US3] `front/src/lib/validations/client.ts`: `missingRequiredFields(client, required)`
+- [x] T025 [US3] `front/src/lib/validations/client.ts`: `missingRequiredFields(client, required)`
   (R13). Después, `npm run sync:shared` en `back/`.
-- [ ] T026 [US3] `front/src/lib/validations/client-import.ts` y `src/types/index.ts` (R14, R17):
+- [x] T026 [US3] `front/src/lib/validations/client-import.ts` y `src/types/index.ts` (R14, R17):
   - `classifyImportRows` con `allowIncomplete`: se valida sin datos obligatorios (sólo el nombre),
     después `missingRequiredFields`, y la categoría `incomplete` (`{ row, missing }`);
   - sin la casilla, a `errors` con el motivo de hoy;
@@ -106,30 +106,31 @@ están en `research.md`.
   - `importSummary` con «N por completar».
 
   Después, `npm run sync:shared`.
-- [ ] T027 [US3] `back/src/services/client-import-service.ts`: pasa `includeIncomplete` a
+- [x] T027 [US3] `back/src/services/client-import-service.ts`: pasa `includeIncomplete` a
   `classifyImportRows`.
-- [ ] T028 [US3] `front/src/features/clients/import/`: la revisión y el resultado.
+- [x] T028 [US3] `front/src/features/clients/import/`: la revisión y el resultado.
   - «N con datos por completar», con la fila y lo que falta.
   - La casilla «Importar también los que tienen datos por completar», encendida.
   - El botón cuenta los que entran.
   - La descarga de las filas con errores sigue igual.
-- [ ] T029 [US3] `front/src/pages/dashboard/clients-page.tsx`: el filtro «Por completar» y la marca
+- [x] T029 [US3] `front/src/pages/dashboard/clients-page.tsx`: el filtro «Por completar» y la marca
   en la lista y en las tarjetas. `client-detail-page.tsx`: «Faltan datos: …» con «Completar», que abre
   el formulario.
-- [ ] T030 [US3] `back/tests/client-import.test.ts`:
+- [x] T030 [US3] `back/tests/client-import.test.ts`:
   - con la casilla: entran las filas con sólo el nombre o sin la cédula o el email, y siguen con
     error las mal escritas;
   - sin la casilla: como hoy;
   - el tope del plan cuenta también los incompletos;
   - repetir la importación no duplica (también sin cédula);
   - el resumen de la actividad.
-- [ ] T031 Comprobación:
+- [x] T031 Comprobación:
   - `back/`: `npm run typecheck` y `env -u DATABASE_URL npm test`;
   - `front/`: `npm run build` y `npm run lint`;
-  - el recorrido de la importación con el archivo de diez pacientes (escritorio y 390 px).
-- [ ] T032 Beta (R18), con copia previa `beta-src-antes-012b.tgz`: lo mismo, más build, lint y
-  recorrido.
-- [ ] T033 Cierre: el reporte (la sección de la ampliación), el README y los commits sin firma de IA.
+  - el recorrido de la importación con el archivo de diez pacientes (escritorio y 390 px):
+    `verificar-012b.mjs`, con una base PostgreSQL de prueba propia.
+- [x] T032 Beta (R18), con copia previa `beta-src-antes-012b.tgz`: lo mismo, más build, lint y
+  recorrido (`verificar-012b.mjs beta`, con su base de `localStorage`).
+- [x] T033 Cierre: el reporte (la sección de la ampliación), el README y los commits sin firma de IA.
 
 ## Dependencias
 

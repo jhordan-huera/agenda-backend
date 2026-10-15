@@ -404,7 +404,13 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   Profesional reciben 403). El archivo se lee en el navegador y no se sube ni se guarda: la API recibe
   sólo los datos de cada fila.
   - `POST /businesses/:id/clients/import` con `{ rows: [{ row, name, documentId, email, phone, address,
-    notes }] }`: todas las filas no vacías de la hoja (de 1 a 5.000; `row` es el número de fila de
+    notes }], includeIncomplete? }`. **Ampliación del 2026-10-15:**
+    - con `includeIncomplete: true`, basta el nombre: las filas a las que les falta un dato obligatorio
+      del negocio entran y salen en `incomplete` (`{ row, missing }`);
+    - lo que viene se valida igual, y una cédula o un email mal escritos siguen con error;
+    - sin él, la ruta hace lo mismo que antes;
+    - «Por completar» no se guarda: se calcula con `missingRequiredFields` y los datos obligatorios de
+      hoy. Contenido de la ruta: todas las filas no vacías de la hoja (de 1 a 5.000; `row` es el número de fila de
     Excel), también las que la revisión marcó con error. Primero exige la sesión (sin ella, 401 sin leer
     el cuerpo), después el límite `importar-pacientes` (20 cada 15 min por conexión) y por último lee el
     JSON, de hasta **4 MB** sólo en esta ruta (`app.ts` la salta en el lector general de 2 MB).

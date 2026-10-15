@@ -19,7 +19,9 @@ import { remainingClientSlots } from "./plan-limits.ts";
  * (classifyImportRows). Todo o nada, en una transacción con el negocio bloqueado: si se corta la
  * conexión, o se importaron todos o ninguno, y repetir la importación no duplica (lo que ya entró
  * cuenta como «ya existía»). Un paciente que ya existe no se toca. Nunca se registran las filas ni sus
- * valores, y no sale ningún email.
+ * valores, y no sale ningún email. Con `includeIncomplete` («Importar también los que tienen datos por
+ * completar», ampliación del 2026-10-15) también se crean las filas a las que les falta un dato
+ * obligatorio del negocio: basta el nombre y quedan «Por completar». Sin él (o si no viene), como antes.
  */
 export const clientImportService = {
   async importMany(ctx: RequestContext, businessId: string, input: unknown): Promise<ClientImportResult> {
@@ -27,7 +29,7 @@ export const clientImportService = {
       // El bloqueo pone una importación detrás de otra (un doble clic, dos pestañas) y detrás de las
       // altas y reservas de ese negocio: nadie se cuela en el último cupo del plan.
       const actor = await authorize(db, ctx, businessId, "clients.import", { lock: true });
-      const { rows } = parseInput(clientImportSchema, input);
+      const { rows, includeIncomplete } = parseInput(clientImportSchema, input);
       const business = await one<{ timezone: string; clientRequiredFields: ClientRequiredFields }>(
         db,
         `select timezone, client_required_fields as "clientRequiredFields" from businesses where id = $1`,
@@ -48,6 +50,7 @@ export const clientImportService = {
         timezone,
         existing,
         remaining: await remainingClientSlots(db, businessId),
+        allowIncomplete: includeIncomplete,
       });
       if (newClients.length > 0) {
         // Una sola sentencia, con un solo now(): todos quedan con el mismo created_at que la entrada de
@@ -84,11 +87,17 @@ export const clientImportService = {
             `select id, document_id as "documentId" from clients where business_id = $1 and document_id = any($2::text[])`,
             [businessId, skipped.map((client) => client.documentId)],
           );
+          const moved = new Set<number>();
           for (const client of skipped) {
             const owner = owners.find((row) => row.documentId === client.documentId);
-            if (owner) result.existing.push({ row: client.row, clientId: owner.id });
+            if (owner) {
+              result.existing.push({ row: client.row, clientId: owner.id });
+              moved.add(client.row);
+            }
           }
           result.existing.sort((a, b) => a.row - b.row);
+          // Una fila «por completar» que resultó ser de un paciente que ya existía no se creó.
+          result.incomplete = result.incomplete.filter((entry) => !moved.has(entry.row));
         }
       }
       // Si todo ya existía (o tenía errores), no queda entrada ni aviso, como cuando sólo se consulta.

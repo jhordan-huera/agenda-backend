@@ -1,6 +1,6 @@
 // Copia de agenda-front/src/lib/validations/client.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
-import type { ClientRequiredFields } from "../../types/index.ts";
+import type { Client, ClientRequiredField, ClientRequiredFields } from "../../types/index.ts";
 import {
   optionalDocumentIdField,
   optionalEmailField,
@@ -48,6 +48,22 @@ export function clientSchemaFor(required: ClientRequiredFields) {
 }
 
 export type ClientInput = z.infer<ReturnType<typeof clientSchemaFor>>;
+
+/** Los datos que pueden ser obligatorios, en el orden del formulario (el nombre lo es siempre). */
+const REQUIRED_FIELD_ORDER: readonly ClientRequiredField[] = ["documentId", "email", "phone", "address"];
+
+/**
+ * «Por completar» (spec 012): los datos obligatorios del negocio que le faltan hoy a un paciente, en el
+ * orden del formulario. Vacío: está completo. No se guarda en ningún lado: sigue a los datos obligatorios
+ * si el super admin los cambia, desaparece sola al completar la ficha y vale también para los pacientes
+ * que ya estaban incompletos de antes (un importado, uno de antes de que un dato fuera obligatorio).
+ */
+export function missingRequiredFields(
+  client: Pick<Client, ClientRequiredField>,
+  required: ClientRequiredFields,
+): ClientRequiredField[] {
+  return REQUIRED_FIELD_ORDER.filter((field) => required[field] && client[field].trim() === "");
+}
 export type ClientRequiredFieldsInput = z.infer<typeof clientRequiredFieldsSchema>;
 
 /**

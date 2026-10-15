@@ -191,6 +191,9 @@ export interface ClientRequiredFields {
   address: boolean;
 }
 
+/** Un dato del paciente que el negocio puede hacer obligatorio (el nombre lo es siempre). */
+export type ClientRequiredField = keyof ClientRequiredFields;
+
 /**
  * Roles dentro de un negocio (tabla business_users). "staff" es Recepción (todas las agendas);
  * "professional", quien sólo atiende su propia agenda.
@@ -391,6 +394,13 @@ export interface ClientImportResult {
   errors: { row: number; reason: string }[];
   /** No entran por el tope de pacientes del plan. */
   overLimit: number[];
+  /**
+   * Con «Importar también los que tienen datos por completar» (ampliación del 2026-10-15): las filas
+   * que se crean aunque les falte un dato obligatorio del negocio (`missing`, en el orden del
+   * formulario). Ya cuentan en `created`; quedan «Por completar» hasta que se completan en su ficha.
+   * Sin la casilla, esas filas van a `errors` y esta lista queda vacía.
+   */
+  incomplete: { row: number; missing: ClientRequiredField[] }[];
 }
 
 /** Modalidades de un servicio: en el local, en casa del cliente o por videollamada. */
