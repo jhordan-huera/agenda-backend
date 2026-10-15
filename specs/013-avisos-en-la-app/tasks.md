@@ -111,7 +111,7 @@ Las decisiones R1–R20 están en `research.md`.
 
 - [x] T027 Recorrido con Playwright del quickstart §2 (versión compilada, escritorio y 390 px), con el
   servicio de avisos real de Google si Chrome lo permite.
-- [ ] T028 Cierre: README del backend y del front, `reporte.md`, estado de la spec y commits sin
+- [x] T028 Cierre: README del backend y del front, `reporte.md`, estado de la spec y commits sin
   firma de IA.
 
 ## Dependencias
