@@ -93,7 +93,7 @@ están en `research.md`. La constitución ya está en la 1.7.0 con el texto de e
   - el formulario, la lista y la ficha como en el front;
   - build y lint.
 - [x] T018 Recorrido con Playwright del quickstart §2 (escritorio y 390 px) y el de la beta (§3).
-- [ ] T019 Cierre: README del backend (y del front), `reporte.md`, estado de la spec y commits sin firma
+- [x] T019 Cierre: README del backend (y del front), `reporte.md`, estado de la spec y commits sin firma
   de IA.
 
 ## Dependencias

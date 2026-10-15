@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-14
 
-**Estado**: Aprobada (2026-10-14)
+**Estado**: Implementada (2026-10-14)
 
 **Repos**: agenda-backend (principal: crear la serie, los emails y ntfy), agenda-front (el formulario
 de la cita y la ficha) y la beta.
