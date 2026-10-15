@@ -132,6 +132,8 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   - el super admin, sus cuatro avisos en /admin, y en modo soporte no ve la del negocio.
 
   Leer no se registra en la actividad (2026-10-15).
+- La analítica de /admin (spec 016) sólo la ve el super admin, sólo con cifras por negocio (nunca
+  datos de pacientes), y se prepara una vez al día con el cron, fuera de Vercel (2026-10-15).
 - En la portada no hay testimonios, cifras ni precios inventados.
 
 ### IV. Se comprueba en local, nunca en producción
@@ -237,4 +239,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.12.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-15
+**Versión**: 1.13.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-15
