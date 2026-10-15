@@ -186,11 +186,11 @@ Las decisiones R1–R14 están en `research.md`.
 
 ## Fase 9: La beta (después del back y el front)
 
-- [ ] T021 Copia previa: `beta-src-antes-014.tgz` en el scratchpad.
-- [ ] T022 `beta/src`: copia de los archivos compartidos del front:
+- [x] T021 Copia previa: `beta-src-antes-014.tgz` en el scratchpad.
+- [x] T022 `beta/src`: copia de los archivos compartidos del front:
   - `types/index.ts` (sólo lo nuevo);
   - `lib/constants/notices.ts` y `lib/notices.ts`.
-- [ ] T023 `beta/src/lib/data/mock/`:
+- [x] T023 `beta/src/lib/data/mock/`:
   - **`store.ts`:**
     - `panelNotices`, `panelNoticeReads` y `panelNoticeState` en `MockDatabase`;
     - `??= []` en `migrateData`;
@@ -199,7 +199,7 @@ Las decisiones R1–R14 están en `research.md`.
   - **`seed.ts`:** las colecciones vacías y los avisos de ejemplo de la clínica (de hoy y de ayer).
     Van con una clave nueva de `demoUpgrades`, para que los reciban también las bases ya guardadas.
     **No se sube `MOCK_DB_VERSION`.**
-- [ ] T024 `beta/src/lib/data/mock/notices-repository.ts` (nuevo): los cuatro métodos, con
+- [x] T024 `beta/src/lib/data/mock/notices-repository.ts` (nuevo): los cuatro métodos, con
   `NOTICE_AUDIENCE` y `describeNotice` (nombre completo). Se conecta en `lib/data/index.ts` y
   `repository.ts`.
 
@@ -207,19 +207,19 @@ Las decisiones R1–R14 están en `research.md`.
   - `public-booking-repository.ts`: `book`, `confirmAppointment`, `cancelAppointment` y
     `completeReceiptUpload`;
   - `business-data-repository.ts`: `create` y `createSeries`.
-- [ ] T025 `beta/src`: la campana, la lista y la página «Avisos» (copiadas de `front/src/features/notices`
+- [x] T025 `beta/src`: la campana, la lista y la página «Avisos» (copiadas de `front/src/features/notices`
   y las páginas), adaptadas a su layout:
   - `sidebar-content.tsx` y `admin-sidebar.tsx`;
   - `app-shell.tsx`, en la barra del celular;
   - el router.
 
   `refetchInterval` de 3 minutos, más el refresco al volver a la pestaña.
-- [ ] T026 Beta: `npm run build` y `npm run lint`, y el recorrido del quickstart §3 en el puerto 3199
+- [x] T026 Beta: `npm run build` y `npm run lint`, y el recorrido del quickstart §3 en el puerto 3199
   (se detiene por PID).
 
 ## Fase 10: Cierre
 
-- [ ] T027 `reporte.md` (plantilla `.specify/templates/reporte-template.md`), el estado de la spec y
+- [x] T027 `reporte.md` (plantilla `.specify/templates/reporte-template.md`), el estado de la spec y
   los commits en `back/` y `front/`, sin firma de herramientas de IA.
 
 ## Dependencias
