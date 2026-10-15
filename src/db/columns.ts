@@ -87,6 +87,7 @@ export const subscriptionColumns = columns({
   plan: "plan",
   status: "status",
   currentPeriodEnd: "current_period_end",
+  planSince: "plan_since",
   maxProfessionals: "max_professionals",
 });
 

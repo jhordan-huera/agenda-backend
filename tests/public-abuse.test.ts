@@ -164,14 +164,17 @@ try {
     await jhordan.a("PUT", `${jhordan.B}/professionals/${jhordanAgenda.id}`, { ...rest, bankAccounts: [] });
   }
 
-  console.log("Topes de emails (a terceros y a pacientes nuevos)");
+  // El tope de 400 emails a terceros ya no existe (spec 015): lo reemplaza el cupo de Gmail, que espera
+  // en vez de descartar (tests/email-quota.test.ts). Las defensas contra el abuso siguen igual.
+  console.log("Topes de emails (los del público y a pacientes nuevos)");
   {
     const ntfy = await fakeService(() => ({ status: 200, json: {} }));
-    const thirdParty = () =>
-      count(`select count(*) from notifications where created_at between now() - interval '24 hours' and now()
-               and type in ('welcome', 'booking_created', 'appointment_confirmed', 'appointment_updated', 'appointment_cancelled', 'appointment_reminder')
-               and (status <> 'failed' or attempts > 0)`);
-    const limited = await startApi({ THIRD_PARTY_EMAILS_PER_DAY: String(thirdParty() + 1), NTFY_TOPIC: "agenda-pruebas", NTFY_SERVER: ntfy.url });
+    const publicSoFar = () =>
+      count(`select count(*) from notifications n where n.created_at between now() - interval '24 hours' and now()
+               and n.type in ('welcome', 'booking_created', 'appointment_confirmed', 'appointment_updated', 'appointment_cancelled', 'appointment_reminder')
+               and (n.type = 'welcome' or exists (select 1 from appointments a where a.id = n.appointment_id and a.source = 'booking_page' and a.created_at = n.created_at))
+               and (n.status <> 'failed' or n.attempts > 0)`);
+    const limited = await startApi({ PUBLIC_EMAILS_PER_DAY: String(publicSoFar() + 1), NTFY_TOPIC: "agenda-pruebas", NTFY_SERVER: ntfy.url });
     const limitedVisitor = agent(limited.base);
     const one = person("tope-email-1");
     let r = await bookJhordan(one, limitedVisitor);
@@ -196,7 +199,7 @@ try {
       "un solo aviso por ntfy al llegar al tope (no uno por email)",
       ntfy.received,
     );
-    ok(/Tope de \d+ emails a terceros/.test(limited.output()), "y queda en el registro de la API", limited.output().slice(-400));
+    ok(/Tope de \d+ emails de reservas online y registros/.test(limited.output()), "y queda en el registro de la API", limited.output().slice(-400));
     ntfy.server.close();
 
     // Un negocio con 20 emails a pacientes nuevos en 24 h (reservas de clientes creados hoy por la página).

@@ -183,7 +183,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 | Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` (+ `POST …/clients/import`, importar pacientes desde un Excel o un CSV, spec 012) · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status` con `notify`: `false` cambia el estado sin avisar al paciente; `POST …/:id/cancel-following` cancela ésa y las siguientes de su serie) · `appointment-series` (`POST …/preview` y `POST`, citas que se repiten, spec 011) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
 | Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) · `GET /public/payments/:token` (+ `receipts`) · `GET /public/appointments/:token` · `POST …/confirm` · `POST …/cancel` («Tu cita», spec 010) |
-| Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, último cron, última copia e intentos fallidos; spec 006) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
+| Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, el cupo de Gmail —`emailQuota`, spec 015—, último cron, última copia e intentos fallidos; spec 006; el reparto por plan, `businessesByPlan`, sólo cuenta los negocios activos) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
 | Avisos en el celular (spec 013) | `GET /push/config` · `PUT /push/device` · `PATCH /push/device` · `POST /push/device/off` · `POST /push/device/test` (sólo el propietario de un negocio activo y el super admin; el aparato va en el cuerpo, nunca en la URL) |
 | Centro de avisos (spec 014) | `GET /businesses/:id/notices/unread` · `GET …/notices` (`?limit&unread=1&cursor`) · `POST …/notices/:noticeId/read` · `POST …/notices/read-all` (cualquier rol del equipo; el super admin en modo soporte recibe 403) y lo mismo en `/admin/notices` (el super admin, con la verificación en dos pasos). Ninguna escribe en la actividad |
 | Estado | `GET /health` (con `push`: si la API tiene claves VAPID válidas) |
@@ -206,10 +206,16 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   sugerido). Una categoría en uso no se borra: se desactiva y los negocios que la tienen la conservan.
   La categoría de un negocio sólo la cambia el super admin (`PATCH /businesses/:id` responde 403 si
   un propietario intenta cambiarla).
-- **Cambios de plan con aprobación**: el propietario envía una solicitud desde su suscripción; los
-  super admins reciben un email y la ven en el resumen del panel `/admin`, donde la aprueban (se
-  aplica el plan) o la rechazan con un motivo. El plan sólo cambia desde el panel `/admin` (también
-  en modo soporte) y el propietario siempre recibe un email.
+- **Cambios de plan**: el plan lo cambia el super admin desde la ficha del negocio en `/admin` (también
+  en modo soporte) y el propietario siempre recibe un email. El panel del negocio ya no tiene la
+  pestaña Configuración → Suscripción (no ve planes ni precios). La API conserva la solicitud del
+  propietario (`POST /businesses/:id/subscription/request`) y el resumen de `/admin` muestra las
+  pendientes para aprobarlas o rechazarlas con un motivo, pero hoy la web no las crea.
+- **Desde cuándo está en su plan** (migración 042, spec 015): `subscriptions.plan_since` toma `now()`
+  al crear el negocio y en cada cambio de plan (elegir el mismo plan no la toca). La migración la
+  rellenó con `current_period_end - 30 días` (la hora del último cambio) o, en Free, con el alta del
+  negocio. La ficha dice «En Pro desde el 3 oct», sin fecha de renovación: no hay cobro todavía.
+  `current_period_end` se queda en la base para el cobro de otra spec.
 - **Cédula de los clientes**: identifica al cliente dentro del negocio (única por negocio, sólo
   números: sin letras ni guiones; en negocios de Ecuador, 10 dígitos con dígito verificador válido). En
   el panel, los datos obligatorios del paciente dependen del negocio (ver «Datos obligatorios del
@@ -302,7 +308,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   aclaraciones), cada consulta de las personas del negocio queda en la auditoría y un paciente con
   historia no se puede eliminar. En la actividad del negocio, los eventos de la historia clínica (`clinical_record`) sólo
   los ve quien tiene acceso clínico (un administrador sin él, no).
-- **Formatos propios, por servicio y archivos** (migración 010): en los planes Pro y Business el
+- **Formatos propios y archivos** (migración 010): en los planes Pro y Business el
   propietario crea y edita sus formatos (`/clinical-templates`, cada cambio es una versión nueva; un
   campo existente no cambia de tipo) o duplica uno de la plataforma. (Los servicios no tienen formato propio: siempre se
   propone el del negocio. La columna `services.clinical_template_id` quedó sin uso.) Archivos (JPG, PNG, WebP, HEIC, PDF, 15 MB) con subida directa firmada a Supabase
@@ -525,8 +531,9 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   - **ntfy:** el aviso de la reserva tiene una línea por persona.
 - **Colores de marca** (migración 018): `businesses.brand_colors` (jsonb, `{ primary, highlight }` en
   `#rrggbb`, con un check en la base; null = los de Agenda360). Se cambian con `PATCH
-  /businesses/:id` (`brandColors`, permiso `business.manage`), quedan en la actividad y llegan al
-  perfil público para que la página de reservas use los colores del negocio.
+  /businesses/:id` (`brandColors`, permiso `business.manage`: sólo el propietario, o el super admin en
+  modo soporte; un administrador no), quedan en la actividad y llegan al perfil público para que la
+  página de reservas use los colores del negocio.
 - **Colores del panel del super admin** (migración 035, spec 007): `users.panel_colors` (mismo
   formato y check que `brand_colors`). Cada super admin los guarda en su cuenta con `PUT
   /admin/panel-colors` (`{ colors }`; sólo la suya, sin auditoría) y llegan en la sesión como
@@ -641,14 +648,14 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   sea una respuesta válida de Cloudflare se rechaza (si Cloudflare falla o no responde, 503 "inténtalo
   de nuevo"), y el token debe venir de un dominio del frontend (`hostname` de `FRONTEND_URL`,
   `APP_URL` o `TURNSTILE_HOSTNAMES`).
-- **Topes de emails** (`src/services/email-limits.ts`): como mucho 400 emails a terceros (pacientes y
-  bienvenidas) en 24 h entre todos los negocios (`THIRD_PARTY_EMAILS_PER_DAY`, por el tope diario de
-  Gmail); de ésos, como mucho 150 los que provoca el público (reservas online y registros,
-  `PUBLIC_EMAILS_PER_DAY`, spec 009), así que quien llene el tope con reservas falsas no deja a los
+- **Topes contra el abuso de los emails** (`src/services/email-limits.ts`, spec 009), al poner en
+  cola: como mucho 150 emails al paciente en 24 h por lo que provoca el público (reservas online y
+  registros, `PUBLIC_EMAILS_PER_DAY`), así que quien llene la cuenta con reservas falsas no deja a los
   negocios sin recordatorios ni avisos; y 20 confirmaciones de reservas online a pacientes nuevos por
-  negocio en 24 h. Lo que pasa del tope queda en el
-  historial como fallido ("No enviado: …") y avisa una vez al día en el registro y por ntfy
-  (`NTFY_TOPIC` también en la API). Los avisos al negocio, a los profesionales y a la plataforma salen siempre.
+  negocio en 24 h. Lo que pasa de un tope queda en el historial como fallido ("No enviado: …") y avisa
+  una vez al día en el registro y por ntfy (`NTFY_TOPIC` también en la API). El cupo diario de la
+  cuenta de Gmail es otra cosa: no descarta nada, hace esperar (ver «Cupo de Gmail» en «Emails»). El
+  tope de 400 emails a terceros (`THIRD_PARTY_EMAILS_PER_DAY`) ya no existe (spec 015).
 - **Página pública** sin datos internos: ni el propietario, ni los avisos, ni el motivo de los
   bloqueos, ni el precio de los servicios que lo ocultan.
 - **Datos demo** (`db:seed`) sólo en una base local: con el `.env` apuntando a Supabase se niega.
@@ -743,7 +750,9 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
   confirmación o el aviso del cambio). Hay uno por cada fecha y hora de la cita (clave
   `dedupe_key` con `appointments.scheduled_at`, que cambia al reprogramarla o reactivarla): al
   moverla, sale otro para la fecha nueva. Antes de enviarlo se comprueba otra vez: si la cita se
-  canceló, cambió o ya empezó, se descarta; en horas de silencio, espera a las 7:00.
+  canceló, cambió o ya empezó, se descarta; en horas de silencio, espera a las 7:00. La copia al
+  profesional de un recordatorio que sí le llegó al paciente sale aunque la cita haya cambiado o
+  empezado mientras esperaba el cupo de Gmail (spec 015): la copia nunca se descarta.
 - **Cambios que se avisan al paciente**: fecha, hora, servicio, profesional o modalidad (en el
   local, virtual o a domicilio, y la dirección de la visita). Una cita cancelada que vuelve a estar
   activa le envía "Tu cita ha sido restablecida". En las citas virtuales la hora lleva la zona del
@@ -790,8 +799,30 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
     asistió. Los dos últimos van con el interruptor `followUps` («Seguimiento», encendido si no está
     guardado) y sólo para citas de hoy o de los últimos 7 días. Todos llevan la copia al profesional.
     Con `notify: false` (la casilla «Avisar al paciente» desmarcada) no sale ninguno.
-- Gmail gratuito permite unos 500 emails al día; para más volumen conviene un proveedor
-  transaccional (Resend, SES…): sólo cambia `mailer.ts`.
+- **Cupo de Gmail** (spec 015): la cuenta de Gmail gratuita envía unos 500 emails en 24 h
+  (`EMAIL_DAILY_QUOTA`, 500 por defecto; con Google Workspace, unos 2.000: se cambia la variable, no el
+  código). Todos los envíos de las últimas 24 h cuentan juntos, y se mira **al enviar** (`claimBatch`
+  en `mailer.ts`), no al poner en cola:
+  - **Tres niveles** (`EMAIL_PRIORITY` en `email-limits.ts`; una prueba exige que cada tipo de email
+    tenga el suyo): el **equipo** (contraseñas, seguridad, planes, altas) puede usar todo el cupo; el
+    **paciente** (recordatorios, confirmaciones, bienvenidas), el cupo menos `EMAIL_TEAM_RESERVE` (20);
+    el **negocio** (copias al profesional y avisos al negocio y a sus profesionales), el cupo menos
+    `EMAIL_PATIENT_RESERVE` (100). Cada lote toma primero los del equipo, después los del paciente y al
+    final los del negocio, y dentro de cada nivel los más antiguos: un aviso al negocio nunca le quita
+    el sitio a un email al paciente.
+  - **Lo que no cabe espera** en la cola (`queued`, `next_attempt_at` 30 minutos después y una marca en
+    `last_error`), **sin gastar intentos y sin descartarse**: se vuelve a mirar en cada lote y sale en
+    cuanto la ventana de 24 h libera cupo, antes que los nuevos de su nivel. Un día con muchas reservas,
+    las copias al profesional salen al día siguiente. Un recordatorio que ya no llega a tiempo (la cita
+    empezó) se descarta al enviarlo, como siempre.
+  - **Al llegar al límite del paciente**, ntfy avisa una vez al día («Agenda360: se llegó al cupo de
+    Gmail», sólo con cifras), y el aviso del cron suma «Esperan el cupo diario de Gmail: N».
+  - **En Salud de `/admin`**: los envíos de 24 h frente al cupo (en ámbar desde el 80 %, en rojo al
+    llegar al límite del paciente) y cuántos esperan, al paciente y al negocio.
+  - Si Gmail rechaza igual (p. ej. la cuenta se usó desde otro lado), los emails se reintentan como
+    siempre. El cupo se mira lote a lote: dos procesos a la vez (la API y el cron) pueden pasarse en un
+    lote (10), y la reserva del equipo lo absorbe.
+  - Para más volumen conviene un proveedor transaccional (Resend, SES…): sólo cambia `mailer.ts`.
 
 ## Avisos en el celular
 
@@ -1040,9 +1071,10 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY` | CAPTCHA de la página de reservas y del registro (Cloudflare → Turnstile → Add widget, hostname del frontend, modo *Managed*). **Obligatorias**: sin ellas la API no arranca |
    | `TWO_FACTOR_KEY` | Clave del cifrado del secreto de la verificación en dos pasos, de 32 caracteres o más (`openssl rand -base64 48`). **Obligatoria**; la misma en el `.env` para `npm run dev:prod`. Si se pierde, los super admin entran con sus códigos de recuperación o `npm run db:reset-2fa` |
    | `TURNSTILE_HOSTNAMES` | Opcional: otros dominios del frontend, separados por comas (ya valen los de `FRONTEND_URL` y `APP_URL`) |
-   | `THIRD_PARTY_EMAILS_PER_DAY` | Opcional: tope de emails a pacientes y bienvenidas en 24 h (por defecto 400; súbelo con Google Workspace) |
-   | `PUBLIC_EMAILS_PER_DAY` | Opcional: de ésos, los que provocan las reservas online y los registros (por defecto 150) |
-   | `NTFY_TOPIC` | Opcional: el del cron, para que la API avise al llegar al tope de emails |
+   | `EMAIL_DAILY_QUOTA` | Opcional: el cupo de envíos en 24 h de la cuenta de Gmail (por defecto 500; con Google Workspace, unos 2.000). Mismo valor en Lambda y en las variables del repositorio en GitHub (`vars`, las lee el cron, que también envía) |
+   | `EMAIL_TEAM_RESERVE`, `EMAIL_PATIENT_RESERVE` | Opcionales: lo que se guarda del cupo para el equipo (20) y para el paciente (100). La del paciente, menor que el cupo; la del equipo, no mayor que la del paciente (si no, la API no arranca). También en Lambda y en las `vars` de GitHub |
+   | `PUBLIC_EMAILS_PER_DAY` | Opcional: emails al paciente que provocan las reservas online y los registros en 24 h (por defecto 150) |
+   | `NTFY_TOPIC` | Opcional: el del cron, para que la API avise al llegar al cupo de Gmail o a un tope de emails |
    | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Avisos en el celular (`npm run push:keys`, ver "Avisos en el celular"). Sin ellas la API arranca igual, sin avisos (`/api/health` dice `"push": false`). Las mismas en Lambda y en los secretos de GitHub |
    | `VAPID_SUBJECT` | Opcional: el contacto para los servicios de avisos (`mailto:` o `https:`); por defecto `APP_URL` si es https o el email de `GMAIL_USER` |
 
@@ -1134,5 +1166,8 @@ frontend decide a cuál llama con su variable `API_URL`.
   `src/app.ts` con `app.use("/api", noStore)` antes de `app.use("/api", api)`. Hoy lo pone
   `src/server.ts` (local y Lambda), que Vercel no usa.
 - Pagos (Stripe): el cambio de plan aún no cobra.
-- Imágenes (foto y logo) en un almacenamiento de archivos; hoy se guardan como data URL en la base
-  (máx. 500 KB).
+- Spec 015, aplazados por el dueño del producto: la copia de los archivos de la historia clínica en
+  un almacenamiento aparte, y los términos del servicio con el contrato de encargo (necesitan la
+  revisión de un abogado). Hasta entonces el registro sólo menciona la política de privacidad.
+- La política de privacidad no promete lo que falta (spec 015): exportar los datos de un negocio
+  (la portabilidad se atiende por soporte) y avisar de los cambios de la política desde la app.

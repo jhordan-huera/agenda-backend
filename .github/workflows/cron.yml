@@ -55,6 +55,10 @@ jobs:
           APP_URL: ${{ vars.APP_URL }}
           NTFY_SERVER: ${{ vars.NTFY_SERVER }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          # Cupo diario de Gmail (spec 015), opcional: los mismos valores que en Vercel y Lambda. Vacías, 500, 20 y 100.
+          EMAIL_DAILY_QUOTA: ${{ vars.EMAIL_DAILY_QUOTA }}
+          EMAIL_TEAM_RESERVE: ${{ vars.EMAIL_TEAM_RESERVE }}
+          EMAIL_PATIENT_RESERVE: ${{ vars.EMAIL_PATIENT_RESERVE }}
           # Para borrar los comprobantes de pago de más de 3 meses (sin ellas, se omite).
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

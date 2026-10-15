@@ -5,38 +5,123 @@ import type { EmailType } from "../shared/types/index.ts";
 import { sendAlert, type Alert } from "./alerts.ts";
 
 /**
- * Topes diarios de emails, contra el spam desde nuestra cuenta de Gmail: cualquiera puede reservar
- * con un email ajeno o registrarse con el de otro, y cada vez sale un email. Al llegar a un tope el
- * email no se envía (queda en el historial como fallido, con el motivo) y se avisa por el registro y
- * por ntfy. Sólo se frenan los emails a terceros: los avisos al negocio, a sus profesionales y al
- * equipo de la plataforma (nueva reserva, comprobantes, altas, planes…) salen siempre.
+ * El cupo de Gmail y los topes de emails.
+ *
+ * - **El cupo de la cuenta** (spec 015): la cuenta de Gmail que envía tiene un cupo diario (unos 500
+ *   envíos en 24 h). Se mira al enviar (claimBatch, en mailer.ts) con tres niveles de prioridad
+ *   (EMAIL_PRIORITY): lo que no cabe espera en la cola, nunca se descarta.
+ * - **Los topes contra el abuso** (spec 009), al poner en cola: cualquiera puede reservar con un email
+ *   ajeno o registrarse con el de otro, y cada vez sale un email. Al llegar a un tope el email no se
+ *   envía (queda en el historial como fallido, con el motivo) y se avisa por el registro y por ntfy.
+ *   Son defensas, no un cupo: está bien que fallen.
  */
 
+/** El nivel de prioridad de un email frente al cupo de Gmail (spec 015, R2). */
+export type EmailPriority = "team" | "patient" | "business";
+
 /**
- * Emails a personas de fuera de la plataforma: los de las citas al paciente y la bienvenida de un
- * registro (su dirección no está comprobada).
+ * El nivel de cada tipo de email, en un solo sitio (tests/email-quota.test.ts exige que estén todos):
+ * - **team**: las cuentas del equipo y de la plataforma (contraseñas, seguridad, planes). Salen siempre:
+ *   pueden usar todo el cupo.
+ * - **patient**: al paciente sobre su cita y la bienvenida de un registro. Hasta el cupo menos la
+ *   reserva del equipo.
+ * - **business**: las copias al profesional y los avisos al negocio. Hasta el cupo menos la reserva del
+ *   paciente: si un día no hay cupo, esperan al día siguiente (primero lo del paciente).
  */
-export const THIRD_PARTY_EMAIL_TYPES: readonly EmailType[] = [
-  "welcome",
-  "booking_created",
-  "appointment_confirmed",
-  "appointment_updated",
-  "appointment_cancelled",
-  "appointment_reminder",
-  "appointment_pending",
-  "appointment_completed",
-  "appointment_no_show",
+export const EMAIL_PRIORITY: Record<EmailType, EmailPriority> = {
+  password_reset: "team",
+  team_invite: "team",
+  account_security_changed: "team",
+  platform_admin_added: "team",
+  business_suspended: "team",
+  business_reactivated: "team",
+  plan_change_requested: "team",
+  plan_change_approved: "team",
+  plan_change_rejected: "team",
+  plan_changed: "team",
+  business_created: "team",
+  welcome: "patient",
+  booking_created: "patient",
+  appointment_confirmed: "patient",
+  appointment_updated: "patient",
+  appointment_cancelled: "patient",
+  appointment_reminder: "patient",
+  appointment_pending: "patient",
+  appointment_completed: "patient",
+  appointment_no_show: "patient",
   // Una serie de citas (spec 011): un email por paciente, no uno por cita.
-  "appointment_series",
-  "appointment_series_cancelled",
-];
+  appointment_series: "patient",
+  appointment_series_cancelled: "patient",
+  appointment_copy: "business",
+  booking_received: "business",
+  professional_new_appointment: "business",
+  professional_daily_agenda: "business",
+  payment_receipt_received: "business",
+  patient_cancelled: "business",
+};
+
+/** Los niveles, del que sale primero al último. */
+export const EMAIL_PRIORITY_ORDER: readonly EmailPriority[] = ["team", "patient", "business"];
+
+/** Los tipos de un nivel. */
+export const emailTypesOf = (priority: EmailPriority): EmailType[] =>
+  (Object.keys(EMAIL_PRIORITY) as EmailType[]).filter((type) => EMAIL_PRIORITY[type] === priority);
+
+/** Los emails al paciente (y las bienvenidas): los que frenan los topes del público. */
+const PATIENT_EMAIL_TYPES = emailTypesOf("patient");
 
 /**
- * Emails a terceros que provoca alguien de fuera, sin cuenta (spec 009): la bienvenida de un registro
+ * Hasta cuántos envíos en 24 h (contando todos los niveles) puede llegar cada nivel: el equipo, al
+ * cupo; el paciente, al cupo menos la reserva del equipo; el negocio, al cupo menos la del paciente.
+ */
+export function emailQuotaLimits(quota = config.emailQuota): Record<EmailPriority, number> {
+  return { team: quota.quota, patient: quota.quota - quota.teamReserve, business: quota.quota - quota.patientReserve };
+}
+
+/**
+ * La marca (en last_error) de un email que espera el cupo de Gmail: sigue en cola, sin gastar intentos,
+ * y sale en cuanto hay cupo, por orden de llegada. No es un error: no se muestra en ninguna pantalla.
+ */
+export const QUOTA_WAIT_NOTE = "En espera: no queda cupo de Gmail en las últimas 24 h.";
+
+/** Los envíos de las últimas 24 h, de todos los niveles: lo que cuenta frente al cupo. */
+export async function sentLast24h(db: Db): Promise<number> {
+  const row = await one<{ count: number }>(
+    db,
+    "select count(*)::int as count from notifications where status = 'sent' and sent_at > now() - interval '24 hours'",
+  );
+  return row?.count ?? 0;
+}
+
+/** El cupo de Gmail para Salud del super admin (spec 015): sólo cifras. */
+export async function emailQuotaStatus(db: Db): Promise<{
+  quota: number;
+  sent24h: number;
+  patientLimit: number;
+  waiting: { patient: number; business: number };
+}> {
+  const row = await one<{ sent: number; patient: number; business: number }>(
+    db,
+    `select (select count(*) from notifications where status = 'sent' and sent_at > now() - interval '24 hours')::int as sent,
+            count(*) filter (where type = any($2::text[]))::int as patient,
+            count(*) filter (where type = any($3::text[]))::int as business
+       from notifications
+      where status = 'queued' and last_error = $1`,
+    [QUOTA_WAIT_NOTE, PATIENT_EMAIL_TYPES, emailTypesOf("business")],
+  );
+  return {
+    quota: config.emailQuota.quota,
+    sent24h: row?.sent ?? 0,
+    patientLimit: emailQuotaLimits().patient,
+    waiting: { patient: row?.patient ?? 0, business: row?.business ?? 0 },
+  };
+}
+
+/**
+ * Emails al paciente que provoca alguien de fuera, sin cuenta (spec 009): la bienvenida de un registro
  * y los de una cita reservada en la página, puestos en cola en la misma transacción que la creó. Tienen
- * su propio tope (config.publicEmailsPerDay) dentro del total: quien llene el tope con reservas falsas
- * no deja a los negocios sin recordatorios ni avisos de sus citas. El total no sube: la cuenta de Gmail
- * tiene su propio tope diario (unos 500 envíos).
+ * su propio tope (config.publicEmailsPerDay): quien llene la cuenta con reservas falsas no deja a los
+ * negocios sin recordatorios ni avisos de sus citas.
  */
 const PUBLIC_ORIGIN = (alias: string) =>
   `(${alias}.type = 'welcome'
@@ -50,7 +135,7 @@ export const NEW_PATIENT_EMAILS_PER_DAY = 20;
 const COUNTED = "(n.status <> 'failed' or n.attempts > 0)";
 
 /** Un aviso por clave cada 24 h (aunque el tope frene muchos emails ese día). */
-async function alertOnce(key: string, alert: Alert): Promise<void> {
+export async function alertOnce(key: string, alert: Alert): Promise<void> {
   try {
     const { hits } = await incrementCounter(pool, `aviso:${key}`, 24 * 60 * 60_000);
     if (hits === 1) sendAlert(alert);
@@ -60,40 +145,13 @@ async function alertOnce(key: string, alert: Alert): Promise<void> {
 }
 
 /**
- * Motivo por el que este email no debe salir (tope diario de emails a terceros entre todos los
- * negocios), o null si puede salir.
+ * Motivo por el que este email no debe salir (tope de los emails al paciente que provoca el público,
+ * reservas online y registros, en 24 h entre todos los negocios), o null si puede salir. El email va
+ * en la misma transacción que la reserva (now() es su instante): así se sabe si es de una reserva que
+ * se está creando. Los avisos al negocio y al equipo no se frenan.
  */
-export async function thirdPartyEmailHold(db: Db, type: EmailType, appointmentId: string | null = null): Promise<string | null> {
-  if (!THIRD_PARTY_EMAIL_TYPES.includes(type)) return null;
-  const publicHold = await publicEmailHold(db, type, appointmentId);
-  if (publicHold) return publicHold;
-  const limit = config.thirdPartyEmailsPerDay;
-  const row = await one<{ count: number }>(
-    db,
-    `select count(*)::int as count from notifications n
-      where n.created_at between now() - interval '24 hours' and now() and n.type = any($1::text[]) and ${COUNTED}`,
-    [THIRD_PARTY_EMAIL_TYPES],
-  );
-  if ((row?.count ?? 0) < limit) return null;
-  console.warn(`[emails] Tope de ${limit} emails a terceros en 24 h: no se envía un email "${type}".`);
-  await alertOnce("tope-emails-terceros", {
-    title: "Agenda360: tope diario de emails a pacientes",
-    message:
-      `Se enviaron ${limit} emails a pacientes y registros nuevos en las últimas 24 h (THIRD_PARTY_EMAILS_PER_DAY). ` +
-      "Los siguientes quedan sin enviar hasta que baje la cuenta; los avisos a los negocios siguen saliendo. " +
-      "Si no es un ataque, sube el tope. Detalle en Actividad → Emails.",
-    priority: 4,
-    tags: ["warning"],
-  });
-  return `No enviado: se alcanzó el tope de ${limit} emails a terceros en 24 h.`;
-}
-
-/**
- * Tope de los emails que provoca el público (reservas online y registros) en 24 h, entre todos los
- * negocios. El email va en la misma transacción que la reserva (now() es su instante): así se sabe
- * si es de una reserva que se está creando.
- */
-async function publicEmailHold(db: Db, type: EmailType, appointmentId: string | null): Promise<string | null> {
+export async function publicEmailHold(db: Db, type: EmailType, appointmentId: string | null = null): Promise<string | null> {
+  if (EMAIL_PRIORITY[type] !== "patient") return null;
   const isPublic =
     type === "welcome" ||
     (appointmentId !== null &&
@@ -105,7 +163,7 @@ async function publicEmailHold(db: Db, type: EmailType, appointmentId: string | 
     `select count(*)::int as count from notifications n
       where n.created_at between now() - interval '24 hours' and now() and n.type = any($1::text[])
         and ${PUBLIC_ORIGIN("n")} and ${COUNTED}`,
-    [THIRD_PARTY_EMAIL_TYPES],
+    [PATIENT_EMAIL_TYPES],
   );
   if ((row?.count ?? 0) < limit) return null;
   console.warn(`[emails] Tope de ${limit} emails de reservas online y registros en 24 h: no se envía un email "${type}".`);

@@ -171,8 +171,8 @@ async function seed() {
     await insertRows(
       db,
       "subscriptions",
-      ["id", "business_id", "plan", "status", "current_period_end", "max_professionals"],
-      data.subscriptions.map((s) => [s.id, s.businessId, s.plan, s.status, s.currentPeriodEnd, s.maxProfessionals]),
+      ["id", "business_id", "plan", "status", "current_period_end", "plan_since", "max_professionals"],
+      data.subscriptions.map((s) => [s.id, s.businessId, s.plan, s.status, s.currentPeriodEnd, s.planSince, s.maxProfessionals]),
     );
     await insertRows(
       db,

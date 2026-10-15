@@ -39,19 +39,18 @@ async function activeAppointmentsInMonth(db: Db, businessId: string, month: stri
 }
 
 /**
- * Clientes que cuentan para el plan. No cuentan los que creó la página de reservas y nunca tuvieron
- * una cita sin cancelar: una ráfaga de reservas falsas (que el negocio cancela) no le gasta el cupo.
+ * Condición SQL «el cliente `alias` cuenta para el plan». No cuentan los que creó la página de reservas
+ * y nunca tuvieron una cita sin cancelar: una ráfaga de reservas falsas (que el negocio cancela) no le
+ * gasta el cupo. La usan el tope del plan y el uso que ve el super admin («Cerca del límite», spec 015).
  */
+export const countsForPlanSql = (alias: string) =>
+  `(${alias}.source <> 'booking_page'
+    or exists (select 1 from appointments plan_a where plan_a.client_id = ${alias}.id and plan_a.status <> 'cancelled'))`;
+
+/** Clientes que cuentan para el plan (ver countsForPlanSql). */
 async function countClients(db: Db, businessId: string) {
   return (
-    await one<{ count: number }>(
-      db,
-      `select count(*) from clients c
-        where c.business_id = $1
-          and (c.source <> 'booking_page'
-               or exists (select 1 from appointments a where a.client_id = c.id and a.status <> 'cancelled'))`,
-      [businessId],
-    )
+    await one<{ count: number }>(db, `select count(*) from clients c where c.business_id = $1 and ${countsForPlanSql("c")}`, [businessId])
   )?.count ?? 0;
 }
 

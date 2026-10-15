@@ -1,9 +1,18 @@
 import { waitUntil } from "@vercel/functions";
 import { config } from "../config.ts";
-import { many, pool } from "../db/pool.ts";
+import { many, one, pool } from "../db/pool.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { escapeHtml } from "../shared/lib/email/layout.ts";
 import { getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
+import {
+  EMAIL_PRIORITY_ORDER,
+  QUOTA_WAIT_NOTE,
+  alertOnce,
+  emailQuotaLimits,
+  emailTypesOf,
+  sentLast24h,
+  type EmailPriority,
+} from "./email-limits.ts";
 import { createGmailSender } from "./gmail-transport.ts";
 import { isQuietTime, isReminderEmail, isReminderSql, minutesUntilQuietEnds, minutesUntilStart, reminderCurrentSql } from "./reminder-rules.ts";
 
@@ -19,6 +28,11 @@ import { isQuietTime, isReminderEmail, isReminderSql, minutesUntilQuietEnds, min
  * durante CLAIM_MINUTES (next_attempt_at), y cada email se marca como enviado apenas sale: si el
  * proceso muere a mitad de un lote (tiempo máximo de Lambda, de Vercel o de Actions), lo ya
  * enviado no se repite y lo pendiente vuelve a la cola al vencer la reserva.
+ *
+ * El cupo diario de la cuenta de Gmail (spec 015) se mira al tomar cada lote: salen primero los del
+ * equipo, después los del paciente y al final los del negocio (EMAIL_PRIORITY, en email-limits.ts),
+ * cada nivel hasta su límite. Lo que no cabe espera en la cola sin gastar intentos (nunca se descarta)
+ * y sale en cuanto la ventana de 24 h libera cupo, por orden de llegada.
  */
 
 /**
@@ -34,6 +48,8 @@ const RETRY_BASE_MINUTES = 5;
 /** Un lote queda reservado este tiempo mientras se envía: si el proceso muere, vuelve a la cola. */
 const CLAIM_MINUTES = 10;
 const BATCH_SIZE = 10;
+/** Un email que no cabe en el cupo de Gmail vuelve a mirarse a los 30 minutos, o antes si se libera cupo. */
+const QUOTA_WAIT_MINUTES = 30;
 const POLL_INTERVAL_MS = 60_000;
 /**
  * Envío al momento en Lambda (antes de responder) y en Vercel (después, con waitUntil): un lote y este
@@ -80,6 +96,8 @@ interface QueuedEmail {
   timezone: string | null;
   /** El recordatorio es de la fecha y hora actuales de la cita y de uno de sus pacientes (ver reminderCurrentSql). */
   reminderCurrent: boolean | null;
+  /** Copia al profesional de un recordatorio: si a algún paciente le llegó ese recordatorio (null en los demás). */
+  reminderSent: boolean | null;
 }
 
 /** El contenido que sale: la contraseña sólo existe en el email enviado; en el registro queda oculta. */
@@ -119,6 +137,8 @@ export interface EmailQueueReport {
   failed: number;
   /** Direcciones de demostración y recordatorios que ya no valen: se descartan sin enviar. */
   skipped: number;
+  /** Esperan en la cola el cupo diario de Gmail al terminar la pasada (spec 015): salen después, sin perderse. */
+  waiting: number;
   /** Errores distintos, sin direcciones: el aviso no debe llevar datos de los clientes. */
   errors: string[];
 }
@@ -141,51 +161,161 @@ type ReminderCheck = { action: "send" } | { action: "discard"; reason: string } 
 
 /**
  * Un recordatorio (o su copia al profesional) se comprueba otra vez antes de salir (puede llevar un
- * rato en cola o reintentándose): si la cita se canceló, cambió de fecha u hora o ya empezó, se
- * descarta (el cuerpo guardado diría algo falso); en las horas de silencio del negocio, espera a las 7:00.
+ * rato en cola, reintentándose o esperando el cupo de Gmail): si la cita se canceló, cambió de fecha u
+ * hora o ya empezó, se descarta (el cuerpo guardado diría algo falso, o ya no llega a tiempo); en las
+ * horas de silencio del negocio, espera a las 7:00.
+ *
+ * La copia al profesional de un recordatorio que ya le llegó al paciente sale aunque la cita haya
+ * cambiado o empezado mientras esperaba el cupo (spec 015): es la copia de lo que recibió el paciente y
+ * nunca se descarta. La de un recordatorio que no salió se descarta con él.
  */
 function checkReminder(email: QueuedEmail): ReminderCheck {
   if (!isReminderEmail(email)) return { action: "send" };
-  if (!email.appointmentStatus || !["pending", "confirmed"].includes(email.appointmentStatus) || !email.reminderCurrent) {
-    return { action: "discard", reason: "Recordatorio descartado: la cita se canceló o cambió de fecha u hora." };
-  }
   const now = zonedNowOf(email);
-  if (minutesUntilStart(email.appointmentDate!, email.appointmentTime!, now) <= 0) {
-    return { action: "discard", reason: "Recordatorio descartado: la cita ya empezó." };
+  if (!email.reminderSent) {
+    if (!email.appointmentStatus || !["pending", "confirmed"].includes(email.appointmentStatus) || !email.reminderCurrent) {
+      return { action: "discard", reason: "Recordatorio descartado: la cita se canceló o cambió de fecha u hora." };
+    }
+    if (minutesUntilStart(email.appointmentDate!, email.appointmentTime!, now) <= 0) {
+      return { action: "discard", reason: "Recordatorio descartado: la cita ya empezó." };
+    }
   }
   if (isQuietTime(now)) return { action: "postpone", minutes: minutesUntilQuietEnds(now) };
   return { action: "send" };
 }
 
+/** Un recordatorio (no la copia de uno que ya salió) de una cita que ya empezó: no se reintenta. */
+function isLateReminder(email: QueuedEmail): boolean {
+  return (
+    isReminderEmail(email) &&
+    !email.reminderSent &&
+    email.appointmentDate !== null &&
+    minutesUntilStart(email.appointmentDate, email.appointmentTime!, zonedNowOf(email)) <= 0
+  );
+}
+
+/** Lista SQL de los tipos de un nivel (constantes del código: ver EMAIL_PRIORITY). */
+const typeList = (priority: EmailPriority) =>
+  emailTypesOf(priority)
+    .map((type) => `'${type}'`)
+    .join(", ");
+
 /**
- * Toma de la cola hasta BATCH_SIZE emails listos para enviar (los más antiguos) y los reserva
- * durante CLAIM_MINUTES, en una sola consulta: otro proceso que mire la cola a la vez no los ve
- * (skip locked) ni los toma mientras dure la reserva. Cuenta el intento desde ya.
+ * El nivel de un email en SQL: 0 el equipo, 1 el paciente y 2 el negocio. Un tipo que no esté en
+ * EMAIL_PRIORITY (no debería: lo comprueban las pruebas) va con el negocio, el que menos cupo usa.
  */
-async function claimBatch(skipReminders: boolean): Promise<QueuedEmail[]> {
-  return many<QueuedEmail>(
+const levelSql = (alias: string) =>
+  `case when ${alias}.type in (${typeList("team")}) then 0 when ${alias}.type in (${typeList("patient")}) then 1 else 2 end`;
+
+/**
+ * Las copias de un recordatorio (dedupe_key "<clave del recordatorio>:copy"): si a algún paciente le
+ * llegó ese recordatorio (el principal tiene la misma clave; los demás, la clave y ":<paciente>").
+ */
+const reminderSentSql = (alias: string) =>
+  `case when ${alias}.type = 'appointment_copy' and coalesce(${alias}.dedupe_key, '') like 'reminder:%:copy' then exists (
+     select 1 from notifications r
+      where r.type = 'appointment_reminder' and r.status = 'sent'
+        and (r.dedupe_key = left(${alias}.dedupe_key, -5) or starts_with(r.dedupe_key, left(${alias}.dedupe_key, -5) || ':'))) end`;
+
+/** Lo que tomó un lote de la cola y si el cupo de Gmail dejó fuera algo de lo que estaba listo. */
+interface Claim {
+  emails: QueuedEmail[];
+  /** Algún nivel llegó a su límite: lo suyo que estaba listo quedó esperando (QUOTA_WAIT_NOTE). */
+  limited: boolean;
+}
+
+/**
+ * Toma de la cola hasta BATCH_SIZE emails listos para enviar y los reserva durante CLAIM_MINUTES, en
+ * una sola consulta: otro proceso que mire la cola a la vez no los ve (skip locked) ni los toma
+ * mientras dure la reserva. Cuenta el intento desde ya.
+ *
+ * El cupo de Gmail (spec 015): primero los del equipo, después los del paciente y al final los del
+ * negocio (y dentro de cada nivel, los más antiguos); cada uno entra si, con los enviados en las
+ * últimas 24 h y los de antes en el lote, no pasa el límite de su nivel. Como los límites bajan de un
+ * nivel al siguiente, lo que no entra es siempre el final del lote: un email del negocio nunca le quita
+ * el sitio a uno del paciente. Los que esperan el cupo se miran en cada lote aunque su hora no haya
+ * llegado, así salen en cuanto hay cupo y antes que los nuevos de su nivel.
+ *
+ * Lo que no cabe se queda en cola (QUOTA_WAIT_NOTE, a los QUOTA_WAIT_MINUTES), sin sumar el intento, y
+ * al llegar al límite del paciente se avisa una vez al día por ntfy, sólo con cifras.
+ */
+async function claimBatch(skipReminders: boolean): Promise<Claim> {
+  const limits = emailQuotaLimits();
+  const sent = await sentLast24h(pool);
+  const notReminder = (alias: string) => (skipReminders ? `and not ${isReminderSql(alias)}` : "");
+  const emails = await many<QueuedEmail>(
     pool,
-    `with claimed as (
-       update notifications
-          set attempts = attempts + 1, next_attempt_at = now() + make_interval(mins => $2)
-        where id in (
-          select id from notifications
-           where status = 'queued' and next_attempt_at <= now()
-                 ${skipReminders ? `and not ${isReminderSql("notifications")}` : ""}
-           order by created_at
-           limit $1
-             for update skip locked)
-    returning id, type, to_email, subject, body, html, secret, attempts, appointment_id, dedupe_key, created_at
+    `with candidates as materialized (
+       select n.id, n.created_at, ${levelSql("n")} as level
+         from notifications n
+        where n.status = 'queued' and (n.next_attempt_at <= now() or n.last_error = $3)
+              ${notReminder("n")}
+        order by level, n.created_at
+        limit $1
+          for update skip locked
+     ),
+     fitting as (
+       select r.id
+         from (select c.id, c.level, row_number() over (order by c.level, c.created_at) as position from candidates c) r
+        where $4::int + r.position <= case r.level when 0 then $5::int when 1 then $6::int else $7::int end
+     ),
+     claimed as (
+       update notifications n
+          set attempts = n.attempts + 1, next_attempt_at = now() + make_interval(mins => $2),
+              last_error = case when n.last_error = $3 then null else n.last_error end
+         from fitting f
+        where n.id = f.id
+    returning n.id, n.type, n.to_email, n.subject, n.body, n.html, n.secret, n.attempts, n.appointment_id, n.dedupe_key, n.created_at
      )
      select c.id, c.type, c.to_email as "to", c.subject, c.body, c.html, c.secret, c.attempts, c.dedupe_key as "dedupeKey",
             a.status as "appointmentStatus", a.date as "appointmentDate", a.start_time as "appointmentTime",
-            b.timezone, ${reminderCurrentSql("c", "a")} as "reminderCurrent"
+            b.timezone, ${reminderCurrentSql("c", "a")} as "reminderCurrent", ${reminderSentSql("c")} as "reminderSent"
        from claimed c
        left join appointments a on ${isReminderSql("c")} and a.id = c.appointment_id
        left join businesses b on b.id = a.business_id
-      order by c.created_at`,
-    [BATCH_SIZE, CLAIM_MINUTES],
+      order by ${levelSql("c")}, c.created_at`,
+    [BATCH_SIZE, CLAIM_MINUTES, QUOTA_WAIT_NOTE, sent, limits.team, limits.patient, limits.business],
   );
+
+  // Los niveles que llegaron a su límite (si llega uno, también los que van después): lo suyo que
+  // está listo espera el cupo, sin gastar un intento.
+  const used = sent + emails.length;
+  const fullFrom = EMAIL_PRIORITY_ORDER.findIndex((priority) => used >= limits[priority]);
+  if (fullFrom === -1) return { emails, limited: false };
+  await pool.query(
+    `with waiting as (
+       select n.id from notifications n
+        where n.status = 'queued' and n.next_attempt_at <= now() and n.last_error is distinct from $1
+          and ${levelSql("n")} >= $2 ${notReminder("n")}
+          for update skip locked
+     )
+     update notifications n set next_attempt_at = now() + make_interval(mins => $3), last_error = $1
+       from waiting w where n.id = w.id`,
+    [QUOTA_WAIT_NOTE, fullFrom, QUOTA_WAIT_MINUTES],
+  );
+  if (used >= limits.patient) {
+    const { quota } = config.emailQuota;
+    await alertOnce("cupo-gmail", {
+      title: "Agenda360: se llegó al cupo de Gmail",
+      message:
+        `Van ${used} envíos en las últimas 24 h y el cupo de la cuenta es de ${quota} (EMAIL_DAILY_QUOTA). ` +
+        `Esperan en la cola ${await countWaiting()} emails al paciente y al negocio: salen en cuanto haya cupo, sin perderse. ` +
+        "Las contraseñas y los avisos de seguridad del equipo siguen saliendo. Detalle en Salud de /admin.",
+      priority: 4,
+      tags: ["warning"],
+    });
+  }
+  return { emails, limited: true };
+}
+
+/** Emails que esperan el cupo de Gmail. */
+async function countWaiting(): Promise<number> {
+  const row = await one<{ count: number }>(
+    pool,
+    "select count(*)::int as count from notifications where status = 'queued' and last_error = $1",
+    [QUOTA_WAIT_NOTE],
+  );
+  return row?.count ?? 0;
 }
 
 /** Emails reservados que no se llegaron a enviar (se acabó el tiempo): vuelven a la cola ya mismo. */
@@ -242,9 +372,7 @@ async function deliver(email: QueuedEmail, send: (email: OutgoingEmail) => Promi
     // Sin la dirección: el cron corre en GitHub Actions, cuyos registros son públicos.
     console.error(`[email] No se pudo enviar el email ${email.id}: ${scrubEmails(message)}`);
     // Último intento, o un recordatorio de una cita que ya empezó: no se reintenta.
-    const giveUp =
-      email.attempts >= MAX_ATTEMPTS ||
-      (isReminderEmail(email) && minutesUntilStart(email.appointmentDate!, email.appointmentTime!, zonedNowOf(email)) <= 0);
+    const giveUp = email.attempts >= MAX_ATTEMPTS || isLateReminder(email);
     await pool.query(
       `update notifications
           set last_error = $2,
@@ -281,7 +409,7 @@ let pendingRun = false;
 export async function processEmailQueue(
   options: { maxBatches?: number; deadline?: number; skipReminders?: boolean; send?: (email: OutgoingEmail) => Promise<void> } = {},
 ): Promise<EmailQueueReport> {
-  const report: EmailQueueReport = { sent: 0, retrying: 0, failed: 0, skipped: 0, errors: [] };
+  const report: EmailQueueReport = { sent: 0, retrying: 0, failed: 0, skipped: 0, waiting: 0, errors: [] };
   const send = options.send ?? (transporter ? sendWithGmail : null);
   if (!send) return report;
   if (processing) {
@@ -291,11 +419,15 @@ export async function processEmailQueue(
   processing = true;
   const hasTime = () => options.deadline === undefined || Date.now() < options.deadline;
   let batches = 0;
+  let limited = false;
   try {
     do {
       pendingRun = false;
       let failed = false;
-      const batch = await claimBatch(options.skipReminders ?? false);
+      const claim = await claimBatch(options.skipReminders ?? false);
+      const batch = claim.emails;
+      limited ||= claim.limited;
+      const sentBefore = report.sent;
       for (const [index, email] of batch.entries()) {
         if (!hasTime()) {
           await release(batch.slice(index));
@@ -304,9 +436,11 @@ export async function processEmailQueue(
         if (!(await deliver(email, send, report))) failed = true;
       }
       batches++;
-      // Lote completo y sin errores: puede haber más en cola. Con errores se reintenta más tarde.
-      if (batch.length === BATCH_SIZE && !failed) pendingRun = true;
+      // Lote completo y sin errores: puede haber más en cola. Con errores se reintenta más tarde. Si el
+      // cupo cortó el lote y algo no salió (descartado o en horas de silencio), queda cupo para otro.
+      if (!failed && (batch.length === BATCH_SIZE || (claim.limited && report.sent - sentBefore < batch.length))) pendingRun = true;
     } while (pendingRun && hasTime() && batches < (options.maxBatches ?? Number.POSITIVE_INFINITY));
+    if (limited) report.waiting = await countWaiting();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[email] Error al procesar la cola:", scrubEmails(message));

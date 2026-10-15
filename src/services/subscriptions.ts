@@ -14,9 +14,10 @@ export function periodEndFor(planId: PlanId): string | null {
 }
 
 /**
- * Cambio de plan (sin cobro hasta integrar pagos). Lo usan el propietario desde
- * Configuración y el super admin desde el panel de plataforma. Con pagos reales lo
- * aplicaría el webhook del proveedor (Stripe).
+ * Cambio de plan (sin cobro hasta integrar pagos). Lo usa el super admin desde el panel de
+ * plataforma: en la ficha del negocio o al aprobar una solicitud. Guarda desde cuándo está en el
+ * plan (plan_since, spec 015) sólo si el plan cambia. Con pagos reales lo aplicaría el webhook del
+ * proveedor (Stripe).
  */
 export async function applyPlanChange(
   db: Db,
@@ -63,7 +64,8 @@ export async function applyPlanChange(
   const previous = getPlan(subscription.plan);
   const updated = (await one<Subscription>(
     db,
-    `update subscriptions set plan = $2, status = 'active', current_period_end = $3
+    `update subscriptions set plan = $2, status = 'active', current_period_end = $3,
+            plan_since = case when plan = $2 then plan_since else now() end
       where id = $1
       returning ${subscriptionColumns()}`,
     [subscription.id, plan.id, periodEndFor(plan.id)],

@@ -83,7 +83,7 @@ export async function insertBusiness(
     [business.id, owner?.id ?? null, owner ? getFullName(owner) : profile.name, owner?.avatarUrl ?? null],
   ))!;
   await db.query(
-    "insert into subscriptions (business_id, plan, status, current_period_end) values ($1, $2, 'active', $3)",
+    "insert into subscriptions (business_id, plan, status, current_period_end, plan_since) values ($1, $2, 'active', $3, now())",
     [business.id, params.plan, periodEndFor(params.plan)],
   );
   for (const day of params.schedules) {

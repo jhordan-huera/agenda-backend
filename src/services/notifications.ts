@@ -7,7 +7,7 @@ import { joinNames } from "../shared/lib/format.ts";
 import { addDaysISO, getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
 import type { Appointment, BankAccount, Business, EmailType } from "../shared/types/index.ts";
 import { appointmentClientIds } from "./appointment-clients.ts";
-import { newPatientEmailHold, thirdPartyEmailHold } from "./email-limits.ts";
+import { newPatientEmailHold, publicEmailHold } from "./email-limits.ts";
 import { PASSWORD_MASK, scheduleEmailDelivery } from "./mailer.ts";
 import { isQuietTime, minutesUntilStart, reminderCopyKey, reminderKeyFor, reminderKeySql } from "./reminder-rules.ts";
 
@@ -38,7 +38,8 @@ export type ChangeOrigin = "dashboard" | "booking_page" | "patient_link";
 
 /**
  * Pone el email en cola. Devuelve false si no va a salir: ya existía (recordatorio duplicado) o lo
- * frenó un tope diario (ver email-limits.ts: queda en el historial como fallido, con el motivo).
+ * frenó un tope contra el abuso (ver email-limits.ts: queda en el historial como fallido, con el
+ * motivo). El cupo de Gmail no se mira aquí sino al enviar (mailer.ts): lo que no cabe espera en la cola.
  * `secret`: la contraseña que el mailer pone en lugar de PASSWORD_MASK al enviarlo (ver mailer.ts).
  * `hold`: motivo para no enviarlo, si quien lo pone en cola ya lo sabe.
  */
@@ -55,7 +56,7 @@ export async function queueEmail(
     hold?: string | null;
   } & EmailContent,
 ): Promise<boolean> {
-  const hold = message.hold ?? (await thirdPartyEmailHold(db, message.type, message.appointmentId ?? null));
+  const hold = message.hold ?? (await publicEmailHold(db, message.type, message.appointmentId ?? null));
   const result = await db.query(
     `insert into notifications
        (business_id, type, to_email, subject, body, html, appointment_id, status, secret, dedupe_key, last_error)

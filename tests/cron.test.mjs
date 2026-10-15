@@ -158,7 +158,7 @@ ntfy.close();
 
 console.log("Aviso de ntfy");
 const base = { reminders: 0, sentSinceLastRun: 0, sentEmails: [], since: null, pending: 0, durationMs: 10 };
-const emails = (patch) => ({ sent: 0, retrying: 0, failed: 0, skipped: 0, errors: [], ...patch });
+const emails = (patch) => ({ sent: 0, retrying: 0, failed: 0, skipped: 0, waiting: 0, errors: [], ...patch });
 const sentEmail = (type, to, clientName = null, date = null, startTime = null, businessName = "Dra. Nadia", appointmentId = null) => ({
   type,
   to,
@@ -236,6 +236,11 @@ ok(/Sí se enviaron \(1\):\n\nRecordatorio de cita · 1\n• Dra\. Nadia · mié
 notice = buildNotice({ ...base, pending: 4, emails: emails({ failed: 2, retrying: 1, errors: ["invalid_grant"] }) });
 ok(notice?.priority === 4 && /3 correos no se pudieron enviar/.test(notice.title) && /No se enviarán.*2/.test(notice.message) && /Siguen en cola: 4/.test(notice.message), "fallos definitivos: prioridad alta", notice);
 ok(buildNotice({ ...base, emails: emails() }, { gmailConfigured: false }) === null, "sin Gmail pero sin nada en cola: no avisa");
+// Spec 015: el cupo de Gmail. Los que esperan van en la línea del aviso, pero solos no avisan (eso lo hace la API, una vez al día).
+ok(buildNotice({ ...base, pending: 6, emails: emails({ waiting: 6 }) }) === null, "sólo con emails esperando el cupo de Gmail: no avisa en cada pasada");
+notice = buildNotice({ ...base, pending: 6, sentSinceLastRun: 1, sentEmails: sample.slice(0, 1), emails: emails({ sent: 1, waiting: 6 }) });
+ok(/Esperan el cupo diario de Gmail: 6 \(salen en cuanto haya cupo, sin perderse\)/.test(notice?.message ?? ""), "con envíos, dice cuántos esperan el cupo de Gmail", notice?.message);
+ok(!/cupo/.test(buildNotice({ ...base, sentSinceLastRun: 1, sentEmails: sample.slice(0, 1), emails: emails({ sent: 1 }) })?.message ?? ""), "sin nadie esperando, no habla del cupo");
 
 console.log("Avisos en la app que no salen (spec 013)");
 const pushReport = (patch) => ({ queued: 0, sent: 0, retrying: 0, failed: 0, removedDevices: 0, errors: [], ...patch });

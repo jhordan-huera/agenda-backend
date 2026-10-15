@@ -531,14 +531,14 @@ r = await createSeries(owner, appointmentInput({ clientId: ines.id, professional
 emails = emailsOf(r.body.created.map((a: Appointment) => a.id));
 ok(emails.join(",") === `appointment_series|${ines.email},appointment_copy|${PRO_EMAIL}`, "con la copia a su email, no le llega además el aviso", emails);
 
-console.log("Crear: el tope diario de emails (spec 009)");
-const thirdParty = count(
-  `select count(*) from notifications where created_at > now() - interval '24 hours'
-     and type in ('welcome', 'booking_created', 'appointment_confirmed', 'appointment_updated', 'appointment_cancelled', 'appointment_reminder',
-                  'appointment_pending', 'appointment_completed', 'appointment_no_show', 'appointment_series', 'appointment_series_cancelled')
-     and (status <> 'failed' or attempts > 0)`,
+console.log("Crear: con el cupo de Gmail lleno, nada se descarta al ponerlo en cola (spec 015)");
+// Antes, el tope de 400 emails a terceros los marcaba «No enviado…» y no salía la copia. Ahora el cupo se
+// mira al enviar (tests/email-quota.test.ts): el email de la serie y su copia esperan en la cola.
+sql(
+  `insert into notifications (business_id, type, to_email, subject, body, status, attempts, sent_at)
+   select null, 'appointment_confirmed', 'cupo' || g || '@correo.ec', 'Cupo', '', 'sent', 1, now() from generate_series(1, 3) g`,
 );
-const capped = await startApi({ THIRD_PARTY_EMAILS_PER_DAY: String(Math.max(1, thirdParty)) });
+const capped = await startApi({ EMAIL_DAILY_QUOTA: "3", EMAIL_TEAM_RESERVE: "0", EMAIL_PATIENT_RESERVE: "1" });
 try {
   const ownerCapped = await login("jhordan@demo.com", { base: capped.base });
   const p10 = agenda();
@@ -547,10 +547,18 @@ try {
     { date: week(0), startTime: "10:00" },
     { date: week(1), startTime: "10:00" },
   ], B);
-  const held = sql(`select type || '|' || status || '|' || coalesce(last_error, '') from notifications where appointment_id = '${r.body.created?.[0]?.id}'`);
-  ok(r.status === 201 && /^appointment_series\|failed\|No enviado: se alcanzó el tope/.test(held) && !held.includes("appointment_copy"), "el email de la serie queda «No enviado…» y no sale la copia", held);
+  const held = sql(
+    `select string_agg(type || '|' || status || '|' || coalesce(last_error, ''), ',' order by created_at, type desc)
+       from notifications where appointment_id = '${r.body.created?.[0]?.id}'`,
+  );
+  ok(
+    r.status === 201 && held.split(",").includes("appointment_series|queued|") && held.split(",").includes("appointment_copy|queued|") && !held.includes("|failed|"),
+    "el email de la serie y su copia quedan en cola, sin «No enviado…»",
+    held,
+  );
 } finally {
   capped.stop();
+  sql("delete from notifications where to_email like 'cupo%@correo.ec'");
 }
 
 console.log("Recordatorios: uno por cita, el día que toca");

@@ -13,7 +13,9 @@
  * (por defecto https://ntfy.sh), APP_URL (enlace del aviso) y SUPABASE_URL y
  * SUPABASE_SERVICE_ROLE_KEY (sin ellas no se borran los comprobantes de más de 3 meses). Avisos en el
  * celular (spec 013): VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY (sin ellas no se envían: quedan en cola y
- * caducan) y, opcional, VAPID_SUBJECT. Las campanas del panel (spec 014) no necesitan nada más.
+ * caducan) y, opcional, VAPID_SUBJECT. Las campanas del panel (spec 014) no necesitan nada más. El cupo
+ * de Gmail (spec 015), opcional: EMAIL_DAILY_QUOTA, EMAIL_TEAM_RESERVE y EMAIL_PATIENT_RESERVE, los
+ * mismos valores que la API.
  *
  * Prueba local: node --env-file=.env scripts/cron.ts
  */
@@ -134,6 +136,8 @@ export function buildNotice(report: ScheduledTasksReport, options: { gmailConfig
     emails.retrying > 0 && `Se reintentarán más tarde (la espera crece con cada fallo): ${emails.retrying}`,
     emails.failed > 0 && `No se enviarán (agotaron los reintentos): ${emails.failed}`,
     report.pending > 0 && `Siguen en cola: ${report.pending}`,
+    // Spec 015: el cupo diario de Gmail se llenó; salen en cuanto haya cupo (el aviso del cupo lo da la API una vez al día).
+    (emails.waiting ?? 0) > 0 && `Esperan el cupo diario de Gmail: ${emails.waiting} (salen en cuanto haya cupo, sin perderse)`,
     businessFailures > 0 &&
       `${plural(businessFailures, "negocio", "negocios")} con error al preparar los recordatorios (detalle en el registro de Actions); los demás siguieron`,
   ].filter(Boolean) as string[];
@@ -392,6 +396,7 @@ async function main(): Promise<void> {
         `enviados desde la anterior: ${report.sentSinceLastRun} · ` +
         `negocios con error: ${report.reminderFailures} · ` +
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +
+        `esperan el cupo de Gmail: ${report.emails.waiting ?? 0} · ` +
         `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ` +
         `emails sin contenido (más de 90 días): ${report.emailContentPurged} · ` +
         `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"}` +

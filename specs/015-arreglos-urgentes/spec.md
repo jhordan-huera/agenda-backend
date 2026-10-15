@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-15
 
-**Estado**: Aprobada (2026-10-15; plan aprobado con el alcance reducido)
+**Estado**: Implementada (2026-10-15)
 
 **Repos**:
 - **agenda-backend** (principal): el tope de emails y los datos del super admin.
