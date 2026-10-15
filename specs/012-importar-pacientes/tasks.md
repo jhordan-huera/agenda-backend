@@ -13,7 +13,8 @@ producto de ese día: los importados no cuentan como «pacientes nuevos del mes�
   - suite nueva: `tests/client-import.test.ts`;
   - suites que se actualizan: `booking-alert` y `cron`.
 - **Front:** build, lint y el recorrido con Playwright del quickstart, en escritorio y a 390 px.
-- **Beta:** queda para después (ver Fase 6).
+- **Beta:** build, lint y su recorrido con Playwright (quickstart §4), en escritorio y a 390 px (ver
+  Fase 6).
 
 **Rutas:** `back/` = agenda-backend, `front/` = agenda-front, `beta/` = la beta. Las decisiones R1–R12
 están en `research.md`.
@@ -77,8 +78,17 @@ están en `research.md`.
 
 ## Fase 6: Beta y cierre
 
-- [ ] T022 Beta (R12, RF-011): **queda para después**, por decisión del dueño del producto al encargar
-  esta implementación (2026-10-14). Lo que hay que copiar está en R12 y en «Pendientes» del reporte.
+- [x] T022 Beta (R12, RF-011), con copia previa de su código (`beta-src-antes-012.tgz`). Se hizo al
+  final (2026-10-15), después de fusionar la spec en `dev`: la beta no tiene git y así los agentes que
+  trabajaban en paralelo no chocaban en ella.
+  - la pantalla, `features/clients/import/*`, `lib/csv.ts`, `lib/validations/client-import.ts`, la
+    plantilla y lo que la spec cambió en el router, Clientes, el permiso, los tipos, el hook y el
+    contrato del repositorio;
+  - `read-excel-file` 9.3.12 con la versión fija;
+  - repositorio de prueba: `importMany` con `classifyImportRows`, el cupo de `mock/plan-limits.ts`
+    (`remainingClientSlots`), origen «import», sin emails, una entrada `client.imported` y el aviso
+    «La demo no tiene espacio…» si `localStorage` se llena;
+  - build, lint y el recorrido `beta-verificar-012.mjs` (quickstart §4).
 - [x] T023 Cierre: README del backend (y del front), `reporte.md`, estado de la spec y commits sin
   firma de IA.
 

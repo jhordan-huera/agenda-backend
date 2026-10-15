@@ -2,10 +2,9 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev, sin la beta · **Fecha**: 2026-10-14
+**Estado**: Implementada en dev, con la beta · **Fecha**: 2026-10-14 (la beta, 2026-10-15)
 
-**Repos**: los dos (agenda-backend y agenda-front); la beta queda para después · **Migración**: Sí:
-`039_client_import.sql`
+**Repos**: los dos (agenda-backend y agenda-front) y la beta · **Migración**: Sí: `039_client_import.sql`
 
 ## Resumen
 
@@ -22,14 +21,15 @@ ningún email. El archivo se lee en el navegador y no se guarda.
 |---|---|---|---|
 | H1 – Importar una lista | P1 | Hecha | Tres pasos (archivo, columnas y revisión) y el resultado; plantilla descargable |
 | H2 – Sin sorpresas para los pacientes ni para la ficha | P1 | Hecha | Sin emails; los que ya existían no se tocan; las repetidas y los datos obligatorios del negocio |
-| Beta (RF-011) | — | Fuera | Queda para después, por decisión del dueño del producto al encargar la implementación |
+| Beta (RF-011) | — | Hecha | La misma pantalla con los datos de prueba. Se hizo al final, después de fusionar la spec en `dev`: la beta no tiene git, y así los agentes que trabajaban en paralelo no chocaban en ella |
 
 ## Comprobación
 
 Todo en local: PostgreSQL desechable para `npm test`; para el recorrido, un PostgreSQL propio en el
 54412 con los datos de demostración, la API en el 4182 y el front en el 5212 (con Vite) y en el 5213
-(el build con las cabeceras de `vercel.json`). Archivos de prueba inventados, con cédulas generadas por
-el algoritmo del dígito verificador. Nunca en Vercel ni contra Supabase.
+(el build con las cabeceras de `vercel.json`); la beta, en el 3199 con sus datos de prueba. Archivos de
+prueba inventados, con cédulas generadas por el algoritmo del dígito verificador. Nunca en Vercel ni
+contra Supabase.
 
 | Requisito o criterio | Resultado | Cómo se comprobó |
 |---|---|---|
@@ -43,7 +43,7 @@ el algoritmo del dígito verificador. Nunca en Vercel ni contra Supabase.
 | RF-008 – Un corte no duplica | Cumple | `client-import`: repetir la importación da 0 creados y 195 «ya existían»; dos peticiones iguales a la vez crean 40 en total, sin cédulas repetidas. Recorrido: con la petición cortada antes de llegar, «No sabemos si la importación terminó…» y reintentar importa todo; con la respuesta perdida después de que la API terminó, el mismo aviso y reintentar da todo «ya existía», sin duplicados |
 | RF-009 – Una entrada en la actividad y un aviso de ntfy | Cumple | `client-import`: una entrada `client.imported` («Importó 190 pacientes (3 ya existían, 5 con errores, 2 repetidas en el archivo)»), sólo si se creó alguno; `findPanelClients` no devuelve los importados y sí el del formulario; con un ntfy falso, el cron manda un aviso por importación (10 por pasada y «…y N importaciones más»), sin nombres ni emails, y la línea del registro dice «importaciones: N». `booking-alert` y `cron` |
 | RF-010 – Plantilla descargable | Cumple | Recorrido: «Descargar plantilla» baja `plantilla-pacientes.xlsx`; sin rellenar, «Esta hoja no tiene filas con datos…»; rellenada con 3 filas, importa 3. Con el build, el archivo se sirve como `.xlsx`, no como `index.html` |
-| RF-011 – La beta | Fuera | Queda para después (ver «Pendientes») |
+| RF-011 – La beta | Cumple | Build, lint y `npm audit`. Recorrido `beta-verificar-012.mjs`: 72 de 72, en dos pasadas (el botón para el propietario y una administradora, no para Recepción ni el rol Profesional; un CSV y un .xlsx con la revisión, los errores, una cédula demo y una repetida; sólo los válidos y nuevos con origen «import»; repetir no duplica; el tope de un negocio Free; la plantilla; ningún email en la bandeja simulada; una entrada de actividad por importación; el Inicio del super admin; 390 px; y «La demo no tiene espacio…» con `localStorage` lleno) |
 | CE-001 – 500 pacientes en menos de 2 minutos | Cumple (medido) | Recorrido con `pacientes-500.xlsx`: de elegir el archivo al aviso, 0,3 s con Vite y 0,1 s con el build (leer el Excel, 0,2 s; enviar e importar, 0,05 s). Falta sólo el tiempo de mirar la revisión |
 | CE-002 – Nunca duplicados por cédula | Cumple | `client-import`: al repetir y con dos a la vez, ninguna cédula repetida en el negocio (además del índice único de la migración 006) |
 | CE-003 – Ningún email a los importados | Cumple | Igual que RF-007 |
@@ -57,6 +57,9 @@ el algoritmo del dígito verificador. Nunca en Vercel ni contra Supabase.
   - las actualizadas: `booking-alert` (58) y `cron` (29).
 - **Front:** `npm run build` y `npm run lint` sin errores y sin avisos nuevos (los 2 avisos de siempre
   del build); `npm audit`, 0 vulnerabilidades.
+- **Beta:** `npm run build` (con los mismos 2 avisos de siempre: un trozo de más de 500 kB e
+  `inlineDynamicImports`) y `npm run lint` sin errores ni avisos; `npm audit`, 0 vulnerabilidades. El
+  lector de Excel queda en su propio trozo (`browser-….js`, 52 KB), como en el front.
 - **Lector de CSV** (`importar-012/scripts/probar-csv.ts` en el scratchpad, sin servidor): 12 de 12
   (`;`, `,`, tabulador, comillas, `""`, saltos de línea, BOM, `\r\n`, Windows-1252 y que `toCsv` da lo
   mismo que la exportación de la actividad de antes).
@@ -65,7 +68,9 @@ el algoritmo del dígito verificador. Nunca en Vercel ni contra Supabase.
   - con el build y las cabeceras de `vercel.json`: 59 de 59. Además: sin errores de CSP (el lector de
     Excel trabaja en un worker `blob:`, que `worker-src` ya permite), y el lector de Excel no se
     descarga al abrir el panel ni la página de importar ni con un CSV, sólo al elegir un .xlsx (un
-    trozo de 16 KB comprimido).
+    trozo de 16 KB comprimido);
+  - la beta (`shot/beta-verificar-012.mjs`, con Vite en el 3199): 72 de 72, en dos pasadas, en
+    escritorio y a 390 px.
 
 ## Cambios respecto al plan
 
@@ -91,13 +96,36 @@ el algoritmo del dígito verificador. Nunca en Vercel ni contra Supabase.
 - **La dependencia en la copia del front:** `npm install read-excel-file@9.3.12 --save-exact` cambió el
   enlace de `node_modules` por una carpeta propia de la copia de trabajo (no tocó la del repositorio).
   Al fusionar en `dev`, hay que hacer `npm install` en agenda-front.
-- **Beta:** no se hizo (ver «Pendientes»).
+- **Beta** (R12; copia previa del código en `beta-src-antes-012.tgz`):
+  - se hizo al final, el 2026-10-15, después de fusionar la spec en `dev`. No fue una decisión del
+    dueño del producto (como decía antes este reporte): la beta no tiene git, y dejarla para el final
+    evitó que los agentes que trabajaban en paralelo chocaran en ella;
+  - `Client.source` también es obligatorio en la beta: los pacientes demo y los del formulario guardan
+    `'dashboard'`, los de la página de reservas `'booking_page'` y una base ya guardada en un navegador
+    rellena con `'dashboard'` los que no lo tenían (R10). `StoredClient` deja de llevar su propio
+    `source`;
+  - el cupo sale de `remainingClientSlots`, que se añade a `mock/plan-limits.ts` como en la API (en vez
+    de usar `countClients` directamente);
+  - su Inicio del super admin tampoco cuenta los importados como pacientes nuevos, como
+    `admin-service.ts` (R12 no lo nombraba);
+  - no se copian `export-audit.ts` ni `api-repository.ts`: la beta no exporta la actividad ni habla con
+    la API. `downloadCsv` sólo la usa «Descargar las filas con errores»;
+  - la beta no tiene modo soporte: allí importan el propietario y los administradores;
+  - al abrir el panel, la beta corre su trabajo de recordatorios de las citas demo (puede dejar emails
+    de recordatorio en la bandeja simulada). La importación no deja ninguno: se comprobó justo antes y
+    justo después de importar, y que ningún email va a un importado;
+  - el recorrido usa sus propios archivos (`beta012/scripts/hacer-archivos-beta.py` en el scratchpad:
+    un CSV y un .xlsx con los mismos casos, con las cédulas demo de la beta) en vez de
+    `pacientes-200.xlsx`, cuyas cédulas «ya existían» son las de la base demo del backend;
+  - el aviso de espacio se comprobó como pasaría en una demo: una lista de 4.500 pacientes con notas
+    largas cabe (los datos pasan de 0,73 M a 4,94 M caracteres; el tope de `localStorage` en Chrome es
+    5,24 M) y una segunda igual da «La demo no tiene espacio…», con todo lo de antes intacto.
 
 ## Pendientes y riesgos
 
-- **Beta (RF-011):** queda para después. Lo que hay que copiar está en R12 de `research.md`: la
-  pantalla, `features/clients/import/*`, `lib/csv.ts`, `lib/validations/client-import.ts`, el permiso,
-  los tipos, la plantilla, la dependencia con la versión fija y `importMany` en su repositorio de prueba.
+- **Beta:** guarda todo en `localStorage` (unos 5,24 M caracteres en Chrome). Con unos 4.500 pacientes
+  con notas largas ya no cabe otra lista igual, y lo dice; para seguir con la demo, un archivo más
+  pequeño o «Restablecer datos demo» (Configuración del super admin).
 - **Archivos raros:** un .xlsx con fórmulas sin el valor calculado las lee vacías, y un CSV en otra
   codificación puede mostrar letras raras. Se ve en la revisión antes de importar.
 - **Otros países:** a una cédula de 9 dígitos sólo se le vuelve a poner el 0 en Ecuador.
@@ -117,7 +145,9 @@ el algoritmo del dígito verificador. Nunca en Vercel ni contra Supabase.
 | agenda-front | 551f93e | Spec 012: importar pacientes desde Excel o CSV |
 
 Este reporte, `tasks.md` y el estado de la spec van en un commit aparte del backend. Todo en la rama
-local `trabajo-012` de cada copia, para fusionarlo en `dev`.
+local `trabajo-012` de cada copia, para fusionarlo en `dev`. La beta no tiene git: sus cambios están en
+su carpeta (y la copia de antes, en `beta-src-antes-012.tgz`); su cierre en este reporte y en
+`tasks.md` va en otro commit del backend.
 
 ## Cómo publicarlo
 
@@ -150,7 +180,7 @@ saliera primero, el botón llamaría a una ruta que todavía no existe.
 4. **PR `dev` → `main` del front.** Al publicarse, mirar sin importar nada: Clientes muestra
    «Importar pacientes» y la plantilla se descarga.
 5. **Constitución:** ya está en 1.7.0 con el texto de esta spec; no cambia.
-6. **Beta:** queda para después.
+6. **Beta:** ya está actualizada en su carpeta (sin git).
 
 No hay variables nuevas en Vercel ni en GitHub.
 
