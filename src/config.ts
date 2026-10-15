@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { vapidKeysProblem } from "./services/web-push.ts";
 
 /**
  * Variables de entorno validadas al arrancar: si falta algo, el proceso termina con
@@ -65,6 +66,13 @@ const envSchema = z.object({
   // Verificación en dos pasos del super admin. Siempre obligatoria con datos reales (producción, la
   // nube o la base de producción desde este equipo); con una base local, sólo si vale "required".
   SUPER_ADMIN_2FA: z.enum(["required", "optional"]).optional(),
+  // Avisos en el celular (Web Push, spec 013): el par de claves propio de Agenda360, creado con
+  // `npm run push:keys`. Sin ellas (o si no son válidas) no hay avisos y la API funciona igual.
+  VAPID_PUBLIC_KEY: z.string().trim().optional(),
+  VAPID_PRIVATE_KEY: z.string().trim().optional(),
+  // El contacto que piden los servicios de avisos (mailto: o https:). Por defecto, APP_URL si es
+  // https y, si no, el email de GMAIL_USER.
+  VAPID_SUBJECT: z.string().trim().optional(),
 });
 
 // Una variable vacía cuenta como no puesta: en GitHub Actions, un secreto que no existe llega como "".
@@ -148,6 +156,25 @@ const captchaHostnames = [
   ),
 ];
 
+/**
+ * Avisos en el celular (spec 013). No se suman a lo que impide arrancar en la nube (R2 del plan): no
+ * protegen nada, y una clave mal copiada no puede dejar la agenda sin servicio. El registro dice qué
+ * falta, nunca un valor.
+ */
+const vapidProblem = vapidKeysProblem(env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
+const validSubject = env.VAPID_SUBJECT && /^(mailto:[^\s@]+@[^\s@]+|https:\/\/\S+)$/.test(env.VAPID_SUBJECT) ? env.VAPID_SUBJECT : null;
+if (env.VAPID_SUBJECT && !validSubject) console.warn("VAPID_SUBJECT no empieza por mailto: o https://: se usa el contacto por defecto.");
+const webPush = vapidProblem
+  ? null
+  : {
+      publicKey: env.VAPID_PUBLIC_KEY!.replace(/=+$/, ""),
+      privateKey: env.VAPID_PRIVATE_KEY!.replace(/=+$/, ""),
+      // Sin APP_URL https ni Gmail (sólo en local) queda un contacto reservado que no recibe nada.
+      subject:
+        validSubject ??
+        (appUrl.startsWith("https://") ? appUrl : env.GMAIL_USER ? `mailto:${env.GMAIL_USER}` : "mailto:avisos@agenda360.invalid"),
+    };
+
 const turnstile =
   env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY
     ? {
@@ -196,6 +223,15 @@ export const config = {
    * la base no es local y falta TWO_FACTOR_KEY (en la nube la API ni arranca).
    */
   twoFactorKey: env.TWO_FACTOR_KEY ?? (!hosted && !productionDbFromHere ? DEVELOPMENT_TWO_FACTOR_KEY : null),
+  /** Claves de los avisos en el celular (null: sin avisos; ver services/web-push.ts). */
+  webPush,
+  /** Por qué no hay avisos en el celular ("falta VAPID_PRIVATE_KEY"), sin valores; null si hay. Lo registran la API y el cron. */
+  webPushProblem: vapidProblem,
+  /**
+   * Las direcciones de aparatos en `http://127.0.0.1:<puerto>` (el servicio de avisos falso de las
+   * pruebas): sólo con una base local, nunca en la nube ni con la base de producción (R4).
+   */
+  pushAllowsLocalEndpoints: !hosted && !productionDbFromHere,
   /** Avisos por ntfy desde la API (null: sólo en el registro). */
   ntfy: env.NTFY_TOPIC ? { topic: env.NTFY_TOPIC, server: env.NTFY_SERVER.replace(/\/+$/, "") } : null,
   /**

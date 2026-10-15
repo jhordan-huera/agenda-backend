@@ -1,7 +1,7 @@
 // Cron de recordatorios (scripts/cron.ts, directo contra la base, sin Vercel), aviso de ntfy e IP real por el proxy.
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { buildNotice, describeSentEmails } from "../scripts/cron.ts";
+import { buildNotice, buildPushNotice, describePushLine, describeSentEmails } from "../scripts/cron.ts";
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { viaProxy as signedProxy } from "./helpers/proxy.mjs";
 
@@ -100,6 +100,12 @@ ok(
     received.every((n) => n === gmailNotice || /^Agenda360: (nueva reserva|más reservas|nueva cita|más citas|nuevo paciente|más pacientes nuevos)$/.test(n.title)),
   "avisa que faltan las credenciales de Gmail",
   received.map((n) => n.title),
+);
+ok(
+  /avisos en la app: enviados 0 · fallidos 0 · aparatos dados de baja 0 \(sin envío: faltan VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY\)/.test(run.output) &&
+    first.report.push?.sent === 0,
+  "la línea suma los avisos en la app (spec 013): sin claves VAPID dice que no los envía",
+  run.output.slice(-300),
 );
 run = await runScript();
 let second = lastRun();
@@ -202,6 +208,24 @@ ok(/Sí se enviaron \(1\):\n\nRecordatorio de cita · 1\n• Dra\. Nadia · mié
 notice = buildNotice({ ...base, pending: 4, emails: emails({ failed: 2, retrying: 1, errors: ["invalid_grant"] }) });
 ok(notice?.priority === 4 && /3 correos no se pudieron enviar/.test(notice.title) && /No se enviarán.*2/.test(notice.message) && /Siguen en cola: 4/.test(notice.message), "fallos definitivos: prioridad alta", notice);
 ok(buildNotice({ ...base, emails: emails() }, { gmailConfigured: false }) === null, "sin Gmail pero sin nada en cola: no avisa");
+
+console.log("Avisos en la app que no salen (spec 013)");
+const pushReport = (patch) => ({ queued: 0, sent: 0, retrying: 0, failed: 0, removedDevices: 0, errors: [], ...patch });
+ok(buildPushNotice({ ...base, emails: emails() }) === null && buildPushNotice({ ...base, emails: emails(), push: pushReport() }) === null, "sin avisos fallidos no dice nada");
+ok(buildPushNotice({ ...base, emails: emails(), push: pushReport({ sent: 3, failed: 2 }) }) === null, "si alguno salió, tampoco (un aparato suelto puede fallar)");
+const pushNotice = buildPushNotice({ ...base, emails: emails(), push: pushReport({ failed: 4, errors: ["fcm.googleapis.com, 403"] }) });
+ok(
+  pushNotice?.title === "Agenda360: los avisos en la app no salen" &&
+    pushNotice.message === "Fallaron 4 avisos en esta pasada (servicio: fcm.googleapis.com, 403). Revisa las claves VAPID en Vercel, Lambda y GitHub." &&
+    pushNotice.priority === 4 && pushNotice.click === "/admin/activity",
+  "si fallan y no sale ninguno: «los avisos en la app no salen», con el servicio y el código",
+  pushNotice,
+);
+ok(
+  describePushLine({ ...base, push: pushReport({ sent: 1, failed: 2, removedDevices: 3 }) }) === " · avisos en la app: enviados 1 · fallidos 2 · aparatos dados de baja 3" &&
+    describePushLine(base) === "",
+  "la línea del registro: sólo cifras",
+);
 
 console.log("IP real por el proxy del frontend");
 const lookup = (headers) =>

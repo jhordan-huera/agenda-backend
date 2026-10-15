@@ -33,6 +33,7 @@ import { listSchedules, peopleFor } from "./business-data-service.ts";
 import { receiptStorage } from "./file-storage.ts";
 import { notifyAppointmentChange } from "./notifications.ts";
 import { assertAppointmentLimit, assertClientLimit, planOf } from "./plan-limits.ts";
+import { notifyOnlineBooking } from "./push-notices.ts";
 import { findProfessional, listProfessionals } from "./professional-service.ts";
 
 /**
@@ -662,6 +663,8 @@ export const publicBookingService = {
         entityId: appointment.id,
         summary: `Nueva reserva online de ${await describeAppointment(db, appointment)}`,
       });
+      // Aviso en el celular del propietario (spec 013); si falla, la reserva sigue igual.
+      await notifyOnlineBooking(db, appointment);
 
       return toConfirmation(appointment, {
         business,

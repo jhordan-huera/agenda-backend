@@ -12,8 +12,10 @@ import { authRoutes } from "./routes/auth-routes.ts";
 import { businessRoutes, imageRoutes, userRoutes } from "./routes/business-routes.ts";
 import { fileRoutes } from "./routes/file-routes.ts";
 import { adminRoutes, publicRoutes } from "./routes/platform-routes.ts";
+import { pushRoutes } from "./routes/push-routes.ts";
 import { flushAlerts } from "./services/alerts.ts";
 import { flushEmailDelivery } from "./services/mailer.ts";
+import { flushPushDelivery } from "./services/push-delivery.ts";
 
 // helmet trae tipos ESM y CommonJS: según cómo los resuelva TypeScript (en local o al compilar
 // en Vercel), `default` es la función o el módulo entero. Se toma la función en ambos casos.
@@ -25,6 +27,9 @@ const helmet = (typeof helmetExport === "function" ? helmetExport : (helmetExpor
  * archivo es la entrada y cada petición llega a `app` como una función (ver README).
  */
 export const app = express();
+
+// Avisos en el celular (spec 013): sin claves la API funciona igual. El registro dice qué falta, nunca un valor.
+if (config.webPushProblem) console.warn(`Avisos en el celular desactivados: ${config.webPushProblem}.`);
 
 app.set("trust proxy", config.trustProxy);
 app.disable("x-powered-by");
@@ -59,12 +64,12 @@ app.use(cors({ origin: config.frontendUrls, credentials: true }));
 app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 // En AWS Lambda la ejecución se congela al responder: los emails que la petición puso en cola (y
-// los avisos por ntfy) se envían antes de que salga la respuesta (ver flushEmailDelivery).
+// los avisos por ntfy y en el celular) se envían antes de que salga la respuesta (ver flushEmailDelivery).
 if (config.onLambda) {
   app.use((_req, res, next) => {
     const end = res.end.bind(res) as (...args: unknown[]) => Response;
     res.end = ((...args: unknown[]) => {
-      void Promise.all([flushEmailDelivery(), flushAlerts()]).finally(() => end(...args));
+      void Promise.all([flushEmailDelivery(), flushAlerts(), flushPushDelivery()]).finally(() => end(...args));
       return res;
     }) as Response["end"];
     next();
@@ -102,6 +107,8 @@ api.get("/health", async (_req, res) => {
     database: !failure,
     // false: sin las claves de Turnstile, las reservas online y el registro no piden CAPTCHA.
     captcha: Boolean(config.turnstile),
+    // false: sin claves VAPID válidas no hay avisos en el celular (la API funciona igual).
+    push: Boolean(config.webPush),
     // Sólo desde un equipo propio: el frontend local muestra el aviso "Base de PRODUCCIÓN".
     ...(config.productionDbFromHere ? { productionDatabase: true } : {}),
     ...failure,
@@ -126,6 +133,7 @@ api.use("/users", userRoutes);
 api.use("/images", imageRoutes);
 api.use("/businesses", businessRoutes);
 api.use("/admin", adminRoutes);
+api.use("/push", pushRoutes);
 
 // Las respuestas de /api, sin caché salvo las rutas que ponen la suya (ver http/no-store.ts).
 app.use("/api", noStore);

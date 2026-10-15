@@ -106,6 +106,14 @@ try {
   }
   const hosted = await startApi(cloud);
   servers.push(hosted);
+  // Avisos en el celular (spec 013): sin claves VAPID no hay avisos, pero la API arranca igual en la nube.
+  const keyless = await startApi({ ...cloud, VAPID_PUBLIC_KEY: "", VAPID_PRIVATE_KEY: "" });
+  servers.push(keyless);
+  const keylessHealth = await fetch(`${keyless.base}/health`).then((res) => res.json(), () => null);
+  ok(keyless.exited() === null && keylessHealth?.ok === true && keylessHealth.push === false, "en la nube sin claves VAPID arranca igual y /api/health dice push: false", keylessHealth);
+  ok(/Avisos en el celular desactivados: faltan VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY\./.test(keyless.output()), "y el registro dice qué falta, sin valores", keyless.output().slice(0, 300));
+  const hostedHealth = await fetch(`${hosted.base}/health`).then((res) => res.json(), () => null);
+  ok(hostedHealth?.push === true && !JSON.stringify(hostedHealth).includes(process.env.VAPID_PUBLIC_KEY ?? "-"), "con las claves, push: true (sin mostrarlas)", hostedHealth);
   const cookie = (await fetch(`${hosted.base}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Requested-With": "fetch" },

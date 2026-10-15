@@ -52,6 +52,7 @@ import { authorize, parseInput, type Actor, type RequestContext } from "./contex
 import { isRescheduled, notifyAppointmentChange } from "./notifications.ts";
 import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
 import { assertAppointmentLimit, assertClientLimit } from "./plan-limits.ts";
+import { notifyNewAppointment, notifyPatientCancel } from "./push-notices.ts";
 import { findProfessional, listProfessionals } from "./professional-service.ts";
 
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, "es");
@@ -821,6 +822,8 @@ export const appointmentService = {
         entityId: appointment.id,
         summary: `Creó la cita de ${await describeAppointment(db, appointment)}`,
       });
+      // «Cita nueva en tu agenda» en el celular del propietario, si es de su agenda y no la agendó él (spec 013).
+      await notifyNewAppointment(db, appointment, actor.userId);
       return appointment;
     });
   },
@@ -989,6 +992,8 @@ export async function cancelFromPatientLink(db: Db, before: Appointment): Promis
     summary: `Cancelada por el paciente desde su email: ${await describeAppointment(db, appointment)}`,
     changes: diffChanges(await appointmentForAudit(db, before), await appointmentForAudit(db, appointment), APPOINTMENT_FIELDS),
   });
+  // Aviso en el celular del propietario (spec 013).
+  await notifyPatientCancel(db, appointment);
   return appointment;
 }
 

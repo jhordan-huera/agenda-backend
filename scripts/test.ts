@@ -16,6 +16,7 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
+import { generateVapidKeys } from "../src/services/web-push.ts";
 import { findPostgresBin } from "./postgres-bin.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
@@ -60,6 +61,8 @@ if (databaseUrl) {
 }
 
 const apiPort = await freePort();
+// Avisos en el celular (spec 013): un par de claves VAPID sólo para estas pruebas.
+const vapid = generateVapidKeys();
 const env: NodeJS.ProcessEnv = {
   // Entorno limpio: nada de .env (Supabase, Gmail…).
   PATH: [pgBin, process.env.PATH].filter(Boolean).join(delimiter),
@@ -75,6 +78,8 @@ const env: NodeJS.ProcessEnv = {
   // Archivos de la historia clínica en una carpeta temporal (almacenamiento local).
   LOCAL_STORAGE_DIR: mkdtempSync(join(tmpdir(), "agendo-files-")),
   TEST_API_URL: `http://127.0.0.1:${apiPort}/api`,
+  VAPID_PUBLIC_KEY: vapid.publicKey,
+  VAPID_PRIVATE_KEY: vapid.privateKey,
 };
 
 let api: ChildProcess | null = null;

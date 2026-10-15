@@ -133,6 +133,14 @@ const orphans = [
 ];
 const otherBusinessFile = putFile("historias-clinicas", `${ls.businessId}/otro/archivo.pdf`);
 
+// Un aviso en el celular de la clínica (spec 013), aún en cola, en un aparato del super admin (que no se borra).
+const pushEndpoint = `https://fcm.googleapis.com/fcm/send/prueba-${id}`;
+sql(`insert into push_subscriptions (user_id, endpoint, p256dh, auth) select id, '${pushEndpoint}', 'clave', 'secreto' from users where email = 'admin@demo.com'`);
+sql(
+  `insert into push_messages (subscription_id, business_id, kind, title, body, url, tag)
+   select id, '${id}', 'booking', 'Nueva reserva', 'Prueba', '/dashboard', 'prueba' from push_subscriptions where endpoint = '${pushEndpoint}'`,
+);
+
 console.log("Eliminar");
 r = await admin("DELETE", `/admin/businesses/${id}`, { confirmName: `  ${name.toUpperCase()} ` });
 ok(r.status === 204, "con el nombre (sin importar mayúsculas ni espacios) → 204", r.body);
@@ -158,6 +166,9 @@ const logs = (await admin("GET", "/admin/audit-logs?scope=admin")).body.entries;
 ok(logs.some((l) => l.action === "platform.business_deleted" && l.summary.includes(name) && /3 cuentas/.test(l.summary)), "queda en la actividad de la plataforma", logs.slice(0, 2));
 r = await admin("DELETE", `/admin/businesses/${id}`, { confirmName: name });
 ok(r.status === 404, "eliminarlo otra vez → 404", r.body);
+
+ok(count(`select count(*) from push_messages where business_id = '${id}'`) === 0, "no deja avisos en el celular suyos en cola (spec 013)");
+ok(count(`select count(*) from push_subscriptions where endpoint = '${pushEndpoint}'`) === 1, "y el aparato del super admin sigue");
 
 console.log("El resto sigue igual");
 ok(count("select count(*) from businesses") === before.businesses - 1, "sólo se eliminó ese negocio");

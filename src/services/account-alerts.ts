@@ -64,6 +64,8 @@ const ACCOUNT_CHANGES: Record<string, string> = {
 };
 
 export interface AccountChange {
+  /** El registro de actividad: la clave del aviso en el celular (spec 013), que sale una vez por registro. */
+  id: string;
   /** La cuenta, ya enmascarada ("ma***@gmail.com"): el aviso va por ntfy. */
   account: string;
   change: string;
@@ -100,9 +102,9 @@ export async function findAccountChanges(
   until: string,
   limit = MAX_ACCOUNT_NOTICES,
 ): Promise<{ changes: AccountChange[]; total: number }> {
-  const rows = await many<{ action: string; email: string; actorId: string | null; userId: string; at: string; total: number }>(
+  const rows = await many<{ id: string; action: string; email: string; actorId: string | null; userId: string; at: string; total: number }>(
     db,
-    `select l.action, u.email, l.actor_id as "actorId", u.id as "userId", l.created_at as at, count(*) over ()::int as total
+    `select l.id, l.action, u.email, l.actor_id as "actorId", u.id as "userId", l.created_at as at, count(*) over ()::int as total
        from audit_logs l
        join users u on u.id = l.entity_id
       where l.entity_type in ('session', 'user') and l.action = any($4::text[])
@@ -115,6 +117,7 @@ export async function findAccountChanges(
   return {
     total: rows[0]?.total ?? 0,
     changes: rows.map((row) => ({
+      id: row.id,
       account: maskEmail(row.email),
       change: ACCOUNT_CHANGES[row.action],
       at: row.at,

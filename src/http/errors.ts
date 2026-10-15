@@ -11,6 +11,8 @@ export type AppErrorCode =
   | "plan_limit"
   | "rate_limited"
   | "unavailable"
+  /** Aviso de prueba en el celular: el servicio de avisos lo rechazó o no respondió (spec 013). */
+  | "push_failed"
   | "server";
 
 const STATUS_BY_CODE: Record<AppErrorCode, number> = {
@@ -23,6 +25,7 @@ const STATUS_BY_CODE: Record<AppErrorCode, number> = {
   daily_limit: 409,
   rate_limited: 429,
   server: 500,
+  push_failed: 502,
   unavailable: 503,
 };
 
