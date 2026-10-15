@@ -132,7 +132,7 @@ Cada email al paciente sobre una cita activa lleva el enlace a «Tu cita».
 - **RF-007**: La agenda (bloque, lista del celular y ficha) y la lista del día del Inicio DEBEN
   mostrar «Confirmó el paciente».
 - **RF-008**: Cambiar la fecha, la hora o el profesional de una cita DEBE borrar la confirmación del
-  paciente.
+  paciente, y la actividad DEBE decirlo («Confirmó que va: Juan Pérez → Nadie», 2026-10-15).
 - **RF-009**: La actividad DEBE registrar la confirmación y la cancelación como hechas «por el
   paciente desde su email», y el aviso de ntfy del cambio de estado (spec 008) DEBE decirlo.
 - **RF-010**: Con varias personas en la cita, cada una DEBE poder confirmar; cancelar, sólo el
@@ -162,4 +162,5 @@ Cada email al paciente sobre una cita activa lleva el enlace a «Tu cita».
 - **El negocio no recibe un email aparte** por cada confirmación: la ve en la agenda. Por la
   cancelación ya recibe la copia del email y el aviso de ntfy.
 - **La confirmación del paciente no avisa por ntfy:** serían demasiados avisos. La cancelación sí,
-  como todo cambio de estado.
+  como todo cambio de estado. Al celular del propietario sí le llega «El paciente confirmó» (spec 013,
+  pedido por el dueño el 2026-10-15), y se puede apagar en Configuración.

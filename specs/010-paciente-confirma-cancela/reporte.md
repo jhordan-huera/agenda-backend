@@ -39,7 +39,7 @@ contra Supabase.
 | RF-005 – Fuera de plazo o sin cancelaciones | Cumple | `appointment-page`: a 23 h, 409 y la cita sigue igual; sin «Permitir cancelaciones», 409 y `disabled`. Recorrido: «Para cancelar con menos de 24 h, escríbele a…» y «Si no puedes asistir…», con el WhatsApp ya escrito y «Llamar» |
 | RF-006 – El enlace en los emails | Cumple | `email-templates`: los seis emails de cita activa lo llevan y los otros tres no; «Ver mi cita» si no podrá cancelar; «Confirmo que voy» en el recordatorio. `reminders`, `multi-client-appointments`, `couple-booking`, `status-notices` y `payments`: cada persona con su enlace y ninguna copia ni aviso al negocio con él. Recorrido: «Ver o cancelar mi cita: http://localhost:5199/cita/…» en Emails enviados, y no en la copia |
 | RF-007 – La marca en el panel | Cumple | Recorrido: el bloque de la semana («…, confirmó el paciente» en el árbol de accesibilidad), la lista a 390 px, la ficha («Confirmó el paciente · 14 oct, 23:05»), la ficha en pareja («Confirmaron todos» y la hora de cada persona) y el Inicio («Confirmó») |
-| RF-008 – Cambiar la cita borra la confirmación | Cumple | `appointment-page`: la hora, la fecha y el profesional la borran, también la de las otras personas; las notas y el precio, no; cancelar la borra y Atendida la conserva; reactivada, se puede volver a confirmar. Recorrido: al arrastrar la cita desaparece la marca y el email del cambio lleva otra vez el enlace |
+| RF-008 – Cambiar la cita borra la confirmación | Cumple | `appointment-page`: la hora, la fecha y el profesional la borran, también la de las otras personas; las notas y el precio, no; cancelar la borra y Atendida la conserva; reactivada, se puede volver a confirmar; la actividad lo dice («Confirmó que va (desde su email): Diego Mueve y Emma Mueve → Nadie», 2026-10-15). Recorrido: al arrastrar la cita desaparece la marca y el email del cambio lleva otra vez el enlace |
 | RF-009 – Actividad y ntfy «por el paciente» | Cumple | `appointment-page`: «Confirmó que va, desde su email» y «Cancelada por el paciente desde su email», con «Estado» en los cambios; con un ntfy falso, el cron arma «Agenda360: cita cancelada por el paciente», con la paciente a medias y sin el negocio en el título; la confirmación no avisa. `booking-alert` y `status-notices` |
 | RF-010 – Varias personas | Cumple | `appointment-page`: la otra persona confirma la suya, no puede cancelar (409, `not_main`) ni abrir el pago. Recorrido: sólo el principal ve «Cancelar mi cita» y «Pagar la cita» |
 | RF-011 – Límites y el mismo 404 | Cumple | `appointment-page`: el mismo 404 para un token inventado, mal formado, de hace 31 días, de una persona quitada y de un negocio suspendido (el de hace 30 días todavía se abre); 61 vistas o 21 acciones desde una IP dan 429. Recorrido: «Este enlace no está disponible» |
@@ -99,6 +99,16 @@ contra Supabase.
   - los enlaces `/cita/…` y `/pago/…` de la bandeja simulada se pulsan y abren otra pestaña;
   - las bases ya guardadas en un navegador reciben los enlaces nuevos, pero no las citas demo
     confirmadas: para verlas, «Restaurar datos demo».
+
+## Ampliación del 2026-10-15
+
+Al probar en local, el dueño del producto pidió:
+
+- **Que la confirmación avise:** al celular del propietario le llega «El paciente confirmó · {día}
+  {hora} · Juan P.» (spec 013, T029). Sigue sin ntfy ni email.
+- **Que todo quede en la actividad:** al cambiar la fecha, la hora o el profesional (o al cancelar), la
+  edición de la cita dice que se borró la confirmación del paciente (T022). Confirmar y cancelar desde
+  el enlace ya se registraban.
 
 ## Pendientes y riesgos
 

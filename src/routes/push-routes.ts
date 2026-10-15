@@ -32,20 +32,20 @@ pushRoutes.get(
 pushRoutes.put(
   "/device",
   deviceLimit,
-  handle((req) => pushDeviceService.saveDevice(req.ctx, req.body)),
+  handle((req) => pushDeviceService.saveDevice(req.ctx, req.body, req.get("user-agent") ?? null)),
 );
 pushRoutes.patch(
   "/device",
   deviceLimit,
-  handle((req) => pushDeviceService.updateKinds(req.ctx, req.body)),
+  handle((req) => pushDeviceService.updateKinds(req.ctx, req.body, req.get("user-agent") ?? null)),
 );
 pushRoutes.post(
   "/device/off",
   deviceLimit,
-  handle((req) => pushDeviceService.turnOff(req.ctx, req.body)),
+  handle((req) => pushDeviceService.turnOff(req.ctx, req.body, req.get("user-agent") ?? null)),
 );
 pushRoutes.post(
   "/device/test",
   testLimit,
-  handle((req) => pushDeviceService.sendTest(req.ctx, req.body)),
+  handle((req) => pushDeviceService.sendTest(req.ctx, req.body, req.get("user-agent") ?? null)),
 );

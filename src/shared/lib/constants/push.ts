@@ -11,6 +11,7 @@ import type { PushKind } from "../../types/index.ts";
 export const OWNER_PUSH_KINDS = [
   "booking",
   "receipt",
+  "patient_confirm",
   "patient_cancel",
   "new_appointment",
   "unclosed",
@@ -29,6 +30,7 @@ export type MutablePushKind = (typeof MUTABLE_PUSH_KINDS)[number];
 export const PUSH_KIND_LABELS: Record<MutablePushKind, { label: string; description: string }> = {
   booking: { label: "Reservas online", description: "Cada reserva desde tu página, también las «Por verificar»." },
   receipt: { label: "Comprobantes de pago", description: "Cuando un paciente sube el comprobante de su transferencia." },
+  patient_confirm: { label: "Confirmaciones del paciente", description: "Cuando un paciente pulsa «Confirmo que voy» en su email." },
   patient_cancel: { label: "Cancelaciones del paciente", description: "Cuando un paciente cancela su cita desde su email." },
   new_appointment: {
     label: "Citas nuevas en tu agenda",

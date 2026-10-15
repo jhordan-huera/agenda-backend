@@ -278,6 +278,19 @@ const later = { ...moving, startTime: minutesToTime(Number(moving.startTime.slic
 r = await owner("PUT", `${B}/appointments/${moving.id}`, input(moving, diego.id, { startTime: later.startTime }));
 ok(r.status === 200 && confirmedAt(moving.id) === "" && extraConfirmedAt(moving.id, emma.id) === "", "cambiar la hora la borra, también la de la otra persona", r.body);
 ok(r.body.clientConfirmations.length === 0, "y el panel ya no la muestra", r.body.clientConfirmations);
+/** Los cambios guardados en la última edición de la cita, en la actividad. */
+const lastChanges = (appointmentId: string): { label: string; before: string | null; after: string | null }[] =>
+  JSON.parse(
+    sql(
+      `select coalesce(changes::text, '[]') from audit_logs where entity_id = '${appointmentId}' and action in ('appointment.updated', 'appointment.rescheduled') order by created_at desc limit 1`,
+    ) || "[]",
+  );
+const confirmationChange = lastChanges(moving.id).find((change) => change.label === "Confirmó que va (desde su email)");
+ok(
+  confirmationChange?.before === "Diego Mueve y Emma Mueve" && confirmationChange.after === "Nadie",
+  "la actividad dice que se borró («Confirmó que va: Diego Mueve y Emma Mueve → Nadie»)",
+  lastChanges(moving.id),
+);
 const updated = sql(
   `select to_email || '|' || replace(body, chr(10), ' ') from notifications where appointment_id = '${moving.id}' and type = 'appointment_updated' order by created_at`,
 )

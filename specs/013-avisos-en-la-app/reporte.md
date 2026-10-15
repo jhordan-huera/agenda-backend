@@ -34,7 +34,7 @@ real de Google: una reserva llegó al navegador en 2 segundos.
 | RF-001b – Se ofrece al entrar; «Ahora no», 7 días | Cumple | Playwright §1 (franja «Activa los avisos en esta computadora», «Activar») y §8 («Ahora no» no vuelve al recargar; con la fecha adelantada 8 días, vuelve). |
 | RF-002 – Cada aparato por separado; varios por persona | Cumple | `push-notices`: dos aparatos reciben la misma reserva; con un tipo apagado en uno, sólo el otro; el undécimo quita el más antiguo; la misma dirección de otra persona pasa a ella con los tipos de fábrica. |
 | RF-003 – iPhone sin instalar y permiso rechazado | Cumple (simulado) | Playwright §10 (navegador con la identidad de un iPhone y sin `PushManager`: «sólo llegan con la app instalada» y el diálogo «Instalar en tu iPhone o iPad») y §9 (permiso denegado de verdad por CDP: sin franja y los pasos del candado). En un iPhone real: sin comprobar. |
-| RF-004 – Reservas, comprobantes, cancelaciones y citas nuevas, al momento | Cumple | `push-notices`: «Nueva reserva · {día} {hora} · {servicio} · Juan P.», «· Por verificar», la pareja «Carla M. y Luis R.», un reintento no repite; «Comprobante de pago», una segunda subida no avisa; «Cita cancelada por el paciente», un doble toque no repite; «Cita nueva en tu agenda» si la agenda Recepción o el super admin en modo soporte, no si la agenda él ni en otra agenda; la serie de 8 (enganche de la 011) avisa una vez. Playwright §3 y el servicio real de Google (§0). |
+| RF-004 – Reservas, comprobantes, confirmaciones, cancelaciones y citas nuevas, al momento | Cumple | `push-notices`: «Nueva reserva · {día} {hora} · {servicio} · Juan P.», «· Por verificar», la pareja «Carla M. y Luis R.», un reintento no repite; «Comprobante de pago», una segunda subida no avisa; «El paciente confirmó · {día} {hora} · Pedro P.» (2026-10-15), que abre la cita, y confirmar otra vez no repite; «Cita cancelada por el paciente», un doble toque no repite; «Cita nueva en tu agenda» si la agenda Recepción o el super admin en modo soporte, no si la agenda él ni en otra agenda; la serie de 8 (enganche de la 011) avisa una vez. Playwright §3 y el servicio real de Google (§0). |
 | RF-005 – Los del super admin | Cumple | `push-notices`: el alta por el onboarding avisa a cada super admin con aparato y la de /admin no; la solicitud de plan con los dos planes; el cron (con `scripts/cron.ts` de verdad) avisa el cambio de contraseña de un super admin y los 10 intentos fallidos, una vez por cuenta y hora, y ntfy sigue mandando los suyos. |
 | RF-005b – Citas por cerrar y resumen de las 8, apagables por separado | Cumple | `push-notices` con la hora del cron simulada: avisa una vez, no en la pasada siguiente ni si se cerró antes; con el cron parado 6 h, sólo las de las últimas 3 h; la de las 23:45 a las 00:15; Guayaquil y Madrid cada uno a sus 20:00, una vez; la de las 20:30 no cuenta; con 0 no sale; con el resumen apagado no llega y las citas por cerrar sí. |
 | RF-006 – El paciente a medias, sin datos de contacto ni clínicos | Cumple | `push-notices` revisa los 47 avisos de la suite (pacientes con nombre y apellidos largos, email, teléfono, cédula y notas): ninguno aparece. Lo que imprimen la API y el cron no tiene títulos, textos ni direcciones de aparatos. |
@@ -57,6 +57,8 @@ real de Google: una reserva llegó al navegador en 2 segundos.
 - **Recorrido con Playwright** (`verificar-013.mjs`, versión compilada, escritorio y 390 px): 68 de
   68. **CSP** (`csp-013.mjs`, el build con las cabeceras de `vercel.json`, activar con Google, recibir
   y tocar): 5 de 5 en tres pasadas, sin errores en la consola.
+
+| RF-012 – Lo que hace la persona con sus avisos queda en la actividad (2026-10-15) | Cumple | `push-notices`: activar («Activó los avisos en el celular en Chrome en Mac», o «en un aparato»), cambiar tipos («Reservas online: Encendido → Apagado»), desactivar (una vez, aunque se toque dos) y el aviso de prueba quedan en la actividad del negocio (el propietario la ve en Actividad → Usuarios) o de la plataforma (el super admin); la puesta al día silenciosa al abrir el panel y un cambio que no cambia nada, no. |
 
 ## Cambios respecto al plan
 
@@ -83,6 +85,21 @@ real de Google: una reserva llegó al navegador en 2 segundos.
    spec 010 ese día), así que no cambia.
 10. **Navegadores reales del quickstart §3:** se probó Chrome con el servicio de Google. Firefox y
     Safari de la Mac no se pudieron probar en este equipo con Playwright; quedan para el dueño.
+
+## Ampliación del 2026-10-15
+
+Al probar en local, el dueño del producto pidió dos cosas más:
+
+- **«El paciente confirmó» en el celular** (tipo `patient_confirm`, «Confirmaciones del paciente» en la
+  tarjeta, encendido de fábrica y apagable). Sale la primera vez que alguien pulsa «Confirmo que voy»;
+  en una sesión con varias personas, con el nombre de quien confirmó. Sin ntfy (como dice la spec 010) y
+  sin migración: los aparatos que ya estaban activados lo reciben encendido.
+- **Todo se audita** (constitución 1.9.0): activar los avisos en un aparato, cambiar sus tipos,
+  desactivarlos y el aviso de prueba quedan en la actividad, con el navegador. En la spec 010, la
+  actividad dice además cuándo se borró la confirmación del paciente.
+
+Tareas T029–T031. El front compilado de antes no muestra el interruptor nuevo (salta los tipos que no
+conoce) hasta volver a compilarlo.
 
 ## Pendientes y riesgos
 

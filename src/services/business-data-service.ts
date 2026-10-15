@@ -681,6 +681,7 @@ async function appointmentForAudit(db: Db, appointment: Appointment): Promise<Ap
     [appointment.clientId, appointment.serviceId, appointment.professionalId],
   );
   const extraNames = await clientNamesOf(db, appointment.extraClientIds ?? []);
+  const confirmedNames = await clientNamesOf(db, (appointment.clientConfirmations ?? []).map((confirmation) => confirmation.clientId));
   return {
     date: appointment.date,
     time: formatTimeRange(appointment.startTime, appointment.endTime),
@@ -693,6 +694,7 @@ async function appointmentForAudit(db: Db, appointment: Appointment): Promise<Ap
     notes: appointment.notes,
     homeAddress: appointment.homeVisit?.address ?? null,
     modality: appointment.isVirtual ? "Virtual" : appointment.homeVisit ? "A domicilio" : "En el local",
+    patientConfirmed: confirmedNames.length > 0 ? joinNames(confirmedNames) : "Nadie",
   };
 }
 

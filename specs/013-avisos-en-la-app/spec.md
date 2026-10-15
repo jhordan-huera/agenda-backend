@@ -20,6 +20,7 @@ sólo llegan por email.
    - una reserva online nueva (también las «Por verificar» de la spec 009);
    - un comprobante de pago recibido;
    - una cancelación del paciente desde su email (spec 010, cuando exista);
+   - una confirmación del paciente («Confirmo que voy», spec 010), pedida el 2026-10-15;
    - una cita nueva en la agenda del propietario que agendó otra persona del equipo.
 2. **Quién lo recibe:** **sólo el propietario** del negocio.
 3. **Qué dice:** el paciente, a medias («Juan P.»), como en ntfy.
@@ -34,6 +35,8 @@ sólo llegan por email.
 6. **Citas sin cerrar:** se avisa cuando una cita ya pasó y sigue «Pendiente» o «Confirmada», para
    marcarla «Completada» o «No asistió».
 7. **Resumen a las 8 de la noche** (hora del negocio): «Tienes 3 citas de hoy sin cerrar».
+8. **Todo se audita** (2026-10-15): activar los avisos en un aparato, cambiar sus tipos, desactivarlos
+   y el aviso de prueba quedan en la actividad, como el resto de lo que se hace en el panel.
 
 ## Escenarios de uso y pruebas *(obligatorio)*
 
@@ -81,6 +84,9 @@ desactivarlos.
    {hora}». Al tocarlo se abre la cita.
 3. **Dado** una cancelación del paciente desde su email, **entonces** llega «Cita cancelada por el
    paciente · {día} {hora} · Juan P.».
+3b. **Dado** que el paciente pulsa «Confirmo que voy», **entonces** llega «El paciente confirmó · {día}
+   {hora} · Juan P.» (en una sesión con varias personas, con el nombre de quien confirmó). Confirmar
+   otra vez no avisa.
 4. **Dado** que Recepción o un administrador le agendan una cita al propietario, **entonces** llega
    «Cita nueva en tu agenda · {día} {hora} · Juan P.». Si la agendó él mismo, no.
 5. **Dado** que el aviso aparece en la pantalla bloqueada, **entonces** nunca muestra el nombre
@@ -158,6 +164,7 @@ propietario recibe un aviso para cerrarla y, a las 8 de la noche, un resumen del
   - cada reserva online nueva (marcando «Por verificar» si lo está);
   - cada comprobante de pago;
   - cada cancelación del paciente desde su email;
+  - cada «Confirmo que voy» del paciente, la primera vez (2026-10-15);
   - cada cita nueva en su agenda que agendó otra persona.
 - **RF-005**: El super admin DEBE recibir un aviso por:
   - cada negocio nuevo;
@@ -176,6 +183,10 @@ propietario recibe un aviso para cerrarla y, a las 8 de la noche, un resumen del
 - **RF-010**: Los avisos NO DEBEN depender de servicios de pago. Usan los avisos estándar de los
   navegadores, sin publicar la app en Play Store ni App Store.
 - **RF-011**: Si los avisos fallan, el resto (la reserva, los emails) DEBE seguir funcionando igual.
+- **RF-012** (2026-10-15): Activar los avisos en un aparato, cambiar qué tipos llegan, desactivarlos y
+  el aviso de prueba DEBEN quedar en la actividad (la del negocio para el propietario, la de la
+  plataforma para el super admin), con el navegador («Chrome en Mac»). La puesta al día silenciosa al
+  abrir el panel y la pausa al cerrar sesión no, porque no las hace la persona.
 
 ### Entidades clave
 

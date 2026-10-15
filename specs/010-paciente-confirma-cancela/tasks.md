@@ -99,6 +99,13 @@ están en `research.md`.
 - [x] T021 Cierre: README del backend (y del front), `reporte.md`, estado de la spec y commits sin
   firma de IA.
 
+## Fase 7: Ampliación del 2026-10-15 (pedida por el dueño al probar)
+
+- [x] T022 La actividad dice cuándo se borró la confirmación (RF-008): campo «Confirmó que va (desde su
+  email)» en `APPOINTMENT_FIELDS` (`back/src/services/audit-changes.ts`) y en `appointmentForAudit`
+  (`business-data-service.ts`): «Diego Mueve y Emma Mueve → Nadie». Prueba en
+  `back/tests/appointment-page.test.ts`. El aviso al celular de la confirmación está en la spec 013 (T029).
+
 ## Dependencias
 
 - T001–T003 primero. T002 va antes de cualquier tarea que use tipos o plantillas.

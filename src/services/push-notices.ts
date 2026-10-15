@@ -168,6 +168,29 @@ export function notifyPatientCancel(db: Db, appointment: Pick<Appointment, "id" 
 }
 
 /**
+ * El paciente pulsó «Confirmo que voy» en su email (spec 010; aviso pedido por el dueño el 2026-10-15):
+ * «El paciente confirmó · Mañana 16:00 · Juan P.». En una sesión con varias personas, cada una avisa con
+ * su nombre. Sólo la primera vez: repetirlo no llega aquí.
+ */
+export function notifyPatientConfirmed(db: Db, appointment: Pick<Appointment, "id" | "businessId">, clientId: string): Promise<number> {
+  return guardedPush(db, "patient_confirm", async () => {
+    const audience: PushAudience = { ownerOf: appointment.businessId };
+    if (!(await hasPushRecipients(db, audience, "patient_confirm"))) return 0;
+    const notice = await appointmentNotice(db, appointment.id);
+    const patient = await one<{ name: string }>(db, "select name from clients where id = $1", [clientId]);
+    if (!notice || !patient) return 0;
+    return insertPush(db, audience, {
+      kind: "patient_confirm",
+      title: "El paciente confirmó",
+      body: `${describeWhen(notice.date, notice.startTime, notice.timezone)} · ${shortName(patient.name)}`,
+      url: appointmentUrl(notice),
+      tag: `confirmo-${notice.id}-${clientId}`,
+      urgency: "normal",
+    });
+  });
+}
+
+/**
  * La cita es de la agenda del propietario, la agendó otra persona (Recepción, un administrador o el
  * super admin en modo soporte) y está Pendiente o Confirmada (R11).
  */

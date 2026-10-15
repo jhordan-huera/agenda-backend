@@ -114,6 +114,21 @@ Las decisiones R1–R20 están en `research.md`.
 - [x] T028 Cierre: README del backend y del front, `reporte.md`, estado de la spec y commits sin
   firma de IA.
 
+## Fase 9: Ampliación del 2026-10-15 (pedida por el dueño al probar)
+
+- [x] T029 «El paciente confirmó» (RF-004): tipo `patient_confirm` en `front/src/types/index.ts` y
+  `front/src/lib/constants/push.ts` («Confirmaciones del paciente», antes de las cancelaciones; copia con
+  `npm run sync:shared`), `notifyPatientConfirmed` en `back/src/services/push-notices.ts` y su llamada en
+  `appointment-page-service.ts` sólo la primera vez. Sin migración: `muted_kinds` guarda los apagados, así
+  que llega encendido en los aparatos que ya estaban activados.
+- [x] T030 Auditoría de los avisos (RF-012): `push.device_enabled`, `push.kinds_changed` (un cambio por
+  interruptor), `push.device_disabled` y `push.test_sent` en `back/src/services/push-device-service.ts`,
+  con el navegador (`describeUserAgent`, ahora compartido en `src/shared/lib/user-agent.ts`). La ruta pasa
+  el `User-Agent`.
+- [x] T031 Pruebas en `back/tests/push-notices.test.ts`: el aviso de la confirmación y que no se repite;
+  la actividad de activar (con «Chrome en Mac»), los tipos, desactivar, el super admin, el aviso de prueba
+  y que la puesta al día silenciosa no la llena.
+
 ## Dependencias
 
 - T001–T003 primero. T002 va antes de cualquier tarea que use los tipos o las constantes.

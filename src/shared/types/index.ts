@@ -1248,13 +1248,14 @@ export interface PublicAppointmentResult {
 /* ------------------------------------------- Avisos en el celular (spec 013) -- */
 
 /**
- * Tipos de aviso en el celular (Web Push). Los seis primeros son del propietario del negocio y los
+ * Tipos de aviso en el celular (Web Push). Los siete primeros son del propietario del negocio y los
  * cuatro siguientes, del super admin (ver src/lib/constants/push.ts). `test` es el aviso de prueba:
  * siempre sale y no se puede apagar.
  */
 export type PushKind =
   | "booking"
   | "receipt"
+  | "patient_confirm"
   | "patient_cancel"
   | "new_appointment"
   | "unclosed"

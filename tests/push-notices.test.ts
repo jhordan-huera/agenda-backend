@@ -143,7 +143,7 @@ ok(
   "el propietario recibe la clave pública (87 caracteres)",
   r.body,
 );
-ok(JSON.stringify(r.body.kinds) === JSON.stringify(OWNER_PUSH_KINDS), "con los seis tipos del propietario, en el orden de la tarjeta", r.body.kinds);
+ok(JSON.stringify(r.body.kinds) === JSON.stringify(OWNER_PUSH_KINDS), "con los siete tipos del propietario, en el orden de la tarjeta", r.body.kinds);
 const ricardoA = push.device();
 r = await activate(ricardo, ricardoA);
 ok(r.status === 200 && Array.isArray(r.body.mutedKinds) && r.body.mutedKinds.length === 0 && r.body.createdAt, "activa su aparato con todos los tipos encendidos", r.body);
@@ -216,7 +216,9 @@ console.log("Aparatos: varios por persona, tipos, desactivar y hasta 10");
 const dentalPage = await bookingPage(dental, { professionalName: "Dra. Valeria Cruz" });
 sql(`update professionals set all_services = true where business_id = '${dental}'`);
 const ricardoB = push.device();
-await activate(ricardo, ricardoB);
+const CHROME_MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
+const chromeMac = { "User-Agent": CHROME_MAC };
+await ricardo("PUT", "/push/device", ricardoB, chromeMac);
 const ana = person("Ana María Salazar Quiroga");
 let booking = await dentalPage.book(ana);
 ok(booking.status === 200, "reserva online en la clínica", booking.body);
@@ -229,7 +231,7 @@ ok(
   onA?.payload,
 );
 ok(!push.received.some((item) => item.endpoint === adminDevice.endpoint && item.payload?.tag === `reserva-${appointmentId}`), "el super admin no recibe las reservas de los negocios");
-r = await ricardo("PATCH", "/push/device", { endpoint: ricardoB.endpoint, mutedKinds: ["booking"] });
+r = await ricardo("PATCH", "/push/device", { endpoint: ricardoB.endpoint, mutedKinds: ["booking"] }, chromeMac);
 ok(r.status === 200 && JSON.stringify(r.body.mutedKinds) === '["booking"]', "apaga «Reservas online» en un aparato", r.body);
 booking = await dentalPage.book(person("Bruno Ernesto Castillo Vera"));
 appointmentId = booking.body.appointmentId;
@@ -238,9 +240,66 @@ r = await ricardo("PATCH", "/push/device", { endpoint: ricardoB.endpoint, mutedK
 const r3 = await ricardo("PATCH", "/push/device", { endpoint: ricardoB.endpoint, mutedKinds: ["new_business"] });
 const r4 = await ricardo("PATCH", "/push/device", { endpoint: push.device().endpoint, mutedKinds: [] });
 ok(r.status === 400 && r3.status === 400 && r4.status === 404, "el aviso de prueba no se apaga, un tipo de otro rol tampoco y un aparato ajeno: 404", [r.body, r3.body, r4.body]);
-r = await ricardo("POST", "/push/device/off", { endpoint: ricardoB.endpoint });
-const again = await ricardo("POST", "/push/device/off", { endpoint: ricardoB.endpoint });
+r = await ricardo("POST", "/push/device/off", { endpoint: ricardoB.endpoint }, chromeMac);
+const again = await ricardo("POST", "/push/device/off", { endpoint: ricardoB.endpoint }, chromeMac);
 ok(r.status === 204 && again.status === 204 && !deviceExists(ricardoB), "«Desactivar en este celular» lo borra (y un doble toque no da error)", [r.status, again.status]);
+
+console.log("Auditoría de los avisos (todo lo que hace la persona queda en la actividad)");
+type PushAuditRow = { action: string; summary: string; actorName: string; businessId: string | null; changes: string | null };
+const pushAudit = (userId: string): PushAuditRow[] =>
+  JSON.parse(
+    sql(
+      `select coalesce(json_agg(json_build_object('action', action, 'summary', summary, 'actorName', actor_name, 'businessId', business_id, 'changes', changes::text) order by created_at), '[]')
+         from audit_logs where actor_id = '${userId}' and action like 'push.%'`,
+    ),
+  );
+let ricardoAudit = pushAudit(ricardo.session.userId);
+ok(
+  ricardoAudit.filter((row) => row.action === "push.device_enabled").map((row) => row.summary).join(" | ") ===
+    "Activó los avisos en el celular en un aparato | Activó los avisos en el celular en Chrome en Mac" &&
+    ricardoAudit.every((row) => row.businessId === dental && row.actorName === "Ricardo Paredes"),
+  "activar queda en la actividad del negocio, con el navegador («Chrome en Mac») o «un aparato»",
+  ricardoAudit,
+);
+const kindsRow = ricardoAudit.filter((row) => row.action === "push.kinds_changed");
+ok(
+  kindsRow.length === 1 &&
+    kindsRow[0].summary === "Cambió qué avisos llegan a Chrome en Mac" &&
+    JSON.stringify(
+      (JSON.parse(kindsRow[0].changes ?? "[]") as { label: string; before: string; after: string }[]).map(({ label, before, after }) => [label, before, after]),
+    ) === JSON.stringify([["Reservas online", "Encendido", "Apagado"]]),
+  "cambiar los tipos queda con cada interruptor («Reservas online: Encendido → Apagado»); los cambios rechazados, no",
+  kindsRow,
+);
+ok(
+  ricardoAudit.filter((row) => row.action === "push.device_disabled").map((row) => row.summary).join() === "Desactivó los avisos en el celular en Chrome en Mac",
+  "desactivar queda una vez (el doble toque no repite)",
+  ricardoAudit,
+);
+const enabledBefore = ricardoAudit.filter((row) => row.action === "push.device_enabled").length;
+await activate(ricardo, ricardoA);
+await ricardo("PATCH", "/push/device", { endpoint: ricardoA.endpoint, mutedKinds: [] });
+ricardoAudit = pushAudit(ricardo.session.userId);
+ok(
+  ricardoAudit.filter((row) => row.action === "push.device_enabled").length === enabledBefore &&
+    ricardoAudit.filter((row) => row.action === "push.kinds_changed").length === 1,
+  "la puesta al día silenciosa al abrir el panel y un cambio que no cambia nada no llenan la actividad",
+  ricardoAudit,
+);
+const ownerActivity = await ricardo("GET", `/businesses/${dental}/audit-logs?entityType=user`);
+ok(
+  ownerActivity.status === 200 &&
+    JSON.stringify(ownerActivity.body).includes("Activó los avisos en el celular en Chrome en Mac") &&
+    JSON.stringify(ownerActivity.body).includes("Desactivó los avisos en el celular en Chrome en Mac"),
+  "el propietario lo ve en Actividad (Usuarios)",
+  ownerActivity.status,
+);
+const adminAudit = pushAudit(admin.session.userId);
+ok(
+  adminAudit.length === 1 && adminAudit[0].action === "push.device_enabled" && adminAudit[0].businessId === null && adminAudit[0].actorName.endsWith("(Super admin)"),
+  "los del super admin quedan en la actividad de la plataforma",
+  adminAudit,
+);
 const laura = await as("laura@demo.com");
 const lauraDevices: Device[] = [];
 for (let i = 0; i < 11; i++) {
@@ -360,6 +419,23 @@ ok(
 r = await uploadReceipt();
 await sleep(1500);
 ok(r.status === 409 && queuedFor(jhordanDevice, `comprobante-${paidId}`) === 1, "una segunda subida descartada no avisa", r.body);
+r = await visitor()("POST", `/public/appointments/${payToken}/confirm`);
+const confirmPush = r.status === 200 ? await receive(jhordanDevice, (payload) => payload.tag?.startsWith(`confirmo-${paidId}-`) ?? false) : undefined;
+ok(
+  confirmPush?.payload?.title === "El paciente confirmó" &&
+    confirmPush.payload.body === `${whenText(paidBooking.slot.date, paidBooking.slot.startTime)} · Pedro P.` &&
+    confirmPush.payload.url === `/dashboard/calendar?date=${paidBooking.slot.date}&appointment=${paidId}`,
+  "«Confirmo que voy»: «El paciente confirmó · {día} {hora} · Pedro P.», que abre la cita",
+  [r.status, r.body, confirmPush?.payload],
+);
+r = await visitor()("POST", `/public/appointments/${payToken}/confirm`);
+await sleep(1500);
+ok(
+  r.body?.already === true &&
+    count(`select count(*) from push_messages where kind = 'patient_confirm' and tag like 'confirmo-${paidId}-%'`) === 1,
+  "confirmar otra vez no repite el aviso",
+  r.body,
+);
 r = await visitor()("POST", `/public/appointments/${payToken}/cancel`);
 const cancelPush = await receive(jhordanDevice, withTag(`cancelada-${paidId}`));
 ok(
@@ -543,6 +619,12 @@ ok(
 r = await admin("POST", "/push/device/test", { endpoint: adminDevice.endpoint });
 const adminTest = await receive(adminDevice, withTag("prueba"), 1000);
 ok(r.status === 200 && adminTest?.payload?.body === "Listo: aquí te avisaremos de lo importante de la plataforma." && adminTest.payload.url === "/admin", "el del super admin abre /admin", adminTest?.payload);
+ok(
+  pushAudit(jhordan.session.userId).filter((row) => row.action === "push.test_sent" && row.businessId === jhordanBusiness).length === 1 &&
+    pushAudit(admin.session.userId).filter((row) => row.action === "push.test_sent" && row.businessId === null).length === 1,
+  "el aviso de prueba también queda en la actividad (del negocio y de la plataforma)",
+  [pushAudit(jhordan.session.userId), pushAudit(admin.session.userId)],
+);
 /** Un aparato guardado hace 10 minutos (no «recién activado»). */
 const ageDevice = (device: Device) => sql(`update push_subscriptions set updated_at = now() - interval '10 minutes' where endpoint = '${device.endpoint}'`);
 const goneDevice = push.device();

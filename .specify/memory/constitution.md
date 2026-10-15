@@ -76,8 +76,9 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - El paciente confirma o cancela su cita desde «Tu cita», el enlace privado que traen los emails
   de una cita activa, sin iniciar sesión. El del paciente principal es el mismo del pago, y cada
   otra persona de una sesión tiene el suyo. «Confirmo que voy» es una marca aparte: no cambia el
-  estado (confirmar la cita sigue siendo decisión del negocio), no avisa por ntfy y se borra si
-  cambian la fecha, la hora o el profesional, o si la cita se cancela. Cancelar desde ahí sólo lo
+  estado (confirmar la cita sigue siendo decisión del negocio), no avisa por ntfy (al celular del
+  propietario sí, desde el 2026-10-15) y se borra si cambian la fecha, la hora o el profesional, o
+  si la cita se cancela; la actividad dice cuándo se borró. Cancelar desde ahí sólo lo
   puede el paciente principal, si el negocio tiene «Permitir cancelaciones» y falta más que su
   antelación; si no, la página da el WhatsApp o el teléfono del negocio. La cancelación avisa
   como todo cambio de estado, y la copia al profesional no lleva los botones del paciente
@@ -102,12 +103,18 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   al panel se ofrecen una vez por aparato («Ahora no» lo deja 7 días) y vienen con todos los tipos
   encendidos; en Configuración se apaga cada tipo o se desactivan en ese aparato, y cerrar sesión
   los pausa en él. El propietario recibe al momento las reservas online (también «Por verificar»),
-  los comprobantes de pago, las cancelaciones del paciente desde su email y las citas nuevas en su
-  agenda que agendó otra persona (una sola por serie); desde el cron, cada cita que terminó hace 30
+  los comprobantes de pago, las confirmaciones («Confirmo que voy», desde el 2026-10-15) y las
+  cancelaciones del paciente desde su email, y las citas nuevas en su agenda que agendó otra
+  persona (una sola por serie); desde el cron, cada cita que terminó hace 30
   minutos y sigue Pendiente o Confirmada y, a las 8 de la noche en la hora del negocio, el resumen
   de las de hoy sin cerrar. El super admin recibe al momento los negocios nuevos y las solicitudes
   de plan, y desde el cron los cambios de seguridad en cuentas de super admin y los intentos
   fallidos, además de ntfy. Si los avisos fallan, la reserva y los emails siguen igual (2026-10-14).
+- Todo lo que cambia datos queda en la actividad, con quién, qué y cuándo: lo que hace el equipo en
+  el panel, lo que hace el paciente desde su enlace, las importaciones, las series y los avisos en
+  el celular (activarlos en un aparato, cambiar sus tipos, desactivarlos y el aviso de prueba). Lo
+  que pasa solo (la puesta al día del aparato al abrir el panel, la pausa al cerrar sesión, los
+  envíos del cron) y las consultas no se registran (2026-10-15).
 - En la portada no hay testimonios, cifras ni precios inventados.
 
 ### IV. Se comprueba en local, nunca en producción
@@ -211,4 +218,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.8.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-14
+**Versión**: 1.9.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-15

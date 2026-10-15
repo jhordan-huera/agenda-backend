@@ -795,8 +795,9 @@ se suma.
 
 - **Qué avisa:**
   - **al propietario, al momento:** cada reserva online (con «· Por verificar» si lo está), cada
-    comprobante de pago, cada cancelación del paciente desde su email y cada cita nueva en su agenda
-    que agendó otra persona (Recepción, un administrador o el super admin en modo soporte);
+    comprobante de pago, cada «Confirmo que voy» (la primera vez) y cada cancelación del paciente
+    desde su email, y cada cita nueva en su agenda que agendó otra persona (Recepción, un
+    administrador o el super admin en modo soporte);
   - **al propietario, desde el cron:** cada cita que terminó hace 30 minutos y sigue Pendiente o
     Confirmada («Cita por cerrar») y, a las 8 de la noche en la hora del negocio, «Tienes 3 citas de
     hoy sin cerrar» si queda alguna;
@@ -807,6 +808,10 @@ se suma.
   teléfono ni nada de la historia clínica. El aviso viaja cifrado: Google, Apple, Mozilla o Microsoft
   lo transportan pero no lo pueden leer. Los registros (también los públicos del cron) sólo tienen
   cifras y el servicio (`fcm.googleapis.com, 403`), nunca títulos, textos ni direcciones de aparatos.
+- **Actividad:** activar los avisos en un aparato, cambiar sus tipos, desactivarlos y el aviso de
+  prueba quedan en la actividad del negocio (o de la plataforma, los del super admin), con el
+  navegador («Chrome en Mac»). La puesta al día silenciosa al abrir el panel y la pausa al cerrar
+  sesión no.
 - **Cómo funciona:**
   - `src/services/web-push.ts`: el estándar con `node:crypto`, **sin librería** — cifrado
     `aes128gcm` (RFC 8291, comprobado byte a byte con el ejemplo de la RFC en

@@ -6,6 +6,7 @@ import { addDaysISO, getZonedNow } from "../shared/lib/time.ts";
 import type { Appointment, Business, PublicAppointment, PublicAppointmentResult } from "../shared/types/index.ts";
 import { describeAppointment, logAudit } from "./audit.ts";
 import { PATIENT_LINK_ACTOR, cancelFromPatientLink } from "./business-data-service.ts";
+import { notifyPatientConfirmed } from "./push-notices.ts";
 import { minutesUntilStart } from "./reminder-rules.ts";
 
 /**
@@ -173,7 +174,8 @@ export const appointmentPageService = {
 
   /**
    * «Confirmo que voy»: guarda cuándo, sin cambiar el estado, y lo registra la primera vez. Repetirlo
-   * no cambia nada (`already`). Sin email ni aviso por ntfy: el negocio lo ve en la agenda.
+   * no cambia nada (`already`). Sin email ni aviso por ntfy: el negocio lo ve en la agenda y, la primera
+   * vez, le llega «El paciente confirmó» al celular al propietario (spec 013).
    */
   async confirm(token: string): Promise<PublicAppointmentResult> {
     return transaction(async (db) => {
@@ -207,6 +209,7 @@ export const appointmentPageService = {
           // Sólo quien confirmó, no las demás personas de la sesión.
           summary: `Confirmó que va, desde su email: ${await describeAppointment(db, { ...appointment, clientId: context.clientId, extraClientIds: [] })}`,
         });
+        await notifyPatientConfirmed(db, appointment, context.clientId);
       }
       return {
         appointment: toPublicAppointment({ ...context, confirmedAt: confirmed?.at ?? context.confirmedAt }),

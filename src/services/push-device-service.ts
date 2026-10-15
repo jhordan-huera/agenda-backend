@@ -1,10 +1,13 @@
 import { config } from "../config.ts";
-import { one, pool, transaction } from "../db/pool.ts";
+import { one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
-import { MAX_PUSH_DEVICES, OWNER_PUSH_KINDS, PLATFORM_PUSH_KINDS } from "../shared/lib/constants/push.ts";
+import { MAX_PUSH_DEVICES, OWNER_PUSH_KINDS, PLATFORM_PUSH_KINDS, PUSH_KIND_LABELS, type MutablePushKind } from "../shared/lib/constants/push.ts";
+import { getFullName } from "../shared/lib/format.ts";
+import { describeUserAgent } from "../shared/lib/user-agent.ts";
 import { pushDeviceSchema, pushEndpointBodySchema, pushKindsSchema } from "../shared/lib/validations/push.ts";
-import type { PushConfig, PushDevice, PushKind } from "../shared/types/index.ts";
-import { parseInput, requireUser, superAdminNeedsTwoFactor, TWO_FACTOR_REQUIRED_MESSAGE, type RequestContext } from "./context.ts";
+import type { AuditChange, PushConfig, PushDevice, PushKind } from "../shared/types/index.ts";
+import { logAudit } from "./audit.ts";
+import { parseInput, requireUser, superAdminNeedsTwoFactor, TWO_FACTOR_REQUIRED_MESSAGE, type AuditActor, type RequestContext } from "./context.ts";
 import { isFreshDevice } from "./push-delivery.ts";
 import { isAllowedPushEndpoint, isValidPushKeys, pushServiceName, sendWebPush } from "./web-push.ts";
 
@@ -14,6 +17,11 @@ import { isAllowedPushEndpoint, isValidPushKeys, pushServiceName, sendWebPush } 
  * pasos, como el resto de /admin); Recepción, los administradores y el rol Profesional no los tienen.
  * El aparato se identifica por su dirección (`endpoint`), siempre en el cuerpo: nunca en la URL ni en
  * los registros.
+ *
+ * Auditoría: activar los avisos en un aparato, cambiar sus tipos, desactivarlos y el aviso de prueba
+ * quedan en la actividad del negocio (el propietario) o de la plataforma (el super admin), con el
+ * navegador («Chrome en Mac»). La puesta al día silenciosa al abrir el panel, la dirección renovada y
+ * la pausa al cerrar sesión no, porque no las hace la persona.
  */
 
 const OWNER_ONLY = "Los avisos en el celular son sólo para el propietario del negocio.";
@@ -25,19 +33,49 @@ const FRESH_RETRY_MS = 3_000;
 
 type PushRole = "owner" | "platform";
 
+interface PushUser {
+  userId: string;
+  role: PushRole;
+  kinds: readonly PushKind[];
+  /** Dónde queda la auditoría: el negocio del propietario, o null (la plataforma) para el super admin. */
+  businessId: string | null;
+  actor: AuditActor;
+}
+
 /** Quién puede tener aparatos y qué tipos le corresponden. */
-async function authorizePush(ctx: RequestContext): Promise<{ userId: string; role: PushRole; kinds: readonly PushKind[] }> {
+async function authorizePush(ctx: RequestContext): Promise<PushUser> {
   const user = requireUser(ctx);
   if (user.platformRole === "super_admin") {
     // La ruta ya responde `two_factor_required` (requireSuperAdminTwoFactor): ésta es la segunda barrera.
     if (superAdminNeedsTwoFactor(ctx)) throw new AppError("forbidden", TWO_FACTOR_REQUIRED_MESSAGE);
-    return { userId: user.id, role: "platform", kinds: PLATFORM_PUSH_KINDS };
+    return {
+      userId: user.id,
+      role: "platform",
+      kinds: PLATFORM_PUSH_KINDS,
+      businessId: null,
+      actor: { userId: user.id, name: `${getFullName(user)} (Super admin)` },
+    };
   }
   // El propietario de un negocio activo (el que reciba los avisos al enviarlos, ver push-delivery.ts).
-  const owner = await one(pool, "select 1 from businesses where owner_id = $1 and status = 'active'", [user.id]);
+  const owner = await one<{ id: string }>(pool, "select id from businesses where owner_id = $1 and status = 'active' order by created_at limit 1", [
+    user.id,
+  ]);
   if (!owner) throw new AppError("forbidden", OWNER_ONLY);
-  return { userId: user.id, role: "owner", kinds: OWNER_PUSH_KINDS };
+  return { userId: user.id, role: "owner", kinds: OWNER_PUSH_KINDS, businessId: owner.id, actor: { userId: user.id, name: getFullName(user) } };
 }
+
+/** «Chrome en Mac», o «un aparato» si el navegador no se reconoce. */
+function deviceLabel(userAgent: string | null): string {
+  const label = describeUserAgent(userAgent);
+  return label && label !== "Navegador desconocido" ? label : "un aparato";
+}
+
+/** Una entrada de la actividad sobre los avisos de esta persona. */
+function logPushAudit(db: Db, who: PushUser, entry: { action: string; summary: string; changes?: AuditChange[] }): Promise<void> {
+  return logAudit(db, { businessId: who.businessId, actor: who.actor, entityType: "user", entityId: who.userId, ...entry });
+}
+
+const kindLabel = (kind: PushKind) => PUSH_KIND_LABELS[kind as MutablePushKind]?.label ?? kind;
 
 /** Las claves del servicio de avisos, o 503 si la API no las tiene. */
 function requireWebPush() {
@@ -69,9 +107,10 @@ export const pushDeviceService = {
    * Con `previousEndpoint` de esta persona, esa fila pasa a la dirección nueva. Hasta 10 aparatos: si
    * pasa, se quita el más antiguo.
    */
-  async saveDevice(ctx: RequestContext, input: unknown): Promise<PushDevice> {
+  async saveDevice(ctx: RequestContext, input: unknown, userAgent: string | null = null): Promise<PushDevice> {
     requireWebPush();
-    const { userId, kinds } = await authorizePush(ctx);
+    const who = await authorizePush(ctx);
+    const { userId, kinds } = who;
     const data = parseInput(pushDeviceSchema, input);
     assertAllowedEndpoint(data.endpoint);
     if (!isValidPushKeys(data.keys)) throw new AppError("validation", "Las claves de este navegador no son válidas. Vuelve a activar los avisos.");
@@ -79,6 +118,7 @@ export const pushDeviceService = {
     const auth = data.keys.auth.replace(/=+$/, "");
 
     return transaction(async (db) => {
+      let renewed = false;
       if (data.previousEndpoint && data.previousEndpoint !== data.endpoint) {
         // La dirección renovada: la fila anterior de esta persona pasa a la nueva, con sus tipos.
         const previous = await one<{ id: string }>(db, "select id from push_subscriptions where endpoint = $1 and user_id = $2 for update", [
@@ -86,6 +126,7 @@ export const pushDeviceService = {
           userId,
         ]);
         if (previous) {
+          renewed = true;
           await db.query("delete from push_subscriptions where endpoint = $1 and id <> $2", [data.endpoint, previous.id]);
           await db.query(
             `update push_subscriptions
@@ -95,6 +136,11 @@ export const pushDeviceService = {
           );
         }
       }
+      // Activarlo de verdad (no la puesta al día de un aparato que ya era suyo): para la auditoría.
+      const existing = renewed
+        ? null
+        : await one<{ userId: string }>(db, 'select user_id as "userId" from push_subscriptions where endpoint = $1', [data.endpoint]);
+      const activated = !renewed && existing?.userId !== userId;
       const saved = (await one<{ id: string; mutedKinds: string[]; createdAt: string }>(
         db,
         `insert into push_subscriptions (user_id, session_id, endpoint, p256dh, auth)
@@ -108,37 +154,66 @@ export const pushDeviceService = {
         [userId, ctx.sessionId, data.endpoint, p256dh, auth],
       ))!;
       // El undécimo aparato quita el más antiguo.
-      await db.query(
+      const removed = await db.query(
         `delete from push_subscriptions
           where id in (select id from push_subscriptions where user_id = $1 and id <> $2 order by created_at desc offset $3)`,
         [userId, saved.id, MAX_PUSH_DEVICES - 1],
       );
+      if (activated) {
+        await logPushAudit(db, who, {
+          action: "push.device_enabled",
+          summary:
+            `Activó los avisos en el celular en ${deviceLabel(userAgent)}` +
+            ((removed.rowCount ?? 0) > 0 ? ` (se quitó el aparato más antiguo: son ${MAX_PUSH_DEVICES} como máximo)` : ""),
+        });
+      }
       return { mutedKinds: ownKinds(saved.mutedKinds, kinds), createdAt: saved.createdAt };
     });
   },
 
   /** PATCH /api/push/device: enciende o apaga tipos de este aparato (nunca el aviso de prueba). */
-  async updateKinds(ctx: RequestContext, input: unknown): Promise<Pick<PushDevice, "mutedKinds">> {
-    const { userId, kinds } = await authorizePush(ctx);
+  async updateKinds(ctx: RequestContext, input: unknown, userAgent: string | null = null): Promise<Pick<PushDevice, "mutedKinds">> {
+    const who = await authorizePush(ctx);
+    const { userId, kinds } = who;
     const data = parseInput(pushKindsSchema, input);
     const foreign = data.mutedKinds.find((kind) => !kinds.includes(kind));
     if (foreign) throw new AppError("validation", "Ese tipo de aviso no es para tu cuenta.");
-    const row = await one<{ mutedKinds: string[] }>(
-      pool,
-      `update push_subscriptions set muted_kinds = $3::text[], updated_at = now()
-        where endpoint = $1 and user_id = $2
-        returning muted_kinds as "mutedKinds"`,
-      [data.endpoint, userId, [...new Set(data.mutedKinds)]],
-    );
-    if (!row) throw new AppError("not_found", NOT_ACTIVE);
-    return { mutedKinds: ownKinds(row.mutedKinds, kinds) };
+    return transaction(async (db) => {
+      const before = await one<{ mutedKinds: string[] }>(
+        db,
+        'select muted_kinds as "mutedKinds" from push_subscriptions where endpoint = $1 and user_id = $2 for update',
+        [data.endpoint, userId],
+      );
+      if (!before) throw new AppError("not_found", NOT_ACTIVE);
+      const row = (await one<{ mutedKinds: string[] }>(
+        db,
+        `update push_subscriptions set muted_kinds = $3::text[], updated_at = now()
+          where endpoint = $1 and user_id = $2
+          returning muted_kinds as "mutedKinds"`,
+        [data.endpoint, userId, [...new Set(data.mutedKinds)]],
+      ))!;
+      // Un interruptor por tipo que cambió: «Citas por cerrar: Encendido → Apagado».
+      const state = (muted: readonly string[], kind: PushKind) => (muted.includes(kind) ? "Apagado" : "Encendido");
+      const changes = kinds
+        .filter((kind) => state(before.mutedKinds, kind) !== state(row.mutedKinds, kind))
+        .map((kind) => ({ label: kindLabel(kind), before: state(before.mutedKinds, kind), after: state(row.mutedKinds, kind) }));
+      if (changes.length > 0) {
+        await logPushAudit(db, who, { action: "push.kinds_changed", summary: `Cambió qué avisos llegan a ${deviceLabel(userAgent)}`, changes });
+      }
+      return { mutedKinds: ownKinds(row.mutedKinds, kinds) };
+    });
   },
 
   /** POST /api/push/device/off: «Desactivar en este celular». Sin error si ya no existía (doble toque). */
-  async turnOff(ctx: RequestContext, input: unknown): Promise<void> {
-    const { userId } = await authorizePush(ctx);
+  async turnOff(ctx: RequestContext, input: unknown, userAgent: string | null = null): Promise<void> {
+    const who = await authorizePush(ctx);
     const data = parseInput(pushEndpointBodySchema, input);
-    await pool.query("delete from push_subscriptions where endpoint = $1 and user_id = $2", [data.endpoint, userId]);
+    await transaction(async (db) => {
+      const deleted = await db.query("delete from push_subscriptions where endpoint = $1 and user_id = $2", [data.endpoint, who.userId]);
+      if ((deleted.rowCount ?? 0) > 0) {
+        await logPushAudit(db, who, { action: "push.device_disabled", summary: `Desactivó los avisos en el celular en ${deviceLabel(userAgent)}` });
+      }
+    });
   },
 
   /**
@@ -146,9 +221,10 @@ export const pushDeviceService = {
    * respuesta del servicio de avisos (10 s como mucho). Si el servicio dice que el aparato ya no existe,
    * se borra y responde 409.
    */
-  async sendTest(ctx: RequestContext, input: unknown): Promise<{ sent: true }> {
+  async sendTest(ctx: RequestContext, input: unknown, userAgent: string | null = null): Promise<{ sent: true }> {
     const vapid = requireWebPush();
-    const { userId, role } = await authorizePush(ctx);
+    const who = await authorizePush(ctx);
+    const { userId, role } = who;
     const data = parseInput(pushEndpointBodySchema, input);
     const device = await one<{ id: string; endpoint: string; p256dh: string; auth: string; savedAt: string }>(
       pool,
@@ -182,6 +258,7 @@ export const pushDeviceService = {
     }
     if (result?.outcome === "sent") {
       await pool.query("update push_subscriptions set failures = 0 where id = $1 and failures <> 0", [device.id]);
+      await logPushAudit(pool, who, { action: "push.test_sent", summary: `Envió un aviso de prueba a ${deviceLabel(userAgent)}` });
       return { sent: true };
     }
     if (result?.outcome === "gone" && !fresh) {

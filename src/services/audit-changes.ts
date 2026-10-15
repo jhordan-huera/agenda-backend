@@ -87,6 +87,8 @@ export interface AppointmentForAudit {
   homeAddress: string | null;
   /** "En el local", "A domicilio" o "Virtual". */
   modality: string;
+  /** Quienes confirmaron que van desde su email (spec 010), o "Nadie": se borra al cambiar la fecha o la hora. */
+  patientConfirmed: string;
 }
 
 export const APPOINTMENT_FIELDS: ChangeField<AppointmentForAudit>[] = [
@@ -101,6 +103,7 @@ export const APPOINTMENT_FIELDS: ChangeField<AppointmentForAudit>[] = [
   { key: "modality", label: "Modalidad" },
   { key: "homeAddress", label: "Dirección a domicilio" },
   { key: "notes", label: "Notas", hideValues: true },
+  { key: "patientConfirmed", label: "Confirmó que va (desde su email)" },
 ];
 
 /** Horario semanal por día: "08:00–13:00, 14:00–18:00" o "Cerrado". */
