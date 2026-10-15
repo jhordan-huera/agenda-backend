@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { config } from "../config.ts";
 import {
   auditLogColumns,
   businessColumns,
@@ -56,6 +57,7 @@ import type {
 import { createUserAccount, hashPassword, isEmailRegistered } from "./accounts.ts";
 import { emailQuotaStatus } from "./email-limits.ts";
 import { ADMIN_AUDIT_QUERY, parseAuditFilters, queryAuditLogs } from "./activity-service.ts";
+import { businessAnalytics } from "./analytics-service.ts";
 import { findTeamMember, listTeamMembers } from "./account-service.ts";
 import { logAudit } from "./audit.ts";
 import { insertBusiness, isSlugTaken } from "./business-factory.ts";
@@ -291,11 +293,11 @@ const LOGIN_ALERT_ATTEMPTS = 10;
 /**
  * Salud del sistema (spec 006), sólo con cifras: emails de hoy (enviados, fallidos sin los descartados
  * a propósito y los que siguen en cola), el cupo de Gmail (spec 015: los envíos de 24 h y los que
- * esperan), la última pasada del cron y sus errores, la última copia de seguridad registrada y los
- * intentos fallidos de inicio de sesión.
+ * esperan), la última pasada del cron y sus errores, la última copia de seguridad registrada, lo que
+ * ocupa la base de datos frente al tope del plan de Supabase y los intentos fallidos de inicio de sesión.
  */
 async function systemHealth(): Promise<PlatformStats["health"]> {
-  const [row, backup, emailDays, emailQuota] = await Promise.all([
+  const [row, backup, emailDays, emailQuota, database] = await Promise.all([
     one<{
       sent: number;
       failed: number;
@@ -330,12 +332,15 @@ async function systemHealth(): Promise<PlatformStats["health"]> {
     ),
     emailsByDay(),
     emailQuotaStatus(pool),
+    // Si no se puede medir (permisos), la tarjeta dice «No se pudo medir» y lo demás sigue.
+    one<{ sizeBytes: number }>(pool, `select pg_database_size(current_database())::float8 as "sizeBytes"`).catch(() => null),
   ]);
   return {
     emailsToday: { sent: row!.sent, failed: row!.failed, queued: row!.queued },
     emailQuota,
     cron: { lastRunAt: row!.cronAt, failures: row!.cronFailures ?? 0 },
     backup: backup ?? null,
+    database: database ? { sizeBytes: Math.round(database.sizeBytes), limitBytes: config.databaseLimitBytes } : null,
     security: { failedLogins24h: row!.failedLogins, accountsOnAlert: row!.accountsOnAlert },
     emailsByDay: emailDays,
   };
@@ -440,8 +445,8 @@ export const adminService = {
   async getBusiness(ctx: RequestContext, businessId: string): Promise<AdminBusinessDetail | null> {
     authorizeSuperAdmin(ctx);
     if (!isUuid(businessId)) return null;
-    // El resumen, el equipo y la actividad a la vez (no dependen entre sí).
-    const [[summary], members, recentActivity] = await Promise.all([
+    // El resumen, el equipo, la actividad y su parte de la analítica a la vez (no dependen entre sí).
+    const [[summary], members, recentActivity, analytics] = await Promise.all([
       summarizeBusinesses(pool, businessId),
       listTeamMembers(pool, businessId),
       many<AuditLog>(
@@ -452,9 +457,11 @@ export const adminService = {
           limit 15`,
         [businessId],
       ),
+      // «Frente a su tipo» (spec 016): de la última foto de 30 días, sin calcular nada.
+      businessAnalytics(businessId),
     ]);
     if (!summary) return null;
-    return { ...summary, members, recentActivity };
+    return { ...summary, members, recentActivity, analytics };
   },
 
   /**

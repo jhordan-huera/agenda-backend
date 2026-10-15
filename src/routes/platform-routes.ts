@@ -4,6 +4,7 @@ import { requireCaptcha } from "../http/captcha.ts";
 import { handle, limitRequests } from "../http/handlers.ts";
 import { requireSuperAdminTwoFactor } from "../http/session.ts";
 import { adminService, platformService } from "../services/admin-service.ts";
+import { analyticsService } from "../services/analytics-service.ts";
 import { appointmentPageService } from "../services/appointment-page-service.ts";
 import { categoryService } from "../services/category-service.ts";
 import { platformNoticeService } from "../services/panel-notices.ts";
@@ -160,6 +161,11 @@ adminRoutes.use(requireSuperAdminTwoFactor);
 adminRoutes.get(
   "/stats",
   handle((req) => adminService.getStats(req.ctx)),
+);
+// Analítica (spec 016): la última foto que preparó el cron (?days=30|90). Lee una fila; no calcula nada.
+adminRoutes.get(
+  "/analytics",
+  handle((req) => analyticsService.getSnapshot(req.ctx, req.query)),
 );
 adminRoutes.get(
   "/businesses",

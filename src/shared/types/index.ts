@@ -1041,6 +1041,11 @@ export interface PlatformStats {
     cron: { lastRunAt: ISODateTime | null; failures: number };
     /** Última copia de seguridad registrada (null: ninguna todavía). */
     backup: { ranAt: ISODateTime; ok: boolean; sizeBytes: number | null; error: string } | null;
+    /**
+     * Lo que ocupa la base de datos frente al tope del plan gratuito de Supabase (500 MB por defecto,
+     * DATABASE_LIMIT_MB). null: no se pudo medir.
+     */
+    database: { sizeBytes: number; limitBytes: number } | null;
     /** Intentos fallidos de inicio de sesión en 24 h y cuentas con 10 o más en la última hora. */
     security: { failedLogins24h: number; accountsOnAlert: number };
     /** Emails de los últimos 14 días (hoy el último), en Ecuador: enviados y fallidos (sin los descartados). */
@@ -1061,6 +1066,177 @@ export interface AdminBusinessSummary {
 export interface AdminBusinessDetail extends AdminBusinessSummary {
   members: TeamMember[];
   recentActivity: AuditLog[];
+  /** Su parte de la última foto de 30 días de la analítica (spec 016), para «Frente a su tipo»; null: aún no hay foto. */
+  analytics: AdminBusinessAnalytics | null;
+}
+
+/* ------------------------------------------ Analítica del super admin (spec 016) -- */
+
+/**
+ * Periodo de la analítica: los últimos 30 o 90 días, sin contar hoy (en la zona de cada negocio),
+ * siempre comparado con el periodo anterior de la misma duración.
+ */
+export type AnalyticsPeriodDays = 30 | 90;
+
+/** Las funciones de Agenda360 cuyo uso se mide en cada negocio (R6). */
+export type FeatureKey =
+  | "bookingPage"
+  | "reminders"
+  | "patientConfirm"
+  | "series"
+  | "clientImport"
+  | "push"
+  | "bell"
+  | "clinical"
+  | "payments"
+  | "multiAgenda";
+
+/** Las tasas que se comparan con las del tipo de negocio. */
+export type AnalyticsRateKey = "onlineRate" | "noShowRate" | "cancelRate" | "confirmRate";
+
+/** Salud de un negocio: de 70 a 100 sano, de 40 a 69 en riesgo y menos de 40 crítico (R4). */
+export type HealthGroup = "healthy" | "risk" | "critical";
+
+/**
+ * Una tasa del negocio frente a la de su tipo (R3): muy por encima o muy por debajo (el doble o la
+ * mitad, con 5 puntos de diferencia o más), parecida, o null si no se puede comparar (pocos datos).
+ */
+export type VersusType = "above" | "below" | "similar" | null;
+
+/**
+ * Las cifras de un negocio en el periodo (R2–R7). Las tasas son fracciones de 0 a 1 (0,25 = 25 %);
+ * null cuando no hay con qué calcularlas (p. ej. ninguna cita pasada). Con menos de 10 citas en el
+ * periodo, `fewData`: las tasas se muestran con «pocos datos» y no cuentan para su tipo.
+ */
+export interface BusinessAnalytics {
+  id: string;
+  name: string;
+  /** El tipo de negocio (su categoría); id null: «Sin tipo». */
+  category: { id: string | null; name: string };
+  plan: PlanId;
+  status: BusinessStatus;
+  createdAt: ISODateTime;
+  timezone: string;
+  currency: string;
+  /** Sólo el propietario, para llamarlo (nunca datos de pacientes). null: el negocio aún no tiene. */
+  owner: { name: string; phone: string; email: string } | null;
+  /** Citas con fecha en el periodo, sin las canceladas. */
+  appointments: number;
+  /** Las mismas, en el periodo anterior. */
+  previousAppointments: number;
+  /** Frente al periodo anterior (0,45 = +45 %); "new" si el negocio es más nuevo que el periodo o antes no tuvo citas. */
+  growth: number | "new";
+  /** Reservas desde la página ÷ citas. */
+  onlineRate: number | null;
+  /** No asistió ÷ (atendidas + no asistió). */
+  noShowRate: number | null;
+  /** Canceladas ÷ todas las del periodo. */
+  cancelRate: number | null;
+  /** «Confirmo que voy» ÷ citas que recibieron un recordatorio o un email con el enlace «Tu cita». */
+  confirmRate: number | null;
+  versusType: Record<AnalyticsRateKey, VersusType>;
+  /** Pacientes con alguna cita en el periodo. */
+  activeClients: number;
+  /** Pacientes creados en el periodo (como cuenta el tope del plan y sin los importados). */
+  newClients: number;
+  /** El precio de las citas atendidas, en la moneda del negocio. */
+  estimatedRevenue: number;
+  /** El precio de las citas marcadas como pagadas. */
+  collected: number;
+  /** Ingresos estimados ÷ atendidas con precio (null: ninguna con precio). */
+  averageTicket: number | null;
+  /** El mes en curso frente al tope del plan (limit null: sin tope). */
+  planUsage: {
+    appointments: { used: number; limit: number | null };
+    clients: { used: number; limit: number | null };
+    users: { used: number; limit: number | null };
+  };
+  /** Profesionales activos y, en Business, las agendas contratadas. */
+  agendas: { active: number; contracted: number | null };
+  /** Personas del equipo (0: «nadie», ni siquiera el propietario). */
+  teamMembers: number;
+  /** El último inicio de sesión de alguien del equipo (la auditoría guarda 90 días); null: ninguno. */
+  lastTeamLoginAt: ISODateTime | null;
+  /** Citas pasadas del periodo que siguen Pendientes o Confirmadas. */
+  unclosed: number;
+  health: { score: number; group: HealthGroup; reasons: string[] };
+  /** Por qué está listo para subir de plan (R5); vacío si no lo está. */
+  upsell: string[];
+  features: Record<FeatureKey, boolean>;
+  /** Lo que le dio Agenda360 en el periodo (R7). */
+  value: {
+    /** Todas las citas del periodo, también las canceladas. */
+    appointments: number;
+    online: number;
+    reminders: number;
+    confirmations: number;
+    /** Canceladas 24 h o más antes de la cita: la hora quedó libre. */
+    timelyCancellations: number;
+    /**
+     * Inasistencias de los 60 días antes y después de empezar a usar los recordatorios o «Confirmo que
+     * voy» (`since`), si cada lado tiene 20 citas cerradas o más; si no, null.
+     */
+    noShowBefore: number | null;
+    noShowAfter: number | null;
+    since: ISODate | null;
+  };
+  fewData: boolean;
+}
+
+/** Las cifras de un tipo de negocio (R3), sólo con sus negocios activos. */
+export interface CategoryAnalytics {
+  /** null: «Sin tipo». */
+  id: string | null;
+  name: string;
+  /** Negocios activos del tipo. */
+  businesses: number;
+  /** Los que tienen datos suficientes (10 citas o más): sólo ellos cuentan para las medianas. */
+  withData: number;
+  /** La mediana de cada tasa (null con «pocos datos»: menos de 3 negocios con datos). */
+  medians: Record<AnalyticsRateKey, number | null>;
+  /** La mediana del ticket promedio. */
+  averageTicket: number | null;
+  /** La mediana de las citas por agenda en el periodo. */
+  appointmentsPerAgenda: number | null;
+  /** Los 3 días de la semana y las 3 horas de inicio con más citas en el periodo. */
+  topDays: { day: DayOfWeek; appointments: number }[];
+  topHours: { hour: number; appointments: number }[];
+  fewData: boolean;
+}
+
+/** Los totales de la plataforma en el periodo (R7) y la adopción de cada función (R6). */
+export interface PlatformTotals {
+  businesses: { active: number; total: number };
+  /** Todas las citas del periodo, también las canceladas («Agenda360 gestionó…»). */
+  appointments: number;
+  online: number;
+  reminders: number;
+  confirmations: number;
+  newClients: number;
+  /** Negocios activos que usan cada función y su parte (0 a 1). */
+  adoption: Record<FeatureKey, { businesses: number; rate: number }>;
+}
+
+/** La foto diaria de la analítica (tabla analytics_snapshots): la prepara el cron, la página sólo la lee. */
+export interface AnalyticsSnapshot {
+  computedAt: ISODateTime;
+  periodDays: AnalyticsPeriodDays;
+  /** El periodo en la hora de Ecuador: desde (incluido) y hasta (hoy, sin incluir). */
+  from: ISODate;
+  to: ISODate;
+  /** Una por negocio, activos y suspendidos (la página filtra). */
+  businesses: BusinessAnalytics[];
+  /** Una por tipo con negocios activos, más «Sin tipo» si hace falta. */
+  categories: CategoryAnalytics[];
+  platform: PlatformTotals;
+}
+
+/** La parte de un negocio en la última foto de 30 días, para la tarjeta «Frente a su tipo» de su ficha. */
+export interface AdminBusinessAnalytics {
+  computedAt: ISODateTime;
+  periodDays: AnalyticsPeriodDays;
+  business: BusinessAnalytics;
+  category: CategoryAnalytics | null;
 }
 
 /** Un super admin del equipo de la plataforma (Configuración del panel /admin). */

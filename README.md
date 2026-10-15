@@ -135,6 +135,7 @@ Publica primero la API y después agenda-front si el cambio toca a los dos.
 | `npm run db:move-images` | Pasa al bucket `imagenes` los logos y fotos antiguos guardados dentro de la base (data URL); se puede repetir |
 | `npm run sync:shared` | Copia de agenda-front el código compartido (ver abajo) |
 | `npm run push:keys` | Crea el par de claves VAPID de los avisos en el celular y muestra las dos líneas para copiarlas (ver "Avisos en el celular") |
+| `npm run analytics:refresh` | Prepara ya la foto de hoy de la analítica del super admin (30 y 90 días) contra la base local, para probar; con la de producción no hace nada (ver "Analítica del super admin") |
 | `npm run lambda:package` | Prepara `dist/lambda.zip` para AWS Lambda (ver "Backend en AWS Lambda") |
 | `npm run backup:decrypt -- <archivo>` | Descifra una copia de seguridad en `~/Agenda360-copias` (ver "Copias de seguridad") |
 
@@ -185,6 +186,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) · `GET /public/payments/:token` (+ `receipts`) · `GET /public/appointments/:token` · `POST …/confirm` · `POST …/cancel` («Tu cita», spec 010) |
 | Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, el cupo de Gmail —`emailQuota`, spec 015—, último cron, última copia e intentos fallidos; spec 006; el reparto por plan, `businessesByPlan`, sólo cuenta los negocios activos) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
 | Avisos en el celular (spec 013) | `GET /push/config` · `PUT /push/device` · `PATCH /push/device` · `POST /push/device/off` · `POST /push/device/test` (sólo el propietario de un negocio activo y el super admin; el aparato va en el cuerpo, nunca en la URL) |
+| Analítica (spec 016) | `GET /admin/analytics?days=30\|90` (sólo el super admin, con la verificación en dos pasos): `{ snapshot }`, la última foto de ese periodo, o `{ snapshot: null }` si aún no hay; `days` distinto de 30 o 90, 400. Lee una fila y no calcula nada. La ficha (`GET /admin/businesses/:id`) suma `analytics`: su parte de la última foto de 30 días y su tipo |
 | Centro de avisos (spec 014) | `GET /businesses/:id/notices/unread` · `GET …/notices` (`?limit&unread=1&cursor`) · `POST …/notices/:noticeId/read` · `POST …/notices/read-all` (cualquier rol del equipo; el super admin en modo soporte recibe 403) y lo mismo en `/admin/notices` (el super admin, con la verificación en dos pasos). Ninguna escribe en la actividad |
 | Estado | `GET /health` (con `push`: si la API tiene claves VAPID válidas) |
 
@@ -1037,6 +1039,57 @@ Copia manual a una carpeta fuera del repositorio (necesita pg_dump 17: `brew ins
 ```bash
 PG_DUMP=/opt/homebrew/opt/postgresql@17/bin/pg_dump npm run backup -- --out ~/Agenda360-copias
 ```
+
+## Analítica del super admin
+
+Spec 016. /admin → «Analítica» compara los negocios, los sitúa frente a su tipo, dice a quién llamar y a
+quién ofrecerle un plan mejor, y qué valor les da Agenda360. Cuatro pestañas (Comparar, Por tipo de
+negocio, Salud y ventas, Uso y valor), con los últimos 30 o 90 días frente al periodo anterior de la
+misma duración. La ficha de cada negocio suma la tarjeta «Frente a su tipo». Los negocios no ven nada
+de esto y la beta no la lleva.
+
+- **La foto diaria** (`src/services/analytics-service.ts`): el cron de GitHub, en su primera pasada
+  después de las 06:00 de Ecuador, prepara la foto de 30 y la de 90 días si falta la de hoy, y borra
+  las de más de 30 días (migración 043, `analytics_snapshots`: una fila por periodo y día, con todo en
+  JSON). Las demás pasadas ven que ya está. La página sólo lee una fila: **no gasta CPU de Vercel**. Si
+  falla, el cron sigue con lo demás y lo intenta en la próxima pasada; su línea del registro suma
+  «analítica: preparada (N negocios)», «ya estaba la de hoy», «se prepara después de las 06:00» o
+  «falló», sólo con cifras.
+- **Las cuentas**, en SQL agregado por negocio (cinco consultas para toda la plataforma, ninguna por
+  negocio), en la zona de cada negocio y en el periodo `[hoy − N días, hoy)`: citas (sin las
+  canceladas) y crecimiento («nuevo» si el negocio es más nuevo que el periodo o antes no tuvo citas);
+  % de reservas online, de inasistencias (sobre las cerradas), de cancelaciones y de confirmadas por el
+  paciente (sobre las que recibieron el recordatorio o el enlace «Tu cita»); pacientes activos y nuevos
+  (como el tope del plan, sin los importados); ingresos estimados (las atendidas), lo cobrado y el
+  ticket (sólo las citas con precio); el uso del plan; las agendas, y el último acceso del equipo.
+  Con menos de 10 citas, «pocos datos»: las tasas se ven con la marca y no cuentan para su tipo.
+- **Por tipo de negocio:** la mediana de cada tasa, del ticket y de las citas por agenda entre los
+  negocios activos del tipo con datos suficientes (con menos de 3, «pocos datos»), y los 3 días y las
+  3 horas de más demanda. «Muy distinto» de su tipo es el doble o la mitad, con 5 puntos o más.
+- **La salud y las ventas:** reglas fijas, en un solo objeto (`HEALTH` y `UPSELL` del servicio), con
+  sus motivos en palabras («Nadie del equipo entra hace 12 días»). Se parte de 100: nadie entra hace
+  más de 14 días −30 (de 7 a 14, −15); sin citas −30; citas −50 % o peor −25 (de −20 % a −50 %, −15; con
+  10 o más antes); más de 10 sin cerrar −10; sin reservas online −5; inasistencias muy por encima de
+  su tipo −5. De 70 a 100 sano, de 40 a 69 en riesgo, menos de 40 crítico; un negocio de menos de 14
+  días sólo resta por el último acceso. «Listos para subir de plan»: un Free al 80 % de su tope, +30 %
+  con 20 citas o más (Free y Pro), un Pro con sus 3 usuarios o con 120 citas cada 30 días en una sola
+  agenda, y un Business con todas sus agendas contratadas en uso. «Negocios para vender» del Inicio
+  sigue con sus reglas.
+- **Uso y valor:** qué funciones usa cada negocio en el periodo (la página de reservas, los
+  recordatorios, «Confirmo que voy», las series, la importación, los avisos en el celular, la
+  campana, la historia clínica, los pagos y las varias agendas), su adopción, el valor del periodo
+  (con las cancelaciones de 24 h o más de antelación según la actividad) y las inasistencias de los
+  60 días antes y después de su primer recordatorio o «Confirmo que voy» (con 20 citas cerradas o más
+  a cada lado). Los totales de la plataforma salen listos para copiar.
+- **Privacidad:** la foto sólo lleva cifras por negocio y por tipo; los únicos datos personales son el
+  nombre, el teléfono y el email de cada propietario (para llamarlo). Ninguna consulta lee nombres ni
+  contactos de pacientes, y la prueba (`tests/analytics.test.ts`) revisa la foto entera.
+- **En local:** `npm run analytics:refresh` prepara la foto de hoy a cualquier hora contra la base del
+  entorno (la reemplaza si ya estaba). Con la base de producción desde el equipo no escribe nada: allí
+  la prepara el cron (para no esperar a la mañana, GitHub → Actions → «Run workflow»).
+- **Publicación:** la migración 043 va antes del backend (`npm run db:migrate`, como paso aparte) y
+  el backend antes del front. Sin variables nuevas. Hasta la primera foto, la página dice «Las cifras se
+  preparan cada mañana».
 
 ## Pruebas
 

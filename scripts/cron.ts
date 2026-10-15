@@ -15,7 +15,8 @@
  * celular (spec 013): VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY (sin ellas no se envían: quedan en cola y
  * caducan) y, opcional, VAPID_SUBJECT. Las campanas del panel (spec 014) no necesitan nada más. El cupo
  * de Gmail (spec 015), opcional: EMAIL_DAILY_QUOTA, EMAIL_TEAM_RESERVE y EMAIL_PATIENT_RESERVE, los
- * mismos valores que la API.
+ * mismos valores que la API. La analítica del super admin (spec 016) se prepara aquí cada mañana, sin
+ * variables nuevas.
  *
  * Prueba local: node --env-file=.env scripts/cron.ts
  */
@@ -346,6 +347,24 @@ export function describePanelLine(report: ScheduledTasksReport): string {
   return ` · avisos del panel: ${created} (borrados, más de 30 días: ${purged ?? "no se pudo"})`;
 }
 
+/**
+ * "· analítica: preparada (N negocios)": la foto diaria del super admin (spec 016). Sólo cifras: el
+ * registro es público.
+ */
+export function describeAnalyticsLine(report: ScheduledTasksReport): string {
+  if (!report.analytics) return "";
+  const { status, businesses } = report.analytics;
+  const detail =
+    status === "prepared"
+      ? `preparada (${plural(businesses ?? 0, "negocio", "negocios")})`
+      : status === "ready"
+        ? "ya estaba la de hoy"
+        : status === "early"
+          ? "se prepara después de las 06:00"
+          : "falló (se reintenta en la próxima pasada)";
+  return ` · analítica: ${detail}`;
+}
+
 /** El cron no pudo trabajar: aviso urgente y el job de GitHub termina con error. */
 async function fail(reason: string): Promise<void> {
   await notify({
@@ -401,7 +420,8 @@ async function main(): Promise<void> {
         `emails sin contenido (más de 90 días): ${report.emailContentPurged} · ` +
         `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"}` +
         `${describePanelLine(report)}` +
-        `${describePushLine(report, config.webPushProblem ? `sin envío: ${config.webPushProblem}` : null)} · ${report.durationMs} ms`,
+        `${describePushLine(report, config.webPushProblem ? `sin envío: ${config.webPushProblem}` : null)}` +
+        `${describeAnalyticsLine(report)} · ${report.durationMs} ms`,
     );
     const notices = [
       ...buildBookingNotices(report),
