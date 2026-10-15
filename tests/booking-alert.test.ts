@@ -9,6 +9,7 @@ import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availa
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
 import type { PublicBusinessProfile } from "../src/shared/types/index.ts";
 import {
+  clientImportNotice,
   newClientNotice,
   onlineBookingNotice,
   panelAppointmentNotice,
@@ -313,6 +314,40 @@ ok(
 );
 const manyChanges = buildBookingNotices({ statusChanges: 12, statusNotices: Array.from({ length: 10 }, () => notice) } as never);
 ok(manyChanges.length === 11 && /…y 2 cambios de estado más/.test(manyChanges[10].message), "con muchos, detalla 10 y dice cuántos faltan", manyChanges.at(-1));
+
+console.log("Aviso de una importación de pacientes (spec 012)");
+const importEntry = {
+  businessId: "b1",
+  businessName: "Mente Abierta",
+  summary: "Importó 200 pacientes (3 ya existían, 5 con errores)",
+  by: { name: "Ana Torres", role: "owner" as const, superAdmin: false },
+};
+const importNotice = clientImportNotice(importEntry);
+ok(
+  importNotice.title === "Agenda360: pacientes importados" &&
+    importNotice.priority === 3 &&
+    importNotice.tags.includes("inbox_tray") &&
+    importNotice.click === "/admin/businesses/b1" &&
+    importNotice.message === ["Mente Abierta", "Importó 200 pacientes (3 ya existían, 5 con errores)", "Desde el panel por Ana T. (Propietario)"].join("\n"),
+  "el negocio, la cifra y quién la hizo a medias (título sin el negocio)",
+  importNotice,
+);
+ok(
+  clientImportNotice({ ...importEntry, by: { name: "Soporte", role: null, superAdmin: true } }).message.endsWith("\nDesde el panel por el super admin (modo soporte)"),
+  "hecha por el super admin en modo soporte",
+);
+const manyImports = buildBookingNotices({ clientImports: 13, importNotices: Array.from({ length: 10 }, () => importNotice) } as never);
+ok(
+  manyImports.length === 11 &&
+    manyImports[10].title === "Agenda360: más importaciones" &&
+    /…y 3 importaciones más de pacientes \(detalle en la actividad de cada negocio\)/.test(manyImports[10].message),
+  "con más de 10, detalla 10 y dice cuántas faltan",
+  manyImports.at(-1),
+);
+ok(
+  /…y 1 importación más de pacientes/.test(buildBookingNotices({ clientImports: 11, importNotices: manyImports.slice(0, 10) } as never).at(-1)?.message ?? ""),
+  "en singular cuando falta una",
+);
 
 console.log("En la pasada del cron");
 const received: { topic: string; title: string; message: string; priority: number; click?: string }[] = [];

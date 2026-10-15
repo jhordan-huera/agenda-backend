@@ -3,6 +3,8 @@ import { deleteExpiredRateLimits } from "../http/rate-limit-store.ts";
 import { accountChangeNotice, findAccountChanges } from "../services/account-alerts.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
 import {
+  clientImportNotice,
+  findClientImports,
   findOnlineBookings,
   findPanelAppointments,
   findPanelClients,
@@ -116,6 +118,10 @@ export interface ScheduledTasksReport {
   statusChanges?: number;
   /** El aviso de cada uno (hasta MAX_STATUS_NOTICES): de qué estado a cuál, quién y sus emails. */
   statusNotices?: BookingNotice[];
+  /** Importaciones de pacientes desde un Excel o un CSV desde la ejecución anterior (spec 012). */
+  clientImports?: number;
+  /** El aviso de cada una (hasta MAX_IMPORT_NOTICES), con la cifra y quién la hizo, sin datos de pacientes. */
+  importNotices?: BookingNotice[];
   /** Cambios de seguridad en cuentas de super admin desde la ejecución anterior (spec 009). */
   accountChanges?: number;
   /** El aviso de cada uno (hasta MAX_ACCOUNT_NOTICES), con la cuenta enmascarada. */
@@ -268,6 +274,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const seriesCancellations = await findSeriesCancellations(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const statusChanges = await findStatusChanges(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const accountChanges = await findAccountChanges(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
+  const clientImports = await findClientImports(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
     reminderFailures: reminders.failures,
@@ -290,6 +297,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     seriesCancelNotices: seriesCancellations.cancellations.map(seriesCancelledNotice),
     statusChanges: statusChanges.total,
     statusNotices: statusChanges.changes.map(statusChangeNotice),
+    clientImports: clientImports.total,
+    importNotices: clientImports.imports.map(clientImportNotice),
     accountChanges: accountChanges.total,
     accountNotices: accountChanges.changes.map(accountChangeNotice),
     since: previous?.ranAt ?? null,

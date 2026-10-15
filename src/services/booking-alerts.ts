@@ -230,7 +230,9 @@ export function newClientNotice(client: PanelClient): BookingNotice {
 
 /**
  * Los pacientes registrados desde el panel en (since, until], los más antiguos primero (hasta
- * `limit`), y cuántos son en total. Sin `since` (la primera pasada), los del último día.
+ * `limit`), y cuántos son en total. Sin `since` (la primera pasada), los del último día. Sólo los de
+ * `source = 'dashboard'`: los de una importación (spec 012, `'import'`) no salen uno por uno, sino en un
+ * solo aviso por importación (ver findClientImports).
  */
 export async function findPanelClients(
   db: Db,
@@ -848,4 +850,81 @@ export async function findStatusChanges(
     }),
   );
   return { changes, total: rows[0].total };
+}
+
+/* ------------------------------------------------- Importaciones de pacientes -- */
+
+/** Importaciones detalladas por pasada del cron; de las demás sólo se dice cuántas son. */
+export const MAX_IMPORT_NOTICES = 10;
+
+export interface ClientImport {
+  businessId: string;
+  businessName: string;
+  /** El resumen de la actividad, sólo con cifras: «Importó 200 pacientes (3 ya existían, 5 con errores)». */
+  summary: string;
+  by: PanelActor;
+}
+
+/**
+ * Aviso por ntfy de una importación de pacientes desde un Excel o un CSV (spec 012): uno por
+ * importación, con la cifra y quién la hizo, a medias. Sin nombres ni datos de los pacientes; el
+ * título no nombra al negocio.
+ */
+export function clientImportNotice(entry: ClientImport): BookingNotice {
+  return {
+    title: "Agenda360: pacientes importados",
+    message: [entry.businessName, entry.summary, `Desde el panel${byWhom(entry.by)}`].join("\n"),
+    priority: 3,
+    tags: ["inbox_tray"],
+    click: `/admin/businesses/${entry.businessId}`,
+  };
+}
+
+/**
+ * Las importaciones de pacientes en (since, until], las más antiguas primero (hasta `limit`), y cuántas
+ * son en total. Salen del registro de actividad (client.imported: sólo las que crearon algún paciente).
+ * Sin `since` (la primera pasada), las del último día.
+ */
+export async function findClientImports(
+  db: Db,
+  since: string | null,
+  until: string,
+  limit = MAX_IMPORT_NOTICES,
+): Promise<{ imports: ClientImport[]; total: number }> {
+  const rows = await many<{
+    total: number;
+    businessId: string;
+    businessName: string;
+    summary: string;
+    actorName: string | null;
+    actorRole: BusinessRole | null;
+    superAdmin: boolean | null;
+  }>(
+    db,
+    `select count(*) over ()::int as total, b.id as "businessId", b.name as "businessName", l.summary,
+            nullif(trim(u.first_name || ' ' || u.last_name), '') as "actorName", bu.role as "actorRole",
+            u.platform_role = 'super_admin' as "superAdmin"
+       from audit_logs l
+       join businesses b on b.id = l.business_id
+       left join users u on u.id = l.actor_id
+       left join business_users bu on bu.business_id = l.business_id and bu.user_id = l.actor_id
+      where l.entity_type = 'client' and l.action = 'client.imported'
+        and l.created_at > coalesce($1::timestamptz, now() - interval '1 day') and l.created_at <= $2
+      order by l.created_at, l.id
+      limit $3`,
+    [since, until, limit],
+  );
+  if (rows.length === 0) return { imports: [], total: 0 };
+  return {
+    imports: rows.map((row) => ({
+      businessId: row.businessId,
+      businessName: row.businessName,
+      summary: row.summary,
+      by:
+        row.actorName === null && !row.superAdmin
+          ? null
+          : { name: row.actorName ?? "", role: row.actorRole, superAdmin: Boolean(row.superAdmin) },
+    })),
+    total: rows[0].total,
+  };
 }

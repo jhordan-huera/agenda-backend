@@ -10,6 +10,8 @@ export type Permission =
   | "appointments.manage"
   | "clients.manage"
   | "clients.delete"
+  /** Importar pacientes desde un Excel o un CSV (spec 012): una tarea de puesta en marcha. */
+  | "clients.import"
   | "services.manage"
   | "professionals.manage"
   | "schedule.manage"
@@ -23,6 +25,7 @@ const ALL_PERMISSIONS: Permission[] = [
   "appointments.manage",
   "clients.manage",
   "clients.delete",
+  "clients.import",
   "services.manage",
   "professionals.manage",
   "schedule.manage",
@@ -39,6 +42,7 @@ const ROLE_PERMISSIONS: Record<BusinessRole, ReadonlySet<Permission>> = {
     "appointments.manage",
     "clients.manage",
     "clients.delete",
+    "clients.import",
     "services.manage",
     "professionals.manage",
     "schedule.manage",

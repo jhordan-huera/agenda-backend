@@ -101,6 +101,13 @@ export async function assertClientLimit(db: Db, businessId: string) {
   }
 }
 
+/** Pacientes que aún caben en el plan (null: sin límite). La importación crea como mucho estos (spec 012). */
+export async function remainingClientSlots(db: Db, businessId: string): Promise<number | null> {
+  const { limits } = await planOf(db, businessId);
+  if (limits.clients === null) return null;
+  return Math.max(0, limits.clients - (await countClients(db, businessId)));
+}
+
 /** Agendas: se comprueba al crear un profesional activo o al reactivarlo. */
 export async function assertProfessionalLimit(db: Db, businessId: string, excludeId?: string) {
   const { professionals } = await limitsOf(db, businessId);

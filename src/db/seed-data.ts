@@ -614,6 +614,7 @@ function seedTenant(
     notes,
     isActive,
     claimedClientId: null,
+    source: "dashboard" as const,
     createdAt: daysAgoISO(Math.max(1, age - 20 - index * 5)),
   }));
   db.clients.push(...clients);

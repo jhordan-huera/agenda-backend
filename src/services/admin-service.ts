@@ -187,7 +187,8 @@ async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBu
 
 /**
  * Crecimiento de la plataforma (spec 006): citas agendadas (creadas, sin las canceladas), reservas
- * online, pacientes y negocios nuevos, en los dos periodos de growthPeriodsSql.
+ * online, pacientes y negocios nuevos, en los dos periodos de growthPeriodsSql. Los pacientes importados
+ * desde un archivo (spec 012) no cuentan como nuevos: son la lista que el negocio ya tenía.
  */
 async function platformGrowth(): Promise<PlatformStats["growth"]> {
   const row = (await one<Record<string, string | number>>(
@@ -204,8 +205,10 @@ async function platformGrowth(): Promise<PlatformStats["growth"]> {
                and a.created_at >= p.month_start and a.created_at <= now())::int as "onlineCurrent",
             (select count(*) from appointments a where a.status <> 'cancelled' and a.source = 'booking_page'
                and a.created_at >= p.prev_start and a.created_at < p.prev_end)::int as "onlinePrevious",
-            (select count(*) from clients c where c.created_at >= p.month_start and c.created_at <= now())::int as "clientsCurrent",
-            (select count(*) from clients c where c.created_at >= p.prev_start and c.created_at < p.prev_end)::int as "clientsPrevious",
+            (select count(*) from clients c where c.source <> 'import'
+               and c.created_at >= p.month_start and c.created_at <= now())::int as "clientsCurrent",
+            (select count(*) from clients c where c.source <> 'import'
+               and c.created_at >= p.prev_start and c.created_at < p.prev_end)::int as "clientsPrevious",
             (select count(*) from businesses b where b.created_at >= p.month_start and b.created_at <= now())::int as "businessesCurrent",
             (select count(*) from businesses b where b.created_at >= p.prev_start and b.created_at < p.prev_end)::int as "businessesPrevious"
        from periods p`,
@@ -220,7 +223,7 @@ async function platformGrowth(): Promise<PlatformStats["growth"]> {
                        count(*) filter (where source = 'booking_page')::int as online
                   from appointments, start where status <> 'cancelled' and created_at >= start.at and created_at <= now() group by 1),
           c as (select to_char(created_at at time zone $1, 'YYYY-MM-DD') as date, count(*)::int as clients
-                  from clients, start where created_at >= start.at and created_at <= now() group by 1)
+                  from clients, start where source <> 'import' and created_at >= start.at and created_at <= now() group by 1)
      select coalesce(a.date, c.date) as date, coalesce(a.appointments, 0) as appointments, coalesce(a.online, 0) as online,
             coalesce(c.clients, 0) as clients
        from a full join c on c.date = a.date`,

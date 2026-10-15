@@ -182,8 +182,8 @@ export function buildNotice(report: ScheduledTasksReport, options: { gmailConfig
 
 /**
  * Un aviso por cada reserva desde la página pública, cada cita y cada serie de citas agendada desde el
- * panel, cada serie cancelada y cada paciente registrado desde el panel (ver booking-alerts.ts) y, si
- * hubo más de los que se detallan, otro con cuántos faltan.
+ * panel, cada serie cancelada, cada paciente registrado desde el panel y cada importación de pacientes
+ * (ver booking-alerts.ts) y, si hubo más de los que se detallan, otro con cuántos faltan.
  */
 export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
   const notices: Notice[] = [...(report.bookingNotices ?? [])];
@@ -254,6 +254,18 @@ export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
       message: `…y ${plural(restClients, "paciente nuevo más", "pacientes nuevos más")} registrados desde el panel (detalle en cada negocio).`,
       priority: 3,
       tags: ["bust_in_silhouette"],
+      click: "/admin/businesses",
+    });
+  }
+  const importNotices = report.importNotices ?? [];
+  notices.push(...importNotices);
+  const restImports = (report.clientImports ?? 0) - importNotices.length;
+  if (restImports > 0) {
+    notices.push({
+      title: "Agenda360: más importaciones",
+      message: `…y ${plural(restImports, "importación más", "importaciones más")} de pacientes (detalle en la actividad de cada negocio).`,
+      priority: 3,
+      tags: ["inbox_tray"],
       click: "/admin/businesses",
     });
   }
@@ -338,6 +350,7 @@ async function main(): Promise<void> {
         `pacientes nuevos del panel: ${report.panelClients ?? 0} · citas del panel: ${report.panelAppointments ?? 0} · ` +
         `series del panel: ${report.panelSeries ?? 0} · series canceladas: ${report.seriesCancellations ?? 0} · ` +
         `cambios de estado: ${report.statusChanges ?? 0} · cambios de cuenta: ${report.accountChanges ?? 0} · ` +
+        `importaciones: ${report.clientImports ?? 0} · ` +
         `enviados desde la anterior: ${report.sentSinceLastRun} · ` +
         `negocios con error: ${report.reminderFailures} · ` +
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +

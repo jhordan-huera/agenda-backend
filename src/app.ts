@@ -56,7 +56,11 @@ app.use(helmet());
 app.use(cors({ origin: config.frontendUrls, credentials: true }));
 // Las imágenes van al almacenamiento, pero las antiguas (data URL) aún llegan sin cambios dentro del
 // JSON al guardar el perfil o el negocio, hasta pasarlas con src/db/move-images-to-storage.ts (npm run db:move-images).
-app.use(express.json({ limit: "2mb" }));
+// Importar pacientes (spec 012) lee su cuerpo en la ruta, de hasta 4 MB y después de comprobar la
+// sesión (ver business-routes.ts): ninguna otra ruta necesita más de 2 MB.
+const jsonBody = express.json({ limit: "2mb" });
+const CLIENT_IMPORT_PATH = /^\/api\/businesses\/[^/]+\/clients\/import$/;
+app.use((req, res, next) => (req.method === "POST" && CLIENT_IMPORT_PATH.test(req.path) ? next() : jsonBody(req, res, next)));
 app.use(cookieParser());
 // En AWS Lambda la ejecución se congela al responder: los emails que la petición puso en cola (y
 // los avisos por ntfy) se envían antes de que salga la respuesta (ver flushEmailDelivery).
