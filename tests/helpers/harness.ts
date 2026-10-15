@@ -3,6 +3,7 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createNetServer, type AddressInfo } from "node:net";
+import { viaProxy } from "./proxy.mjs";
 
 export const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 export const PROXY_SECRET = process.env.PROXY_SECRET ?? "";
@@ -34,7 +35,7 @@ export interface Reply {
 
 /**
  * Un navegador: guarda su cookie. Con `ip`, llega como si pasara por el proxy del frontend desde esa
- * IP (con el secreto de la fase 1): cada prueba usa las suyas y no gasta los límites de las demás.
+ * IP (con su firma): cada prueba usa las suyas y no gasta los límites de las demás.
  */
 export function agent(options: { base?: string; ip?: string } = {}) {
   let cookie = "";
@@ -44,7 +45,7 @@ export function agent(options: { base?: string; ip?: string } = {}) {
       headers: {
         "Content-Type": "application/json",
         "X-Requested-With": "fetch",
-        ...(options.ip ? { "x-agendo-proxy-secret": PROXY_SECRET, "x-agendo-client-ip": options.ip } : {}),
+        ...(options.ip ? viaProxy(options.ip) : {}),
         ...headers,
         ...(cookie ? { Cookie: cookie } : {}),
       },

@@ -2,6 +2,7 @@
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { getAvailableSlots } from "../src/shared/lib/availability.ts";
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
+import { viaProxy } from "./helpers/proxy.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
@@ -20,8 +21,7 @@ async function call(method: string, path: string, body?: unknown) {
       "Content-Type": "application/json",
       "X-Requested-With": "fetch",
       // IP propia: las reservas de esta prueba no gastan el límite por conexión de otras.
-      "x-agendo-proxy-secret": process.env.PROXY_SECRET ?? "",
-      "x-agendo-client-ip": "203.0.113.77",
+      ...viaProxy("203.0.113.77"),
       ...(cookie ? { Cookie: cookie } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),

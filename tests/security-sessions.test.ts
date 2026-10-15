@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import pg from "pg";
 import { codeAt, timeStep } from "../src/services/totp.ts";
+import { viaProxy } from "./helpers/proxy.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 const db = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -30,8 +31,7 @@ function agent(base = BASE): Call & { token: () => string } {
       headers: {
         "Content-Type": "application/json",
         "X-Requested-With": "fetch",
-        "x-agendo-proxy-secret": process.env.PROXY_SECRET!,
-        "x-agendo-client-ip": `203.0.113.${ipCounter++ % 250}`,
+        ...viaProxy(`203.0.113.${ipCounter++ % 250}`),
         ...(cookie ? { Cookie: cookie } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),

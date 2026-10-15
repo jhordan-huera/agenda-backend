@@ -129,9 +129,13 @@ el 5199 y una base de prueba con los datos de demostración. Nunca en Vercel ni 
 
 ## Pendientes y riesgos
 
-- **Fase 2 de la firma de la IP** (después de publicar los dos):
-  1. el front deja de mandar el secreto fijo y se publica;
-  2. el backend deja de aceptarlo y se publica.
+- **Fase 2 de la firma de la IP:** hecha en `dev` el 2026-10-14, después de publicar.
+  - **Qué cambia:** el front ya no manda el secreto fijo y el backend ya no lo acepta (`client-ip.ts`,
+    incluida la guarda de Lambda).
+  - **Pruebas:** las que simulaban la IP con el secreto ahora la firman (`tests/helpers/proxy.mjs`).
+    `hardening` y `public-abuse` comprueban que el secreto de antes ya no vale.
+  - **Publicación:** sin migración ni variables nuevas, y en cualquier orden, porque las dos versiones
+    publicadas ya usan la firma.
 - **Riesgo al publicar:** si en Vercel faltan las claves del CAPTCHA, `PROXY_SECRET` o
   `TWO_FACTOR_KEY`, la API dejará de atender. Por eso los pasos de publicación empiezan
   comprobándolas.

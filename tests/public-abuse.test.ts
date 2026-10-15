@@ -11,6 +11,7 @@ import { cedulaFor } from "./helpers/cedula.mjs";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
 import type { Professional, PublicBusinessProfile } from "../src/shared/types/index.ts";
+import { viaProxy } from "./helpers/proxy.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 const ORIGIN = new URL(BASE).origin;
@@ -35,8 +36,7 @@ function agent(base = BASE, headers: Record<string, string> = {}): Call {
       headers: {
         "Content-Type": "application/json",
         "X-Requested-With": "fetch",
-        "x-agendo-proxy-secret": PROXY_SECRET,
-        "x-agendo-client-ip": ip,
+        ...viaProxy(ip),
         ...headers,
         ...(cookie ? { Cookie: cookie } : {}),
       },
@@ -413,9 +413,10 @@ try {
     const raw = (path: string, headers: Record<string, string> = {}) =>
       fetch(`${lambda.base}${path}`, { headers: { "X-Requested-With": "fetch", ...headers } }).then((res) => res.status);
     ok((await raw("/health")) === 200, "/api/health responde sin el secreto (comprobación tras publicar)");
-    ok((await raw("/public/categories")) === 403, "lo demás sin el secreto → 403");
-    ok((await raw("/public/categories", { "x-agendo-proxy-secret": "un-secreto-falso-de-mas-de-24-caracteres" })) === 403, "con otro secreto → 403");
-    ok((await raw("/public/categories", { "x-agendo-proxy-secret": PROXY_SECRET })) === 200, "con el secreto del proxy, sí");
+    ok((await raw("/public/categories")) === 403, "lo demás sin la firma del proxy → 403");
+    ok((await raw("/public/categories", viaProxy("203.0.113.90", "un-secreto-falso-de-mas-de-24-caracteres"))) === 403, "firmado con otro secreto → 403");
+    ok((await raw("/public/categories", { "x-agendo-proxy-secret": PROXY_SECRET })) === 403, "el secreto fijo de antes ya no abre la puerta (fase 2)");
+    ok((await raw("/public/categories", viaProxy("203.0.113.90"))) === 200, "con la firma del proxy, sí");
     const login = await fetch(`${lambda.base}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Requested-With": "fetch" },

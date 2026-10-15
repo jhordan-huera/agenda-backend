@@ -8,6 +8,7 @@ import pg from "pg";
 import { outgoingContent } from "../src/services/mailer.ts";
 import { createBusinessWithOwner } from "./helpers/business.mjs";
 import { emailTemplates } from "../src/shared/lib/email/templates.ts";
+import { viaProxy } from "./helpers/proxy.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 const db = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
@@ -35,7 +36,7 @@ function agent(base = BASE): Call {
   };
 }
 /** Visitante desde la IP indicada (como la reenvía el proxy del frontend). */
-const fromIp = (ip: string) => ({ "x-agendo-proxy-secret": process.env.PROXY_SECRET!, "x-agendo-client-ip": ip });
+const fromIp = (ip: string) => viaProxy(ip);
 const login = (a: Call, email: string, password: string, ip: string) =>
   a("POST", "/auth/login", { email, password, remember: false }, fromIp(ip));
 let ipCounter = 1;
