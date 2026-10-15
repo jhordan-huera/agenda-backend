@@ -424,8 +424,19 @@ export interface Appointment {
   receiptAt: ISODateTime | null;
   /** Cuándo se marcó como pagada; null: sin marcar. */
   paidAt: ISODateTime | null;
+  /**
+   * Quienes confirmaron que van desde su email (spec 010), el principal primero. Vacía: nadie. Un
+   * backend anterior no la manda: el panel la trata como vacía.
+   */
+  clientConfirmations: ClientConfirmation[];
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
+}
+
+/** «Confirmo que voy» de un paciente de la cita (spec 010): no cambia el estado de la cita. */
+export interface ClientConfirmation {
+  clientId: string;
+  confirmedAt: ISODateTime;
 }
 
 export interface TimeRange {
@@ -495,7 +506,9 @@ export type EmailType =
   /** El paciente no asistió: invitación a elegir otra hora (spec 008). */
   | "appointment_no_show"
   /** Cambio de seguridad en una cuenta de super admin: verificación en dos pasos o contraseña (spec 009). */
-  | "account_security_changed";
+  | "account_security_changed"
+  /** Aviso al negocio: el paciente canceló su cita desde «Tu cita», el enlace de sus emails (spec 010). */
+  | "patient_cancelled";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -1077,4 +1090,47 @@ export interface PublicPayment {
   /** El negocio ya marcó la cita como pagada. */
   paid: boolean;
   receiptsEnabled: boolean;
+}
+
+/** Página «Tu cita» (/cita/:token), sin sesión: el token es la autorización (spec 010). */
+export interface PublicAppointment {
+  business: Pick<
+    PublicBusiness,
+    "name" | "slug" | "logoUrl" | "phone" | "address" | "lat" | "lng" | "timezone" | "brandColors"
+  >;
+  serviceName: string;
+  professionalName: string;
+  date: ISODate;
+  startTime: TimeString;
+  endTime: TimeString;
+  /** En el local, virtual o a domicilio (sin la dirección de la visita ni el enlace de la videollamada). */
+  place: ServiceMode;
+  status: AppointmentStatus;
+  /** Ya empezó o pasó, en la hora del negocio. */
+  past: boolean;
+  /** Cuándo confirmó que va quien abre el enlace; null: aún no. */
+  confirmedAt: ISODateTime | null;
+  /** Puede pulsar «Confirmo que voy»: la cita está pendiente o confirmada y aún no empieza. */
+  canConfirm: boolean;
+  cancellation: {
+    /**
+     * allowed: puede cancelar aquí · too_late: falta menos que la antelación · disabled: el negocio no
+     * permite cancelaciones · not_main: es otra persona de la sesión · closed: cancelada, atendida,
+     * no asistió o ya pasó.
+     */
+    status: "allowed" | "too_late" | "disabled" | "not_main" | "closed";
+    /** La antelación del negocio, en horas («Para cancelar con menos de 24 h…»). */
+    noticeHours: number;
+    /** La política de cancelación del negocio ("" si no permite cancelaciones). */
+    policy: string;
+  };
+  /** Quien abre es el principal y la cita tiene un pago por transferencia pendiente: la página lleva a /pago/:token. */
+  payment: boolean;
+}
+
+/** Respuesta de «Confirmo que voy» y de «Cancelar mi cita». */
+export interface PublicAppointmentResult {
+  appointment: PublicAppointment;
+  /** Ya estaba confirmada (o cancelada, en /cancel): no se hizo nada. */
+  already: boolean;
 }

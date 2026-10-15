@@ -1,7 +1,7 @@
 import { config } from "../config.ts";
 import { appointmentColumns, businessColumns } from "../db/columns.ts";
 import { many, one, type Db } from "../db/pool.ts";
-import { isFollowUpDate } from "../shared/lib/constants/business.ts";
+import { canCancelOnline, isFollowUpDate } from "../shared/lib/constants/business.ts";
 import { emailTemplates, type AppointmentEmailData, type EmailContent } from "../shared/lib/email/templates.ts";
 import { joinNames } from "../shared/lib/format.ts";
 import { addDaysISO, getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
@@ -26,6 +26,15 @@ export function appOrigin(): string {
 
 /** Enlace privado de pago de una cita: datos para transferir y subida del comprobante. */
 export const paymentUrl = (token: string) => `${appOrigin()}/pago/${token}`;
+
+/**
+ * Enlace privado de una persona a su página «Tu cita» (spec 010): el del principal es el token del pago
+ * y el de cada otra persona de la sesión, el suyo (appointment_clients.access_token).
+ */
+export const appointmentPageUrl = (token: string) => `${appOrigin()}/cita/${token}`;
+
+/** De dónde viene un cambio de la cita: el panel, la página de reservas o «Tu cita» (el paciente, spec 010). */
+export type ChangeOrigin = "dashboard" | "booking_page" | "patient_link";
 
 /**
  * Pone el email en cola. Devuelve false si no va a salir: ya existía (recordatorio duplicado) o lo
@@ -78,6 +87,13 @@ interface Recipient {
   email: string;
   /** Paciente «Por verificar» (spec 009): escribió la cédula de otra ficha con otros datos. */
   toVerify: boolean;
+  /**
+   * Su enlace a «Tu cita» (spec 010): el token del pago si es el principal y el suyo si es otra persona
+   * de la sesión; null si ya no está en la cita (p. ej. quitado: recibe la cancelación, sin enlace).
+   */
+  token: string | null;
+  /** Ya confirmó que va («Confirmo que voy»). */
+  confirmed: boolean;
 }
 
 interface AppointmentContext {
@@ -110,8 +126,28 @@ async function loadAppointmentContext(db: Db, appointment: Appointment): Promise
     appointment.businessId,
   ]);
   const ids = appointmentClientIds(appointment);
-  const rows = await many<Recipient>(db, `select id as "clientId", name, email, claimed_client_id is not null as "toVerify" from clients where id = any($1::uuid[])`, [ids]);
-  const recipients = ids.flatMap((id) => rows.filter((row) => row.clientId === id));
+  const rows = await many<Omit<Recipient, "token" | "confirmed">>(
+    db,
+    `select id as "clientId", name, email, claimed_client_id is not null as "toVerify" from clients where id = any($1::uuid[])`,
+    [ids],
+  );
+  // El enlace y la confirmación de las otras personas de la sesión (los del principal van en la cita).
+  const links = await many<{ clientId: string; token: string; confirmed: boolean }>(
+    db,
+    `select client_id as "clientId", access_token as token, confirmed_at is not null as confirmed
+       from appointment_clients where appointment_id = $1`,
+    [appointment.id],
+  );
+  const mainConfirmed = (appointment.clientConfirmations ?? []).some((confirmation) => confirmation.clientId === appointment.clientId);
+  const recipients = ids.flatMap((id) =>
+    rows
+      .filter((row) => row.clientId === id)
+      .map((row): Recipient => {
+        if (id === appointment.clientId) return { ...row, token: appointment.paymentToken || null, confirmed: mainConfirmed };
+        const link = links.find((candidate) => candidate.clientId === id);
+        return { ...row, token: link?.token ?? null, confirmed: link?.confirmed ?? false };
+      }),
+  );
   const details = await one<Omit<AppointmentContext, "business" | "recipients" | "clientName">>(
     db,
     `select s.name as "serviceName",
@@ -185,6 +221,27 @@ export function isRescheduled(before: Appointment, after: Appointment): boolean 
 
 const sameEmail = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 const emailKey = (email: string) => email.trim().toLowerCase();
+
+/**
+ * La página «Tu cita» de quien recibe el email (spec 010): su enlace, si podrá cancelar desde ahí
+ * cuando salga el email (sólo el principal, con «Permitir cancelaciones» y en plazo: canCancelOnline)
+ * y si ya confirmó. null sin enlace. Las plantillas sólo lo ponen en los emails de una cita activa, y
+ * nunca en la copia al profesional.
+ */
+function appointmentPageFor(
+  recipient: Recipient,
+  appointment: Appointment,
+  business: Business,
+  minutesUntil: number,
+): AppointmentEmailData["appointmentPage"] {
+  if (!recipient.token) return null;
+  const active = ["pending", "confirmed"].includes(appointment.status);
+  return {
+    url: appointmentPageUrl(recipient.token),
+    canCancel: active && recipient.clientId === appointment.clientId && canCancelOnline(business.bookingSettings, minutesUntil),
+    confirmed: recipient.confirmed,
+  };
+}
 
 /** Enlace a la cita en la agenda del panel. */
 const agendaUrlOf = (appointment: Appointment) =>
@@ -308,7 +365,7 @@ export async function notifyAppointmentChange(
   db: Db,
   before: Appointment | null,
   after: Appointment,
-  origin: "dashboard" | "booking_page",
+  origin: ChangeOrigin,
   actorUserId: string | null = null,
 ): Promise<boolean> {
   const context = await loadAppointmentContext(db, after);
@@ -324,6 +381,8 @@ export async function notifyAppointmentChange(
 
   // Quien reservó una sesión en pareja o en familia por la página (el principal): se lo dice a los demás.
   const bookedBy = !before && origin === "booking_page" ? context.recipients[0]?.name : undefined;
+  // Para saber si cada persona podrá cancelar desde «Tu cita» cuando le llegue el email (spec 010).
+  const minutesUntil = minutesUntilStart(after.date, after.startTime, getZonedNow(business.timezone));
   const write = async (recipient: Recipient, message: ClientMessage | null, emailData: AppointmentEmailData) => {
     if (!message || !recipient.email || written.has(emailKey(recipient.email))) return;
     written.add(emailKey(recipient.email));
@@ -331,13 +390,15 @@ export async function notifyAppointmentChange(
     const hold = origin === "booking_page" ? await newPatientEmailHold(db, business.id, recipient.clientId) : null;
     // Los datos de pago, sólo al principal: el precio es de la sesión y lo paga una persona (spec 005).
     const own = recipient.clientId === after.clientId ? {} : { payment: null, bookedBy };
+    // Su propio enlace a «Tu cita» (spec 010): va en los datos de esa persona, no en los de la copia.
+    const appointmentPage = appointmentPageFor(recipient, after, business, minutesUntil);
     const queued = await queueEmail(db, {
       businessId: business.id,
       type: message.type,
       to: recipient.email,
       appointmentId: after.id,
       hold,
-      ...message.template({ ...emailData, ...own, clientName: recipient.name }),
+      ...message.template({ ...emailData, ...own, appointmentPage, clientName: recipient.name }),
     });
     if (queued) {
       sentToClient = true;
@@ -372,10 +433,31 @@ export async function notifyAppointmentChange(
       ...copy.message.template({
         ...copy.data,
         clientName: context.clientName,
-        professionalCopy: { agendaUrl: agendaUrlOf(after), pending: after.status === "pending" },
+        // La canceló el paciente desde «Tu cita» (spec 010): así sabe que no fue alguien del negocio.
+        professionalCopy: { agendaUrl: agendaUrlOf(after), pending: after.status === "pending", byPatient: origin === "patient_link" },
       }),
     });
     copiedTo = copyTo;
+  }
+
+  // El paciente canceló desde «Tu cita»: también se avisa al negocio (recepción), si su email no es el
+  // del profesional, que ya tiene la copia (decisión del dueño del producto, 2026-10-14). Sale aunque
+  // el negocio tenga apagados los emails de cancelación: esos son los del paciente.
+  if (
+    origin === "patient_link" &&
+    after.status === "cancelled" &&
+    before?.status !== "cancelled" &&
+    business.email &&
+    !sameEmail(business.email, context.professionalCopyEmail) &&
+    !written.has(emailKey(business.email))
+  ) {
+    await queueEmail(db, {
+      businessId: business.id,
+      type: "patient_cancelled",
+      to: business.email,
+      appointmentId: after.id,
+      ...emailTemplates.patientCancelled({ ...data, agendaUrl: agendaUrlOf(after) }),
+    });
   }
 
   if (!before && origin === "booking_page" && business.email && !sameEmail(business.email, copiedTo)) {
@@ -388,7 +470,8 @@ export async function notifyAppointmentChange(
       ...emailTemplates.bookingReceived({ ...data, toVerify: context.recipients.some((recipient) => recipient.toVerify) }),
     });
   }
-  await notifyProfessional(db, context, before, after, origin, actorUserId, copiedTo);
+  // El paciente nunca crea ni mueve citas: desde «Tu cita» no hay cita nueva que avisarle al profesional.
+  if (origin !== "patient_link") await notifyProfessional(db, context, before, after, origin, actorUserId, copiedTo);
   return sentToClient;
 }
 
@@ -451,7 +534,12 @@ export async function runReminderJob(db: Db, businessId: string, at: Date = new 
         to: recipient.email,
         appointmentId: appointment.id,
         dedupeKey: reminderKeyFor(reminderKey, appointment, recipient.clientId),
-        ...emailTemplates.appointmentReminder({ ...data, clientName: recipient.name }, when),
+        // Su enlace a «Tu cita», con «Confirmo que voy» (spec 010). Con los ajustes de fábrica (recordatorio
+        // y antelación de 24 h) ya no está en plazo para cancelar: dice «Ver mi cita».
+        ...emailTemplates.appointmentReminder(
+          { ...data, clientName: recipient.name, appointmentPage: appointmentPageFor(recipient, appointment, business, minutesUntil) },
+          when,
+        ),
       });
       if (inserted) {
         sent++;

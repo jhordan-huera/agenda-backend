@@ -67,6 +67,11 @@ export function formatClockTime(iso: string, timezone: string = DEFAULT_TIMEZONE
   );
 }
 
+/** "14 oct" de un instante, en la zona horaria del negocio (p. ej. cuándo confirmó que va un paciente). */
+export function formatDayMonth(iso: string, timezone: string = DEFAULT_TIMEZONE): string {
+  return new Intl.DateTimeFormat("es-EC", { day: "numeric", month: "short", timeZone: timezone }).format(new Date(iso));
+}
+
 export function formatTimeRange(start: TimeString, end: TimeString): string {
   return `${start} – ${end}`;
 }

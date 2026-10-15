@@ -50,8 +50,14 @@ export interface AppointmentEmailData {
   /**
    * Copia del email al profesional de la cita: el mismo email que recibe el paciente, con el
    * paciente en el asunto y, arriba, una nota y el botón para abrir la cita en la agenda.
+   * `byPatient`: la canceló el paciente desde «Tu cita» (spec 010), y la nota lo dice.
    */
-  professionalCopy?: { agendaUrl: string; pending: boolean };
+  professionalCopy?: { agendaUrl: string; pending: boolean; byPatient?: boolean };
+  /**
+   * Página «Tu cita» de quien recibe el email (spec 010): su enlace, si podrá cancelar desde ahí
+   * cuando salga el email y si ya confirmó que va. Nunca en la copia al profesional.
+   */
+  appointmentPage?: { url: string; canCancel: boolean; confirmed: boolean } | null;
   /**
    * Sesión en pareja o en familia reservada por la página: quién la reservó, en el email de solicitud
    * de cada una de las demás personas (no reservaron ellas).
@@ -79,14 +85,14 @@ const platformEmail = (message: MessageContent): EmailContent =>
 /** La copia al profesional: "Copia · Paciente: asunto" y, antes del email, la nota y el botón de la agenda. */
 function asProfessionalCopy(data: AppointmentEmailData, message: MessageContent): Partial<MessageContent> {
   if (!data.professionalCopy) return {};
-  const { agendaUrl, pending } = data.professionalCopy;
+  const { agendaUrl, pending, byPatient } = data.professionalCopy;
   return {
     subject: `Copia · ${data.clientName}: ${message.subject}`,
     preheader: `Copia del email que recibió ${data.clientName}.`,
     before: [
       {
         kind: "callout",
-        text: `Copia para ti del email que recibió ${data.clientName}.${pending ? " La cita está pendiente: confírmala en tu agenda." : ""}`,
+        text: `Copia para ti del email que recibió ${data.clientName}.${byPatient ? " La canceló el paciente desde su email." : ""}${pending ? " La cita está pendiente: confírmala en tu agenda." : ""}`,
       },
       { kind: "button", label: "Ver en la agenda", url: agendaUrl },
     ],
@@ -197,6 +203,26 @@ function payment(data: AppointmentEmailData): EmailBlock[] {
 
 const policy = (data: AppointmentEmailData): EmailBlock[] =>
   data.cancellationPolicy ? [{ kind: "note", text: `Política de cancelación: ${data.cancellationPolicy}` }] : [];
+
+/**
+ * Página de quien recibe el email (spec 010): el paciente no la ve en la copia al profesional (dos
+ * barreras: la copia se arma sin `appointmentPage` y, además, aquí no se pone). «Ver o cancelar mi
+ * cita» sólo si podrá cancelar desde ahí; si no, «Ver mi cita».
+ */
+const hasAppointmentPage = (data: AppointmentEmailData) => Boolean(data.appointmentPage && !data.professionalCopy);
+
+const appointmentPageLink = (data: AppointmentEmailData): EmailBlock[] =>
+  hasAppointmentPage(data)
+    ? [{ kind: "link", label: data.appointmentPage!.canCancel ? "Ver o cancelar mi cita" : "Ver mi cita", url: data.appointmentPage!.url }]
+    : [];
+
+/** «Confirmo que voy» del recordatorio (abre «Tu cita» y la confirma), o el gracias si ya confirmó. */
+const confirmAttendance = (data: AppointmentEmailData): EmailBlock[] => {
+  if (!hasAppointmentPage(data)) return [];
+  return data.appointmentPage!.confirmed
+    ? [{ kind: "callout", text: "Ya nos confirmaste que vienes. ¡Gracias!" }]
+    : [{ kind: "button", label: "Confirmo que voy", url: `${data.appointmentPage!.url}?confirmar=1` }];
+};
 
 /* --------------------------------------------------------------- Plantillas -- */
 
@@ -444,6 +470,7 @@ export const emailTemplates = {
             : `Tu cita en ${data.businessName} ha sido reservada. Te avisaremos cuando quede confirmada.`,
         },
         appointmentDetails(data),
+        ...appointmentPageLink(data),
         ...payment(data),
         ...policy(data),
       ],
@@ -484,6 +511,26 @@ export const emailTemplates = {
         appointmentDetails({ ...data, showPrice: true }, "La cita"),
         { kind: "button", label: "Ver el comprobante", url: data.agendaUrl },
         { kind: "note", text: "Comprueba que el dinero llegó a tu cuenta y marca la cita como pagada." },
+      ],
+    }),
+
+  /**
+   * Al negocio (recepción): el paciente canceló su cita desde «Tu cita», el enlace de sus emails
+   * (spec 010). Sale si su email es otro que el del profesional, que ya recibe la copia.
+   */
+  patientCancelled: (data: AppointmentEmailData & { agendaUrl: string }): EmailContent =>
+    platformEmail({
+      subject: `Cita cancelada por el paciente: ${data.clientName} · ${capitalize(formatLongDate(data.date))} ${data.startTime}`,
+      preheader: `${data.clientName} canceló su cita de ${data.serviceName} desde su email.`,
+      title: "Un paciente canceló su cita",
+      blocks: [
+        {
+          kind: "text",
+          text: `${data.clientName} canceló su cita desde el enlace de sus emails. La hora quedó libre en tu página de reservas.`,
+        },
+        // El negocio siempre ve el precio real, aunque no se muestre a los clientes.
+        appointmentDetails({ ...data, showPrice: true }, "La cita"),
+        { kind: "button", label: "Ver en la agenda", url: data.agendaUrl },
       ],
     }),
 
@@ -556,6 +603,7 @@ export const emailTemplates = {
       blocks: [
         { kind: "text", text: `Tu cita en ${data.businessName} está confirmada.` },
         appointmentDetails(data),
+        ...appointmentPageLink(data),
         ...payment(data),
         ...policy(data),
       ],
@@ -570,6 +618,7 @@ export const emailTemplates = {
       blocks: [
         { kind: "text", text: `Tu cita en ${data.businessName} ha sido modificada. Estos son los nuevos datos:` },
         appointmentDetails(data),
+        ...appointmentPageLink(data),
       ],
     }),
 
@@ -583,6 +632,7 @@ export const emailTemplates = {
       blocks: [
         { kind: "text", text: `Tu cita en ${data.businessName}, que había sido cancelada, vuelve a estar en pie. Estos son sus datos:` },
         appointmentDetails(data),
+        ...appointmentPageLink(data),
         ...payment(data),
         ...policy(data),
       ],
@@ -601,6 +651,7 @@ export const emailTemplates = {
           text: `Tu cita en ${data.businessName} vuelve a estar pendiente de confirmar. Sigue agendada: te escribiremos para confirmarla.`,
         },
         appointmentDetails(data),
+        ...appointmentPageLink(data),
       ],
     }),
 
@@ -659,6 +710,12 @@ export const emailTemplates = {
       preheader: `${capitalize(formatLongDate(data.date))} a las ${startAt(data)} en ${data.businessName}.`,
       title: when ? `Tu cita es ${when}` : "Recordatorio de tu cita",
       greeting: `Hola ${data.clientName}:`,
-      blocks: [{ kind: "text", text: "Te recordamos tu próxima cita:" }, appointmentDetails(data), ...policy(data)],
+      blocks: [
+        { kind: "text", text: "Te recordamos tu próxima cita:" },
+        appointmentDetails(data),
+        ...confirmAttendance(data),
+        ...appointmentPageLink(data),
+        ...policy(data),
+      ],
     }),
 };

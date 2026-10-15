@@ -115,5 +115,97 @@ ok(copy.html.indexOf("Copia para ti") < copy.html.indexOf("<h1"), "la nota va an
 ok(!/Copia/.test(original.subject + original.body + original.html), "el email al paciente no cambia");
 ok(/pendiente: confírmala en tu agenda/.test(emailTemplates.bookingCreated({ ...appointment, professionalCopy: { ...professionalCopy, pending: true } }).body), "si está pendiente, lo recuerda");
 
+console.log("«Tu cita»: el enlace del paciente (spec 010)");
+const pageUrl = "https://agenda.example/cita/0123456789abcdef0123456789abcdef";
+const withPage = { ...appointment, appointmentPage: { url: pageUrl, canCancel: true, confirmed: false } };
+const active = {
+  bookingCreated: emailTemplates.bookingCreated(withPage),
+  appointmentConfirmed: emailTemplates.appointmentConfirmed(withPage),
+  appointmentUpdated: emailTemplates.appointmentUpdated(withPage),
+  appointmentRestored: emailTemplates.appointmentRestored(withPage),
+  appointmentPending: emailTemplates.appointmentPending(withPage),
+  appointmentReminder: emailTemplates.appointmentReminder(withPage, "mañana"),
+};
+for (const [name, email] of Object.entries(active)) {
+  ok(
+    email.body.includes(`Ver o cancelar mi cita: ${pageUrl}`) && email.html.includes(`href="${pageUrl}"`) && email.html.includes(">Ver o cancelar mi cita</a>"),
+    `${name}: lleva «Ver o cancelar mi cita» (en el texto y en el HTML)`,
+    email.body,
+  );
+}
+const closed = {
+  appointmentCancelled: emailTemplates.appointmentCancelled(withPage),
+  appointmentCompleted: emailTemplates.appointmentCompleted(withPage),
+  appointmentNoShow: emailTemplates.appointmentNoShow(withPage),
+};
+for (const [name, email] of Object.entries(closed)) {
+  ok(!/\/cita\//.test(email.body + email.html), `${name}: sin el enlace a «Tu cita»`, email.body);
+}
+const confirmedMail = active.appointmentConfirmed.body;
+ok(
+  confirmedMail.indexOf("Ver o cancelar mi cita") > confirmedMail.indexOf("Cómo llegar") &&
+    !/Si el botón no funciona/.test(active.appointmentConfirmed.html),
+  "debajo de los datos de la cita, como enlace (no es un botón: no ocupa el «Si el botón no funciona»)",
+  confirmedMail,
+);
+const paying = emailTemplates.appointmentConfirmed({ ...withPage, payment: { bankAccounts: [pichincha], url: "https://agenda.example/pago/abc" } });
+ok(
+  paying.body.indexOf("Ver o cancelar mi cita") < paying.body.indexOf("Pago por transferencia") &&
+    /Si el botón no funciona[^]*agenda\.example\/pago\/abc/.test(paying.html),
+  "antes del pago, y el enlace de respaldo sigue siendo el del comprobante",
+  paying.body,
+);
+const noCancel = emailTemplates.appointmentConfirmed({ ...withPage, appointmentPage: { ...withPage.appointmentPage, canCancel: false } });
+ok(noCancel.body.includes(`Ver mi cita: ${pageUrl}`) && !/cancelar mi cita/.test(noCancel.body), "si no podrá cancelar desde ahí: «Ver mi cita»", noCancel.body);
+const reminder = active.appointmentReminder;
+ok(
+  reminder.body.includes(`Confirmo que voy: ${pageUrl}?confirmar=1`) && reminder.html.includes(`href="${pageUrl}?confirmar=1"`),
+  "el recordatorio lleva el botón «Confirmo que voy» con ?confirmar=1",
+  reminder.body,
+);
+ok(
+  reminder.body.indexOf("Confirmo que voy") < reminder.body.indexOf("Ver o cancelar mi cita") &&
+    /Si el botón no funciona[^]*\?confirmar=1/.test(reminder.html),
+  "con el enlace debajo, y «Confirmo que voy» como enlace de respaldo",
+  reminder.body,
+);
+const alreadyConfirmed = emailTemplates.appointmentReminder({ ...withPage, appointmentPage: { ...withPage.appointmentPage, confirmed: true } }, "mañana");
+ok(
+  alreadyConfirmed.body.includes("Ya nos confirmaste que vienes. ¡Gracias!") && !alreadyConfirmed.body.includes("?confirmar=1") && alreadyConfirmed.body.includes(pageUrl),
+  "si ya confirmó: el gracias en lugar del botón, y el enlace",
+  alreadyConfirmed.body,
+);
+const copies = [
+  ...Object.keys(active).map((name) =>
+    name === "appointmentReminder"
+      ? emailTemplates.appointmentReminder({ ...withPage, professionalCopy }, "mañana")
+      : emailTemplates[name]({ ...withPage, professionalCopy }),
+  ),
+];
+ok(copies.every((email) => !/\/cita\//.test(email.body + email.html) && !/Confirmo que voy|Ya nos confirmaste/.test(email.body)), "la copia al profesional nunca lleva los botones del paciente");
+ok(
+  emailTemplates.bookingReceived(withPage).body.indexOf("/cita/") === -1 &&
+    emailTemplates.paymentReceiptReceived({ ...withPage, agendaUrl: "https://agenda.example/dashboard" }).body.indexOf("/cita/") === -1 &&
+    emailTemplates.professionalNewAppointment({ ...withPage, origin: "booking_page", agendaUrl: "https://agenda.example/dashboard" }).body.indexOf("/cita/") === -1,
+  "ni los avisos al negocio y al profesional",
+);
+const byPatient = emailTemplates.appointmentCancelled({ ...appointment, professionalCopy: { ...professionalCopy, byPatient: true } });
+ok(
+  byPatient.body.startsWith(`Copia para ti del email que recibió ${appointment.clientName}. La canceló el paciente desde su email.`),
+  "la copia de la cancelación del paciente lo dice",
+  byPatient.body.slice(0, 200),
+);
+const notice = emailTemplates.patientCancelled({ ...appointment, clientName: "Ana Torres", agendaUrl: "https://agenda.example/dashboard/calendar?date=2026-10-12" });
+ok(
+  notice.subject === "Cita cancelada por el paciente: Ana Torres · Lunes, 12 de octubre de 2026 10:00" &&
+    /Ana Torres canceló su cita desde el enlace de sus emails\. La hora quedó libre/.test(notice.body) &&
+    /Precio: \$35/.test(notice.body) &&
+    /Ver en la agenda: https:\/\/agenda\.example\/dashboard/.test(notice.body),
+  "el aviso al negocio: quién canceló, la cita con su precio y el botón de la agenda",
+  notice,
+);
+const unsafe = emailTemplates.appointmentConfirmed({ ...appointment, appointmentPage: { url: "javascript:alert(1)", canCancel: true, confirmed: false } });
+ok(!unsafe.html.includes("javascript:"), "un enlace que no es http(s) tampoco llega al HTML del bloque nuevo");
+
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de plantillas de email pasaron");
 process.exitCode = failures ? 1 : 0;

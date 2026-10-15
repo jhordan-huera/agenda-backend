@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-14
 
-**Estado**: Aprobada (2026-10-14)
+**Estado**: Implementada (2026-10-14)
 
 **Repos**: agenda-backend (principal: la página de la cita por enlace, la ruta pública y los emails),
 agenda-front (la página «Tu cita», la marca en la agenda, la configuración) y la beta.

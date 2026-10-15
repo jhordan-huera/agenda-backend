@@ -190,6 +190,12 @@ r = await anonymous("GET", `/public/payments/${"0".repeat(32)}`);
 ok(r.status === 404, "token inexistente → 404", r.body);
 r = await anonymous("GET", `/public/payments/${token.toUpperCase()}x`);
 ok(r.status === 404, "token con otra forma → 404", r.status);
+// Spec 010: el mismo token abre «Tu cita», que lleva al pago; la página de pago no cambia.
+ok(created.includes(`/cita/${token}`), "el email de la reserva trae también el enlace a «Tu cita», con el mismo token", created.slice(0, 900));
+r = await anonymous("GET", `/public/appointments/${token}`);
+ok(r.status === 200 && r.body.payment === true && r.body.serviceName === paid.name, "«Tu cita» se abre con el token del pago y lleva al pago", r.body);
+r = await anonymous("GET", `/public/payments/${token}`);
+ok(r.status === 200 && r.body.amount === paid.price && r.body.clientName === "Paciente P.", "y la página de pago sigue igual con el mismo token", r.body);
 
 console.log("Comprobante");
 const receiptInput = { fileName: "transferencia.png", contentType: "image/png", sizeBytes: PNG.length };

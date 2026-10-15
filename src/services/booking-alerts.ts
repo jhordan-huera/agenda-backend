@@ -434,6 +434,8 @@ export interface StatusChange {
   by: PanelActor;
   /** El que lo hizo desmarcó «Avisar al paciente» (spec 008). */
   withoutNotice: boolean;
+  /** Lo canceló el paciente desde «Tu cita», el enlace de sus emails (spec 010). */
+  byPatient: boolean;
   /** Los emails que salieron con ese cambio (en la misma transacción). */
   emails: OnlineBooking["emails"];
 }
@@ -446,23 +448,31 @@ const STATUS_TITLES: Record<string, string> = {
   "No asistió": "el paciente no asistió",
 };
 
+/** Para quién es cada email de un cambio de estado: los demás son al paciente. */
+const STATUS_EMAIL_ROLES: Partial<Record<EmailType, string>> = {
+  appointment_copy: "Copia al profesional",
+  patient_cancelled: "Aviso al negocio",
+};
+
 /**
  * Aviso por ntfy de un cambio de estado de una cita (spec 008, lo pidió el dueño del producto): de
  * qué estado a cuál, quién lo hizo y a quién salieron los emails. El paciente, a medias; el título
- * no nombra al negocio.
+ * no nombra al negocio. Si la canceló el paciente desde su email (spec 010), lo dice el título.
  */
 export function statusChangeNotice(change: StatusChange): BookingNotice {
   const emails = change.emails.map(
-    (email) => `• ${email.type === "appointment_copy" ? "Copia al profesional" : "Al paciente"} → ${maskEmail(email.to)}${describeEmailStatus(email)}`,
+    (email) => `• ${STATUS_EMAIL_ROLES[email.type] ?? "Al paciente"} → ${maskEmail(email.to)}${describeEmailStatus(email)}`,
   );
   return {
-    title: `Agenda360: ${STATUS_TITLES[change.to] ?? "cambio de estado de una cita"}`,
+    title: change.byPatient
+      ? "Agenda360: cita cancelada por el paciente"
+      : `Agenda360: ${STATUS_TITLES[change.to] ?? "cambio de estado de una cita"}`,
     message: [
       `${change.businessName} · ${formatShortDate(change.date)} ${change.startTime}`,
       ...change.clients.map((client) => `Paciente: ${maskedPatient(client)}`),
       change.serviceName,
       `De ${change.from} a ${change.to}`,
-      `Cambiado desde el panel${byWhom(change.by)}`,
+      change.byPatient ? "Cancelada por el paciente desde su email" : `Cambiado desde el panel${byWhom(change.by)}`,
       "",
       ...(change.withoutNotice
         ? ["Sin avisar al paciente (se desmarcó la casilla)."]
@@ -478,8 +488,9 @@ export function statusChangeNotice(change: StatusChange): BookingNotice {
 
 /**
  * Los cambios de estado de citas en (since, until], los más antiguos primero (hasta `limit`), y
- * cuántos son en total. Salen del registro de actividad: los botones de estado y el formulario de la
- * cita guardan «Estado» en `changes`. Sin `since` (la primera pasada), los del último día.
+ * cuántos son en total. Salen del registro de actividad: los botones de estado, el formulario de la
+ * cita y la cancelación desde «Tu cita» (spec 010) guardan «Estado» en `changes`. «Confirmo que voy»
+ * no lo guarda: no avisa. Sin `since` (la primera pasada), los del último día.
  */
 export async function findStatusChanges(
   db: Db,
@@ -497,6 +508,7 @@ export async function findStatusChanges(
     from: string | null;
     to: string | null;
     summary: string;
+    action: string;
     clientName: string;
     clientEmail: string;
     clientPhone: string;
@@ -511,7 +523,7 @@ export async function findStatusChanges(
             to_char(a.date, 'YYYY-MM-DD') as date, to_char(a.start_time, 'HH24:MI') as "startTime",
             (select ch->>'before' from jsonb_array_elements(l.changes) ch where ch->>'label' = 'Estado' limit 1) as "from",
             (select ch->>'after' from jsonb_array_elements(l.changes) ch where ch->>'label' = 'Estado' limit 1) as "to",
-            l.summary, c.name as "clientName", c.email as "clientEmail", c.phone as "clientPhone",
+            l.summary, l.action, c.name as "clientName", c.email as "clientEmail", c.phone as "clientPhone",
             coalesce((select json_agg(json_build_object('name', ec.name, 'email', ec.email, 'phone', ec.phone)
                                       order by ac.created_at, ac.client_id)
                         from appointment_clients ac join clients ec on ec.id = ac.client_id
@@ -552,6 +564,7 @@ export async function findStatusChanges(
           ? null
           : { name: row.actorName ?? "", role: row.actorRole, superAdmin: Boolean(row.superAdmin) },
       withoutNotice: row.summary.endsWith(WITHOUT_NOTICE),
+      byPatient: row.action === "appointment.client_cancelled",
       emails: row.emails,
     }),
   );

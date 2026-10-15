@@ -180,7 +180,7 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
 | Negocio | `POST /businesses` (onboarding) · `GET /businesses/slug-availability` · `GET/PATCH /businesses/:id` · `GET …/professional` |
 | Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status` con `notify`: `false` cambia el estado sin avisar al paciente) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
 | Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
-| Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) |
+| Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) · `GET /public/payments/:token` (+ `receipts`) · `GET /public/appointments/:token` · `POST …/confirm` · `POST …/cancel` («Tu cita», spec 010) |
 | Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, último cron, última copia e intentos fallidos; spec 006) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
 | Estado | `GET /health` |
 
@@ -332,6 +332,38 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   para que el almacenamiento no se llene, el cron borra los de citas de hace más de 3 meses
   (`RECEIPT_RETENTION_MONTHS`; la cita conserva `paid_at` y `receipt_at`). El navegador reduce las
   fotos antes de subirlas (WebP, 2000 px: unos 200–450 KB); los PDF van tal cual.
+- **«Tu cita»: el paciente confirma o cancela desde el email** (spec 010, migración 037,
+  `src/services/appointment-page-service.ts`). Los emails de una cita activa (solicitud, confirmación,
+  cambio, restablecida, vuelve a pendiente y recordatorio) llevan el enlace privado de cada persona a
+  `/cita/:token` del frontend: el del paciente principal es su `payment_token` (el mismo del pago) y
+  cada otra persona de una sesión tiene el suyo (`appointment_clients.access_token`, que no abre
+  `/pago`). Sin sesión:
+  - `GET /public/appointments/:token`: la cita para la página (`PublicAppointment`: servicio, fecha,
+    hora, profesional, modalidad y negocio; nada del paciente, ni la dirección de la visita, ni el
+    enlace de la videollamada, ni el precio) y lo que puede hacer quien la abre (`canConfirm`,
+    `cancellation.status`, `payment`). Responde el mismo 404 si el token no existe, si esa persona ya
+    no está en la cita, si cambió el principal, si el negocio está suspendido o si pasaron más de 30
+    días desde la cita (`APPOINTMENT_PAGE_DAYS`). `Cache-Control: private, no-store`.
+  - `POST …/confirm` («Confirmo que voy»): guarda `appointments.client_confirmed_at` o
+    `appointment_clients.confirmed_at` sin cambiar el estado (confirmar la cita sigue siendo del
+    negocio), registra `appointment.client_confirmed` la primera vez y no manda emails ni ntfy;
+    repetirlo responde `already: true`. El botón del recordatorio abre `/cita/:token?confirmar=1`, y
+    es la página la que confirma con un `POST` (con `X-Requested-With`): un antivirus que abre el
+    enlace no confirma nada.
+  - `POST …/cancel` («Cancelar mi cita»): sólo el principal, si el negocio tiene «Permitir
+    cancelaciones» y falta **más** que su antelación (`canCancelOnline`, comprobado con la cita
+    bloqueada). Usa el mismo cambio de estado que el panel (`cancelFromPatientLink`): la cancelación a
+    cada persona, la copia al profesional («La canceló el paciente desde su email.»), un aviso al
+    negocio (`patient_cancelled`) si su email no es el del profesional, la actividad
+    `appointment.client_cancelled` y el aviso por ntfy. La hora queda libre.
+  - **La confirmación se borra sola** (triggers de la 037) si cambian la fecha, la hora o el
+    profesional, o si la cita se cancela; Atendida y No asistió la conservan. Cambiar el paciente
+    principal desde el panel le da a la cita un `payment_token` nuevo y la deja sin confirmar; unir a
+    la ficha (spec 009) conserva enlaces y confirmaciones.
+  - El panel recibe `clientConfirmations` (`[{ clientId, confirmedAt }]`, el principal primero) en
+    cada cita, para la marca «Confirmó el paciente».
+  - Límites por conexión: `mi-cita` (60 vistas en 15 min) y `mi-cita-acciones` (20 confirmaciones o
+    cancelaciones en 15 min).
 - **Almacenamiento** (`src/services/file-storage.ts`): tres buckets de Supabase Storage que se crean
   solos con su tamaño máximo y sus tipos de archivo: `historias-clinicas` (privado, o el de
   `STORAGE_BUCKET`), `comprobantes` (privado) e `imagenes` (público: logos y fotos). Las imágenes se
@@ -559,7 +591,7 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   superan. Además, PostgreSQL impide citas activas solapadas (restricción `appointments_no_overlap`).
 - **CSRF:** las peticiones que modifican datos exigen la cabecera `X-Requested-With`; CORS sólo
   admite `FRONTEND_URL`.
-- **Límite de intentos** por IP en login, registro, reservas públicas, pagos e imágenes. Las cuentas
+- **Límite de intentos** por IP en login, registro, reservas públicas, pagos, «Tu cita» e imágenes. Las cuentas
   se guardan en PostgreSQL (tabla `rate_limits`, `src/http/rate-limit-store.ts`): todas las
   instancias de Vercel o Lambda comparten el mismo límite (antes cada una contaba en su memoria). Las
   IPv6 cuentan por subred /64. El cron borra las cuentas caducadas. En Vercel la IP del visitante
@@ -670,7 +702,9 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
     - **cada paciente registrado desde el panel:** dice quién lo registró y con qué rol;
     - **cada cambio de estado de una cita** (spec 008): de qué estado a cuál, quién lo hizo y a quién
       salieron los emails, o «Sin avisar al paciente». Sale del registro de actividad (las entradas
-      con «Estado» en `changes`), así que entran los botones de estado y el formulario de la cita.
+      con «Estado» en `changes`), así que entran los botones de estado, el formulario de la cita y la
+      cancelación desde «Tu cita» (spec 010), que se titula «Agenda360: cita cancelada por el
+      paciente» y dice «Cancelada por el paciente desde su email». «Confirmo que voy» no avisa.
 
     Hasta 10 de cada tipo por pasada; del resto sólo se dice cuántos son.
   - **Avisos al paciente en cada cambio de estado** (spec 008): además de la confirmación, la

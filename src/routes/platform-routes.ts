@@ -4,6 +4,7 @@ import { requireCaptcha } from "../http/captcha.ts";
 import { handle, limitRequests } from "../http/handlers.ts";
 import { requireSuperAdminTwoFactor } from "../http/session.ts";
 import { adminService, platformService } from "../services/admin-service.ts";
+import { appointmentPageService } from "../services/appointment-page-service.ts";
 import { categoryService } from "../services/category-service.ts";
 import { paymentService } from "../services/payment-service.ts";
 import { publicBookingService } from "../services/public-booking-service.ts";
@@ -111,6 +112,41 @@ publicRoutes.post(
   "/payments/:token/receipts/:receiptId/complete",
   receiptLimit,
   handle((req) => paymentService.completeUpload(req.params.token, req.params.receiptId)),
+);
+
+// Página «Tu cita» (/cita/:token, spec 010): ver la cita, «Confirmo que voy» y «Cancelar mi cita». El
+// token (128 bits al azar) es la autorización, como en el pago; el límite frena a quien intente
+// adivinarlo. Sin caché: el paciente tiene que ver enseguida lo que acaba de hacer.
+const appointmentPageLimit = limitRequests({
+  name: "mi-cita",
+  windowMinutes: 15,
+  max: 60,
+  message: "Demasiadas solicitudes desde esta conexión. Espera unos minutos.",
+});
+const appointmentActionLimit = limitRequests({
+  name: "mi-cita-acciones",
+  windowMinutes: 15,
+  max: 20,
+  message: "Demasiadas solicitudes desde esta conexión. Espera unos minutos.",
+});
+
+publicRoutes.get(
+  "/appointments/:token",
+  appointmentPageLimit,
+  handle(async (req, res) => {
+    res.set("Cache-Control", "private, no-store");
+    return appointmentPageService.get(req.params.token);
+  }),
+);
+publicRoutes.post(
+  "/appointments/:token/confirm",
+  appointmentActionLimit,
+  handle((req) => appointmentPageService.confirm(req.params.token)),
+);
+publicRoutes.post(
+  "/appointments/:token/cancel",
+  appointmentActionLimit,
+  handle((req) => appointmentPageService.cancel(req.params.token)),
 );
 
 /* --------------------------------------- /api/admin (super admin) ----------- */

@@ -210,6 +210,22 @@ const anaMail = bodyOf(coupleBooking, ana.email);
 ok(/Hola Bruno Nuevo:/.test(brunoMail) && /Ana Existente reservó para ti una cita/.test(brunoMail), "el de Bruno le dice que Ana reservó para él", brunoMail.slice(0, 300));
 ok(!brunoMail.includes(ana.email) && !brunoMail.includes(ana.phone), "sin el contacto de Ana", brunoMail.slice(0, 300));
 ok(/comprobante/i.test(anaMail) && !/comprobante/i.test(brunoMail), "los datos de pago, sólo a Ana (la principal)", { ana: /comprobante/i.test(anaMail), bruno: /comprobante/i.test(brunoMail) });
+// Spec 010: cada una con su enlace a «Tu cita»; el de Ana es el del pago y sólo ella cancela y paga desde ahí.
+const anaToken = sql(`select payment_token from appointments where id = '${coupleBooking}'`);
+const brunoToken = sql(`select access_token from appointment_clients where appointment_id = '${coupleBooking}' and client_id = '${brunoId}'`);
+ok(
+  anaToken !== brunoToken && anaMail.includes(`/cita/${anaToken}`) && brunoMail.includes(`/cita/${brunoToken}`) && !brunoMail.includes(anaToken),
+  "cada uno recibe su propio enlace a «Tu cita»",
+  { ana: anaMail.match(/\/cita\/\w+/)?.[0], bruno: brunoMail.match(/\/cita\/\w+/)?.[0] },
+);
+ok(!sql(`select body from notifications where appointment_id = '${coupleBooking}' and type in ('appointment_copy', 'booking_received')`).includes("/cita/"), "la copia y el aviso al negocio, sin enlaces del paciente");
+const anaPage = (await visitor("GET", `/public/appointments/${anaToken}`)).body;
+const brunoPage = (await visitor("GET", `/public/appointments/${brunoToken}`)).body;
+ok(
+  anaPage.payment === true && anaPage.cancellation.status !== "not_main" && brunoPage.payment === false && brunoPage.cancellation.status === "not_main",
+  "en «Tu cita», sólo Ana tiene el pago y puede cancelar",
+  { ana: [anaPage.payment, anaPage.cancellation?.status], bruno: [brunoPage.payment, brunoPage.cancellation?.status] },
+);
 const audit = (await ricardo("GET", `${B}/audit-logs?entityId=${coupleBooking}`)).body.entries as { summary: string }[];
 ok(audit.some((e) => /Ana Existente y Bruno Nuevo/.test(e.summary)), "la actividad nombra a los dos", audit.map((e) => e.summary));
 

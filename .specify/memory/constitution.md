@@ -24,7 +24,7 @@ Agenda360 guarda datos de salud (historia clínica, citas, contacto de pacientes
   "***5555", sólo los últimos 4 dígitos del teléfono desde el 2026-10-14).
 - La analítica (Vercel Analytics / Speed Insights) recibe rutas sin identificadores ni tokens y sin
   parámetros.
-- Las páginas públicas (reservas, pago) no exponen datos internos del negocio ni de otros pacientes.
+- Las páginas públicas (reservas, pago y «Tu cita») no exponen datos internos del negocio ni de otros pacientes.
 - Nunca se copian datos de producción a local ni a pruebas, ni siquiera anonimizados.
 - La base de producción sólo se consulta en lectura desde el equipo; las migraciones las aplica el
   dueño del producto.
@@ -71,6 +71,29 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   (marcada) para no avisar al corregir un error. «Atendida» y «No asistió» van con el interruptor
   «Seguimiento» (encendido) y sólo para citas de los últimos 7 días. El dueño del producto recibe por
   ntfy cada cambio de estado (2026-10-14).
+- El paciente confirma o cancela su cita desde «Tu cita», el enlace privado que traen los emails
+  de una cita activa, sin iniciar sesión. El del paciente principal es el mismo del pago, y cada
+  otra persona de una sesión tiene el suyo. «Confirmo que voy» es una marca aparte: no cambia el
+  estado (confirmar la cita sigue siendo decisión del negocio), no avisa por ntfy y se borra si
+  cambian la fecha, la hora o el profesional, o si la cita se cancela. Cancelar desde ahí sólo lo
+  puede el paciente principal, si el negocio tiene «Permitir cancelaciones» y falta más que su
+  antelación; si no, la página da el WhatsApp o el teléfono del negocio. La cancelación avisa
+  como todo cambio de estado, y la copia al profesional no lleva los botones del paciente
+  (2026-10-14).
+- Una cita del panel se puede repetir cada semana, cada 2 semanas o cada mes (el mismo día del mes;
+  si no existe, el último), de 2 a 24 citas. Antes de crearlas se ve la lista de fechas: las que
+  chocan con otra cita o pasan el cupo del plan no se crean a esa hora; las de un bloqueo, un día sin
+  atención o fuera del horario quedan marcadas y se pueden agendar igual. A cada una se le cambia la
+  hora o se quita. El paciente recibe un solo email con todas las fechas (con copia al profesional) y
+  ntfy avisa una vez por serie. Cada cita sigue siendo una cita normal y se cambia sola; desde su
+  ficha se cancelan ella y las siguientes con un solo email, con la casilla «Avisar al paciente». La
+  reserva online no crea series (2026-10-14).
+- Importar pacientes desde un Excel (.xlsx) o un CSV es del propietario, los administradores y el
+  super admin en modo soporte; Recepción y el rol Profesional no lo ven. Cada fila pasa las mismas
+  reglas que el formulario del negocio. Un paciente cuya cédula ya existe no se cambia, los
+  importados no reciben emails y quedan con origen «importado». El archivo se lee en el navegador y
+  no se guarda, y lo que lee el Excel se carga sólo en esa pantalla. La actividad registra una
+  entrada por importación y ntfy avisa una vez, con la cifra y sin nombres (2026-10-14).
 - En la portada no hay testimonios, cifras ni precios inventados.
 
 ### IV. Se comprueba en local, nunca en producción
@@ -170,4 +193,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.6.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-14
+**Versión**: 1.7.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-14

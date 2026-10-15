@@ -163,5 +163,45 @@ ok(
   emails,
 );
 
+console.log("«Tu cita» en los avisos (spec 010)");
+const bodyOf = (id: string, type: string, to: string) =>
+  sql(
+    `select replace(body, chr(10), ' ') from notifications where appointment_id = '${id}' and type = '${type}' and to_email = '${to}' order by created_at desc limit 1`,
+  );
+const token = sql(`select payment_token from appointments where id = '${cita}'`);
+ok(bodyOf(cita, "appointment_pending", ana.email).includes(`/cita/${token}`), "el aviso de una cita activa lleva el enlace a «Tu cita» del paciente");
+ok(bodyOf(cita, "appointment_cancelled", ana.email) !== "" && !bodyOf(cita, "appointment_cancelled", ana.email).includes("/cita/"), "la cancelación, no");
+const copyBodies = sql(`select replace(body, chr(10), ' ') from notifications where appointment_id = '${cita}' and type = 'appointment_copy'`)
+  .split("\n")
+  .filter(Boolean);
+ok(!copyTo || (copyBodies.length > 0 && copyBodies.every((body) => !body.includes("/cita/"))), "y ninguna copia al profesional, tampoco la de la cancelación", copyBodies.length);
+
+sql(`update businesses set booking_settings = booking_settings || '{"allowCancellations": true, "cancellationNoticeHours": 24}' where id = '${businessId}'`);
+const paco = patient("Paco Enlace");
+const enlace = appointment(paco.id, "confirmed", sql(`select to_char((now() at time zone 'America/Guayaquil')::date + 3, 'YYYY-MM-DD')`));
+const enlaceToken = sql(`select payment_token from appointments where id = '${enlace}'`);
+newEmails(enlace);
+const cancelled = await fetch(`${BASE}/public/appointments/${enlaceToken}/cancel`, { method: "POST", headers: { "X-Requested-With": "fetch" } });
+emails = newEmails(enlace);
+ok(
+  cancelled.status === 200 && emails.includes(`appointment_cancelled → ${paco.email}`) && (!copyTo || emails.includes(`appointment_copy → ${copyTo}`)),
+  "el paciente cancela desde «Tu cita»: la cancelación de siempre, con su copia",
+  emails,
+);
+const { pool } = await import("../src/db/pool.ts");
+const { findStatusChanges, statusChangeNotice } = await import("../src/services/booking-alerts.ts");
+const change = (await findStatusChanges(pool, null, new Date().toISOString(), 500)).changes.find((c) => c.clients[0]?.name === "Paco Enlace");
+const notice = change && statusChangeNotice(change);
+ok(
+  change?.byPatient === true &&
+    notice?.title === "Agenda360: cita cancelada por el paciente" &&
+    notice.message.includes("Cancelada por el paciente desde su email") &&
+    notice.message.includes("Paciente: Paco E.") &&
+    !notice.message.includes("Cambiado desde el panel"),
+  "y el aviso de ntfy dice que la canceló el paciente",
+  notice,
+);
+await pool.end();
+
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de los avisos de cambio de estado pasaron");
 process.exitCode = failures ? 1 : 0;

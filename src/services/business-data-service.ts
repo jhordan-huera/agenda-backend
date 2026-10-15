@@ -351,18 +351,22 @@ export const clientService = {
             and (a.client_id = $2 or exists (select 1 from appointment_clients other where other.appointment_id = a.id and other.client_id = $2))`,
         [clientId, claimed.id],
       );
-      const extras = await many<{ appointmentId: string; createdAt: string }>(
+      // Con su enlace a «Tu cita» y su «Confirmo que voy» (spec 010): es la misma persona, y el enlace de
+      // los emails que ya recibió tiene que seguir funcionando. Las horas, como texto: así no pierden los
+      // microsegundos al pasar por aquí.
+      const extras = await many<{ appointmentId: string; createdAt: string; accessToken: string; confirmedAt: string | null }>(
         db,
-        'delete from appointment_clients where client_id = $1 returning appointment_id as "appointmentId", created_at as "createdAt"',
+        `delete from appointment_clients where client_id = $1
+         returning appointment_id as "appointmentId", created_at::text as "createdAt", access_token as "accessToken",
+                   confirmed_at::text as "confirmedAt"`,
         [clientId],
       );
       for (const extra of extras) {
-        await db.query("insert into appointment_clients (appointment_id, client_id, business_id, created_at) values ($1, $2, $3, $4)", [
-          extra.appointmentId,
-          claimed.id,
-          businessId,
-          extra.createdAt,
-        ]);
+        await db.query(
+          `insert into appointment_clients (appointment_id, client_id, business_id, created_at, access_token, confirmed_at)
+           values ($1, $2, $3, $4::timestamptz, $5, $6::timestamptz)`,
+          [extra.appointmentId, claimed.id, businessId, extra.createdAt, extra.accessToken, extra.confirmedAt],
+        );
       }
       // Como principal (si la ficha era otra persona de esa cita, el trigger de la 032 la quita de ahí).
       const moved = await db.query("update appointments set client_id = $2 where client_id = $1", [clientId, claimed.id]);
@@ -628,17 +632,24 @@ const homeVisitJson = (visit: HomeVisitAddress | null) => (visit ? JSON.stringif
 /**
  * Guarda los campos editables de una cita y devuelve la fila actualizada. `rescheduled`: la fecha y
  * hora se fijaron de nuevo (ver resetsSchedule).
+ * Otro paciente principal (spec 010): la cita recibe un enlace nuevo (`payment_token`, el del pago y
+ * el de «Tu cita») y pierde su «Confirmo que voy». Así quien deja de ser el paciente no puede ver ni
+ * cancelar la cita de otro con su enlace viejo. En el `set`, `client_id` es el valor anterior. Unir a
+ * la ficha (confirmClaim) no pasa por aquí: es la misma persona y conserva los dos.
+ * La base borra sola la confirmación si cambian la fecha, la hora o el profesional, o si se cancela
+ * (migración 037). La de las otras personas la borra un trigger `after`, que corre después del
+ * `returning`: por eso la cita se vuelve a leer al final.
  */
 async function saveAppointment(db: Db, appointment: Appointment, rescheduled: boolean): Promise<Appointment> {
-  return (await one<Appointment>(
-    db,
+  await db.query(
     `update appointments
         set client_id = $2, service_id = $3, date = $4, start_time = $5, end_time = $6,
             status = $7, notes = $8, price = $9, home_visit = $10, professional_id = $11, is_virtual = $12,
             scheduled_at = case when $13 then now() else scheduled_at end,
+            payment_token = case when client_id is distinct from $2::uuid then replace(gen_random_uuid()::text, '-', '') else payment_token end,
+            client_confirmed_at = case when client_id is distinct from $2::uuid then null else client_confirmed_at end,
             updated_at = now()
-      where id = $1
-      returning ${appointmentColumns()}`,
+      where id = $1`,
     [
       appointment.id,
       appointment.clientId,
@@ -654,7 +665,8 @@ async function saveAppointment(db: Db, appointment: Appointment, rescheduled: bo
       appointment.isVirtual,
       rescheduled,
     ],
-  ))!;
+  );
+  return (await one<Appointment>(db, `select ${appointmentColumns()} from appointments where id = $1`, [appointment.id]))!;
 }
 
 /** La cita con los nombres que muestra la auditoría. */
@@ -770,6 +782,7 @@ export const appointmentService = {
         paymentToken: "",
         receiptAt: null,
         paidAt: null,
+        clientConfirmations: [],
         createdAt: "",
         updatedAt: "",
       };
@@ -951,6 +964,33 @@ export const appointmentService = {
     });
   },
 };
+
+/** Autor de lo que hace el paciente desde «Tu cita», el enlace de sus emails (spec 010). */
+export const PATIENT_LINK_ACTOR = "Paciente (desde su email)";
+
+/**
+ * El paciente principal cancela su cita desde «Tu cita» (spec 010). La regla (el negocio lo permite y
+ * aún está en plazo) la comprueba appointment-page-service.ts con la cita bloqueada. Es el mismo
+ * camino que un cambio de estado del panel (spec 008): el email de cancelación a cada persona con la
+ * copia al profesional, el aviso al negocio y la actividad con «Estado», que es lo que lee el aviso
+ * de ntfy. La hora queda libre. El acceso del rol Profesional a la ficha no se libera: eso lo decide
+ * el negocio, nunca el paciente.
+ */
+export async function cancelFromPatientLink(db: Db, before: Appointment): Promise<Appointment> {
+  const appointment = await saveAppointment(db, { ...before, status: "cancelled" }, false);
+  await notifyAppointmentChange(db, before, appointment, "patient_link", null);
+  await logAudit(db, {
+    businessId: before.businessId,
+    actor: null,
+    actorName: PATIENT_LINK_ACTOR,
+    action: "appointment.client_cancelled",
+    entityType: "appointment",
+    entityId: appointment.id,
+    summary: `Cancelada por el paciente desde su email: ${await describeAppointment(db, appointment)}`,
+    changes: diffChanges(await appointmentForAudit(db, before), await appointmentForAudit(db, appointment), APPOINTMENT_FIELDS),
+  });
+  return appointment;
+}
 
 /**
  * Llegada del paciente (control de asistencia): recepción la marca al verlo en la sala de espera y

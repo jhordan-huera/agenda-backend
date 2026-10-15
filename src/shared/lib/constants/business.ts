@@ -161,6 +161,19 @@ export function isFollowUpDate(date: string, today: string): boolean {
 }
 
 /**
+ * El paciente principal puede cancelar desde «Tu cita» (spec 010): el negocio lo permite y falta más
+ * que su antelación («más que»: con 24 h, a las 24 h justas ya no). `minutesUntilStart`: los que
+ * faltan para la cita, en la hora del negocio. Lo usan la API, los emails y la beta.
+ */
+export const canCancelOnline = (
+  settings: Pick<BookingSettings, "allowCancellations" | "cancellationNoticeHours">,
+  minutesUntilStart: number,
+) => settings.allowCancellations && minutesUntilStart > settings.cancellationNoticeHours * 60;
+
+/** Días después de la cita en que su enlace «Tu cita» deja de abrirse (spec 010). */
+export const APPOINTMENT_PAGE_DAYS = 30;
+
+/**
  * Datos obligatorios del paciente en el panel, si el super admin no eligió otros para el negocio (como
  * hasta ahora: cédula y email). Igual que el valor por defecto de la migración 031.
  */

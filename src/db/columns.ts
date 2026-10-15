@@ -150,9 +150,26 @@ export const extraClientIdsSql = (alias = "appointments") =>
   `coalesce((select array_agg(ac.client_id::text order by ac.created_at, ac.client_id)
      from appointment_clients ac where ac.appointment_id = ${alias}.id), '{}')`;
 
-/** Las columnas de la cita y sus otros pacientes (`extraClientIds`). */
+/** Un instante en ISO y UTC ("2026-10-14T23:20:00.000Z"), como salen las demás fechas de las consultas. */
+const isoSql = (column: string) => `to_char(${column} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+
+/**
+ * Quienes confirmaron que van desde su email (spec 010): `[{ clientId, confirmedAt }]`, el principal
+ * primero y luego los demás en su orden; '[]' si nadie. `alias`: como en extraClientIdsSql.
+ */
+export const clientConfirmationsSql = (alias = "appointments") =>
+  `coalesce((select json_agg(json_build_object('clientId', cc.client_id, 'confirmedAt', ${isoSql("cc.confirmed_at")})
+                             order by cc.ord, cc.created_at, cc.client_id)
+     from (select ${alias}.client_id::text as client_id, ${alias}.client_confirmed_at as confirmed_at, 0 as ord,
+                  null::timestamptz as created_at
+            where ${alias}.client_confirmed_at is not null
+           union all
+           select ac.client_id::text, ac.confirmed_at, 1, ac.created_at from appointment_clients ac
+            where ac.appointment_id = ${alias}.id and ac.confirmed_at is not null) cc), '[]'::json)`;
+
+/** Las columnas de la cita, sus otros pacientes (`extraClientIds`) y quiénes confirmaron (`clientConfirmations`). */
 export const appointmentColumns = (alias?: string) =>
-  `${appointmentBaseColumns(alias)}, ${extraClientIdsSql(alias)} as "extraClientIds"`;
+  `${appointmentBaseColumns(alias)}, ${extraClientIdsSql(alias)} as "extraClientIds", ${clientConfirmationsSql(alias)} as "clientConfirmations"`;
 
 export const paymentReceiptColumns = columns({
   id: "id",

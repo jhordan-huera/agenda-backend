@@ -173,6 +173,7 @@ const change = {
   clients: [{ name: "Juan Pérez", email: "juan.perez@gmail.com", phone: "0994445555" }],
   by: { name: "Elena Suárez", role: "staff" as const, superAdmin: false },
   withoutNotice: false,
+  byPatient: false,
   emails: [
     { type: "appointment_cancelled" as const, to: "juan.perez@gmail.com", status: "sent" as const, reason: null },
     { type: "appointment_copy" as const, to: "ana.torres@gmail.com", status: "queued" as const, reason: null },
@@ -194,6 +195,30 @@ ok(
         "• Copia al profesional → an***@gmail.com (en cola)",
       ].join("\n"),
   "de qué estado a cuál, quién lo hizo y sus emails, con el paciente a medias y sin el negocio en el título",
+  notice,
+);
+notice = statusChangeNotice({
+  ...change,
+  by: null,
+  byPatient: true,
+  emails: [...change.emails, { type: "patient_cancelled" as const, to: "recepcion@mente.ec", status: "queued" as const, reason: null }],
+});
+ok(
+  notice.title === "Agenda360: cita cancelada por el paciente" &&
+    notice.message ===
+      [
+        "Mente Abierta · mié 14 oct 16:30",
+        "Paciente: Juan P. · ju***@gmail.com · ***5555",
+        "Consulta inicial",
+        "De Confirmada a Cancelada",
+        "Cancelada por el paciente desde su email",
+        "",
+        "Emails:",
+        "• Al paciente → ju***@gmail.com",
+        "• Copia al profesional → an***@gmail.com (en cola)",
+        "• Aviso al negocio → re***@mente.ec (en cola)",
+      ].join("\n"),
+  "la cancelación desde «Tu cita» (spec 010): lo dice el título y en lugar de quién la cambió, con el aviso al negocio",
   notice,
 );
 notice = statusChangeNotice({ ...change, from: "Confirmada", to: "Pendiente", withoutNotice: true, emails: [] });
