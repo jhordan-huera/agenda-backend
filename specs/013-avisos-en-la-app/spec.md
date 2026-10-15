@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-14
 
-**Estado**: Implementada (2026-10-14)
+**Estado**: Publicada (2026-10-15, PR backend #28 y front #25)
 
 **Repos**: agenda-backend (principal: los aparatos, el envío y qué avisa) y agenda-front (activar los
 avisos, el service worker y abrir lo que avisa). La beta no tiene servidor y queda fuera.

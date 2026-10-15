@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-15
 
-**Estado**: Implementada (2026-10-15)
+**Estado**: Publicada (2026-10-15, PR backend #28 y front #25)
 
 **Repos**: agenda-backend (principal: guardar los avisos de cada persona, a quién le toca cada uno, el
 contador, marcar leído y el borrado a los 30 días) y agenda-front (la campana, la lista y la página
