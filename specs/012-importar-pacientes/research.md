@@ -460,3 +460,81 @@ números (R1…) se citan en el [plan](./plan.md).
     importación lo convierte en «La demo no tiene espacio para tantos pacientes: prueba con un archivo
     más pequeño.»
 - **Por qué:** RF-011, y la beta sirve para las demostraciones de venta.
+
+---
+
+# Ampliación del 2026-10-15: «Importar también los que tienen datos por completar»
+
+Pedida por el dueño del producto antes de publicar. En la prueba con una lista real (pacientes con y
+sin cédula, email o teléfono), los datos obligatorios de fábrica dejaban fuera 6 de 10 pacientes.
+
+## R13. «Por completar» se calcula, no se guarda
+
+- **Decisión:** un paciente está «Por completar» si le falta algún dato que el negocio exige **hoy**
+  (`client_required_fields`: cédula, email, teléfono o dirección). Lo dice una función compartida,
+  `missingRequiredFields(client, required)`, en `src/lib/validations/client.ts`. Devuelve los datos
+  que faltan («cédula», «email»…).
+- **Por qué:**
+  - sin migración ni columna nueva;
+  - la marca desaparece sola al completar el paciente;
+  - sigue a los datos obligatorios si el super admin los cambia;
+  - sirve también para los pacientes que ya estaban incompletos de antes.
+- **Descartado:** una columna `incomplete` en `clients`, que habría que mantener en cada edición y en
+  cada cambio de los datos obligatorios.
+
+## R14. La importación: una categoría más y una casilla
+
+- **Decisión:**
+  - **La categoría nueva:** `classifyImportRows` recibe `allowIncomplete`.
+    - Cada fila se valida con las reglas del formulario **sin datos obligatorios** (sólo el nombre).
+      Lo que viene se valida igual que hoy, y una cédula, un email o un teléfono mal escritos siguen
+      con error.
+    - Después se miran los que faltan con `missingRequiredFields`. Las filas a las que les falta algo
+      van a la categoría nueva `incomplete`, con `{ row, missing }`.
+  - **La casilla:**
+    - con `allowIncomplete`, esas filas se crean (cuentan en `created` y siguen listadas en
+      `incomplete`);
+    - sin él, van a `errors` con el mismo motivo de hoy («La cédula es obligatoria»).
+  - **La API** recibe `includeIncomplete` en el cuerpo de `POST …/clients/import`. Si no viene, vale
+    `false`, así que una petición de hoy hace lo mismo. Vuelve a clasificar con la misma función: todo
+    o nada, como en R6.
+  - **La revisión del front** muestra «N con datos por completar», con la fila y lo que falta. La
+    casilla «Importar también los que tienen datos por completar» viene **encendida**.
+- **Por qué:** RF-012 y RF-013, sin tocar las reglas del formulario (RF-015).
+
+## R15. Basta el nombre
+
+- **Decisión:** con la casilla, una fila con sólo el nombre entra (decisión 2 de la ampliación).
+- **Cómo se reconoce a la misma persona:** igual que hoy. Por la cédula si la tiene; si no, por el
+  nombre, el email y el teléfono a la vez. Dos personas con el mismo nombre y sin ningún otro dato se
+  toman por la misma, y la revisión lo muestra antes de importar.
+- **Por qué:** lo eligió el dueño. El riesgo de confundir a dos personas se acepta y queda en los
+  casos límite de la spec.
+
+## R16. Clientes y la ficha
+
+- **Decisión:**
+  - **Clientes:** el filtro «Por completar» y la marca «Por completar» en cada fila de la lista y en
+    las tarjetas del celular. Se calcula en el navegador con los datos obligatorios del negocio, que
+    el panel ya tiene.
+  - **La ficha del paciente:** el aviso «Faltan datos: cédula y email» con «Completar», que abre el
+    formulario de siempre.
+  - **El formulario** no cambia: sigue pidiendo los obligatorios al guardar (RF-015).
+- **Por qué:** RF-014. Recepción y el rol Profesional también ven el filtro (ven Clientes), aunque no
+  importan.
+
+## R17. Actividad y ntfy
+
+- **Decisión:**
+  - **El resumen** suma «N por completar»: «Importó 200 pacientes (3 ya existían, 5 con errores,
+    12 por completar)». El orden es: ya existían, con errores, repetidas, por completar y tope del
+    plan.
+  - **ntfy** sigue igual: un aviso con la cifra y sin nombres.
+- **Por qué:** todo queda en la actividad (constitución 1.9.0).
+
+## R18. Beta
+
+- **Decisión:** lo mismo:
+  - la casilla, el filtro y la ficha;
+  - la repo mock usa `classifyImportRows` con `allowIncomplete`.
+- **Por qué:** RF-011.

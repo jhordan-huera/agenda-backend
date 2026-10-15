@@ -96,7 +96,10 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   reserva online no crea series (2026-10-14).
 - Importar pacientes desde un Excel (.xlsx) o un CSV es del propietario, los administradores y el
   super admin en modo soporte; Recepción y el rol Profesional no lo ven. Cada fila pasa las mismas
-  reglas que el formulario del negocio. Un paciente cuya cédula ya existe no se cambia, los
+  reglas que el formulario del negocio, salvo que se elija «Importar también los que tienen datos por
+  completar»: entonces basta el nombre, lo que viene se valida igual y el paciente queda «Por
+  completar» hasta que se completa en su ficha (2026-10-15). Un paciente cuya cédula ya existe no se
+  cambia, los
   importados no reciben emails y quedan con origen «importado». El archivo se lee en el navegador y
   no se guarda, y lo que lee el Excel se carga sólo en esa pantalla. La actividad registra una
   entrada por importación y ntfy avisa una vez, con la cifra y sin nombres (2026-10-14).
@@ -231,4 +234,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.10.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-15
+**Versión**: 1.11.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-15

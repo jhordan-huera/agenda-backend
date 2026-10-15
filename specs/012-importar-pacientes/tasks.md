@@ -92,6 +92,45 @@ están en `research.md`.
 - [x] T023 Cierre: README del backend (y del front), `reporte.md`, estado de la spec y commits sin
   firma de IA.
 
+## Fase 7: Ampliación del 2026-10-15 - Importar también los que tienen datos por completar (P1)
+
+- [x] T024 Constitución 1.11.0 en `back/` y `front/`: la frase de la importación del principio III
+  (plan, «Ampliación»).
+- [ ] T025 [US3] `front/src/lib/validations/client.ts`: `missingRequiredFields(client, required)`
+  (R13). Después, `npm run sync:shared` en `back/`.
+- [ ] T026 [US3] `front/src/lib/validations/client-import.ts` y `src/types/index.ts` (R14, R17):
+  - `classifyImportRows` con `allowIncomplete`: se valida sin datos obligatorios (sólo el nombre),
+    después `missingRequiredFields`, y la categoría `incomplete` (`{ row, missing }`);
+  - sin la casilla, a `errors` con el motivo de hoy;
+  - `clientImportSchema` con `includeIncomplete` opcional (`false` si no viene);
+  - `importSummary` con «N por completar».
+
+  Después, `npm run sync:shared`.
+- [ ] T027 [US3] `back/src/services/client-import-service.ts`: pasa `includeIncomplete` a
+  `classifyImportRows`.
+- [ ] T028 [US3] `front/src/features/clients/import/`: la revisión y el resultado.
+  - «N con datos por completar», con la fila y lo que falta.
+  - La casilla «Importar también los que tienen datos por completar», encendida.
+  - El botón cuenta los que entran.
+  - La descarga de las filas con errores sigue igual.
+- [ ] T029 [US3] `front/src/pages/dashboard/clients-page.tsx`: el filtro «Por completar» y la marca
+  en la lista y en las tarjetas. `client-detail-page.tsx`: «Faltan datos: …» con «Completar», que abre
+  el formulario.
+- [ ] T030 [US3] `back/tests/client-import.test.ts`:
+  - con la casilla: entran las filas con sólo el nombre o sin la cédula o el email, y siguen con
+    error las mal escritas;
+  - sin la casilla: como hoy;
+  - el tope del plan cuenta también los incompletos;
+  - repetir la importación no duplica (también sin cédula);
+  - el resumen de la actividad.
+- [ ] T031 Comprobación:
+  - `back/`: `npm run typecheck` y `env -u DATABASE_URL npm test`;
+  - `front/`: `npm run build` y `npm run lint`;
+  - el recorrido de la importación con el archivo de diez pacientes (escritorio y 390 px).
+- [ ] T032 Beta (R18), con copia previa `beta-src-antes-012b.tgz`: lo mismo, más build, lint y
+  recorrido.
+- [ ] T033 Cierre: el reporte (la sección de la ampliación), el README y los commits sin firma de IA.
+
 ## Dependencias
 
 - T001 y T002 primero. T001 va antes de cualquier tarea que use los tipos o las reglas.

@@ -234,6 +234,61 @@ No hay variables nuevas en Vercel ni en GitHub.
 - **Las specs 010 y 011** también tocan los avisos del cron, los tipos y la constitución. Se
   implementan una detrás de otra en `dev`, sin mezclar los cambios.
 
+## Ampliación del 2026-10-15: «Importar también los que tienen datos por completar»
+
+Las decisiones R13–R18 están en [research.md](./research.md). Antes de publicar, el dueño pidió:
+- que las filas a las que les falta un dato obligatorio entren marcadas «Por completar»;
+- que baste el nombre.
+
+**Qué cambia para quien importa:**
+- **La revisión** cuenta aparte «N con datos por completar», con la fila y lo que falta («falta la
+  cédula y el email»).
+- **La casilla** «Importar también los que tienen datos por completar» viene encendida. Con ella,
+  entran con lo que traen.
+- **Lo mal escrito** (una cédula que no es válida, un email o un teléfono mal escritos) sigue con
+  error.
+- **En Clientes** hay un filtro «Por completar» y una marca en cada paciente al que le falta algo. Su
+  ficha dice «Faltan datos: cédula y email», con «Completar».
+- **Los datos obligatorios del negocio no cambian:** el formulario los sigue pidiendo al guardar, y la
+  marca desaparece sola al completarlos.
+
+**Sin migración:** «Por completar» se calcula con los datos obligatorios de hoy (R13).
+
+**Constitución 1.11.0 (MENOR), en los dos repos.** En el principio III, la frase «Cada fila pasa las
+mismas reglas que el formulario del negocio» pasa a decir:
+> Cada fila pasa las mismas reglas que el formulario del negocio, salvo que se elija «Importar también
+> los que tienen datos por completar». Entonces basta el nombre, lo que viene se valida igual y el
+> paciente queda «Por completar» hasta que se completa en su ficha (2026-10-15).
+
+**Archivos:**
+```text
+agenda-front (y su copia en agenda-backend/src/shared con sync:shared)
+  src/lib/validations/client.ts          missingRequiredFields (R13)
+  src/lib/validations/client-import.ts   allowIncomplete, la categoría incomplete, importSummary y
+                                         el cuerpo con includeIncomplete (R14, R17)
+  src/types/index.ts                     ClientImportResult.incomplete
+  src/features/clients/import/review-step.tsx, result-step.tsx, import-data.ts
+                                         la cifra, la lista con lo que falta y la casilla (R14)
+  src/pages/dashboard/clients-page.tsx   el filtro y la marca (R16)
+  src/pages/dashboard/client-detail-page.tsx   «Faltan datos…» con «Completar» (R16)
+agenda-backend
+  src/services/client-import-service.ts  includeIncomplete (R14)
+  tests/client-import.test.ts            la casilla encendida y apagada, sólo el nombre, lo mal escrito,
+                                         el tope del plan, repetir la importación y el resumen
+agenda-beta
+  lo mismo, con la repo mock (R18)
+```
+
+**Comprobación:**
+- `npm test`, `npm run build` y `npm run lint`;
+- el recorrido de la importación con el archivo de la prueba del 2026-10-15: diez pacientes con y sin
+  cédula, email y teléfono.
+
+**Riesgos:**
+- **Dos personas con el mismo nombre y ningún otro dato** se toman por la misma (R15).
+- **Un importado sin cédula que reserva online** queda en ficha aparte si no coinciden el nombre, el
+  email y el teléfono (spec 009). Por eso conviene completarlos.
+
 ## Decisiones del dueño del producto (2026-10-14)
 
 El dueño aprobó el plan con esta respuesta, que manda sobre lo que diga la pregunta de abajo:
