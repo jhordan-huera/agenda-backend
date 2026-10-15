@@ -87,7 +87,7 @@ están en `research.md`.
 
 ## Fase 6: Beta, comprobación y cierre
 
-- [ ] T019 Beta (R13), con copia previa de su código:
+- [x] T019 Beta (R13), con copia previa de su código:
   - tipos, plantillas y `canCancelOnline` a mano; `StoredAppointment` y `migrateData` con los tokens
     y las confirmaciones de las otras personas;
   - repositorio de prueba: `getAppointment`, `confirmAppointment` y `cancelAppointment`; borrar la
@@ -95,8 +95,8 @@ están en `research.md`.
   - emails con el enlace de cada persona; la bandeja simulada con los enlaces que se abren;
   - `/cita/:token`, la marca en la agenda, el Inicio y la ficha; citas demo confirmadas;
   - build y lint.
-- [ ] T020 Recorrido con Playwright del quickstart §2 (escritorio y 390 px) y el de la beta (§3).
-- [ ] T021 Cierre: README del backend (y del front), `reporte.md`, estado de la spec y commits sin
+- [x] T020 Recorrido con Playwright del quickstart §2 (escritorio y 390 px) y el de la beta (§3).
+- [x] T021 Cierre: README del backend (y del front), `reporte.md`, estado de la spec y commits sin
   firma de IA.
 
 ## Dependencias
