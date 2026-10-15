@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-14
 
-**Estado**: Implementada (2026-10-14)
+**Estado**: Publicada (2026-10-14, PR backend #24 y front #22)
 
 **Repos**: agenda-backend (principal: emails y la ruta del cambio de estado), agenda-front (panel,
 plantillas y validaciones compartidas) y la beta. **Sin migración.**

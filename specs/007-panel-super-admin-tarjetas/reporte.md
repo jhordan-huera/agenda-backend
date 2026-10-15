@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev · **Fecha**: 2026-10-14
+**Estado**: Publicada (2026-10-14, PR backend #24 y front #22) · **Fecha**: 2026-10-14
 
 **Repos**: los dos (agenda-front y agenda-backend) y la beta · **Migración**: Sí: `035_panel_colors.sql`
 
@@ -95,8 +95,11 @@ mismos datos. Salen **iguales píxel por píxel**.
 
 - **Si el front se publica antes que el backend,** el panel usa los colores de Agenda360 y guardar
   colores falla con un aviso hasta publicar el backend.
-- **La migración 035 ya está en producción** (comprobado), así que el backend se puede publicar en
-  cualquier momento.
+- **Corrección (2026-10-14, noche):** la migración 035 **no** estaba en producción, aunque este
+  reporte lo decía. La comprobación de entonces fue un error. Se aplicó el 2026-10-14 hacia las 20:25
+  (hora de Ecuador), al preparar la publicación de la spec 009. La 007 se había publicado a las
+  11:10, así que mientras tanto la sesión del super admin probablemente daba error, porque lee
+  `users.panel_colors`. Los negocios no se vieron afectados.
 
 ## Commits
 
@@ -107,8 +110,8 @@ mismos datos. Salen **iguales píxel por píxel**.
 
 ## Cómo publicarlo
 
-1. **Migración 035:** ya está aplicada en producción (2026-10-14 10:32, comprobado con una consulta
-   sólo de lectura).
+1. **Migración 035:** aplicada en producción el 2026-10-14 hacia las 20:25 (hora de Ecuador),
+   después de publicar. Ver «Pendientes y riesgos».
 2. **PR `dev` → `main` del backend.**
 3. **PR `dev` → `main` del front.**
 4. **Después:** entrar al panel, elegir colores en Configuración y comprobar «Gestionar negocio».
@@ -117,5 +120,5 @@ mismos datos. Salen **iguales píxel por píxel**.
 
 Panel del super admin en tarjetas y con colores propios (spec 007): encabezado y cifras en cada
 pantalla, Negocios y Usuarios en tarjetas con opción de lista, ficha del negocio con pestañas y
-colores del panel por cuenta. **Migración 035** (`users.panel_colors`), ya aplicada en producción. Reporte:
+colores del panel por cuenta. **Migración 035** (`users.panel_colors`). Reporte:
 `specs/007-panel-super-admin-tarjetas/reporte.md`.
