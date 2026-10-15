@@ -117,6 +117,8 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   de las de hoy sin cerrar. El super admin recibe al momento los negocios nuevos y las solicitudes
   de plan, y desde el cron los cambios de seguridad en cuentas de super admin y los intentos
   fallidos, además de ntfy. Si los avisos fallan, la reserva y los emails siguen igual (2026-10-14).
+  El rol Profesional también puede activarlos, sólo para el resumen de las 8 de la noche de su agenda
+  (2026-10-15).
 - Todo lo que cambia datos queda en la actividad, con quién, qué y cuándo: lo que hace el equipo en
   el panel, lo que hace el paciente desde su enlace, las importaciones, las series y los avisos en
   el celular (activarlos en un aparato, cambiar sus tipos, desactivarlos y el aviso de prueba). Lo
@@ -239,4 +241,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.13.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-15
+**Versión**: 1.14.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-15
