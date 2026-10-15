@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-15
 
-**Estado**: Implementada (2026-10-15)
+**Estado**: Publicada (2026-10-15, PR backend #32 y front #27)
 
 **Repos**:
 - **agenda-backend:** los cálculos, su preparación diaria y la ruta.
