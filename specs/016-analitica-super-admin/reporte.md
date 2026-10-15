@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev · **Fecha**: 2026-10-15
+**Estado**: Publicada (2026-10-15, PR backend #32 y front #27) · **Fecha**: 2026-10-15
 
 **Repos**: los dos (agenda-backend y agenda-front). La beta no lleva la analítica (decisión del dueño)
 · **Migración**: Sí: `043_analytics_snapshots.sql`
