@@ -4,7 +4,7 @@
 
 **Creada**: 2026-10-15
 
-**Estado**: Implementada (2026-10-15)
+**Estado**: Publicada (2026-10-15, PR backend #30 y front #26)
 
 **Repos**:
 - **agenda-backend** (principal): el tope de emails y los datos del super admin.
