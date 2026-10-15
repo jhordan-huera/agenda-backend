@@ -19,6 +19,7 @@ import {
   setAppointmentArrival,
 } from "../services/business-data-service.ts";
 import { imageService } from "../services/image-service.ts";
+import { panelNoticeService } from "../services/panel-notices.ts";
 import { paymentService } from "../services/payment-service.ts";
 import { professionalService } from "../services/professional-service.ts";
 
@@ -373,4 +374,23 @@ businessRoutes.get(
 businessRoutes.get(
   "/:businessId/audit-logs",
   handle((req) => auditLogService.list(req.ctx, req.params.businessId, req.query)),
+);
+
+// Centro de avisos del panel (spec 014): la campana de cada persona del equipo (cada una ve lo suyo y
+// lleva su propio leído). El super admin en modo soporte recibe 403. Leer no va a la actividad.
+businessRoutes.get(
+  "/:businessId/notices/unread",
+  handle((req) => panelNoticeService.unread(req.ctx, req.params.businessId)),
+);
+businessRoutes.get(
+  "/:businessId/notices",
+  handle((req) => panelNoticeService.list(req.ctx, req.params.businessId, req.query)),
+);
+businessRoutes.post(
+  "/:businessId/notices/read-all",
+  handle((req) => panelNoticeService.markAllRead(req.ctx, req.params.businessId)),
+);
+businessRoutes.post(
+  "/:businessId/notices/:noticeId/read",
+  handle((req) => panelNoticeService.markRead(req.ctx, req.params.businessId, req.params.noticeId)),
 );

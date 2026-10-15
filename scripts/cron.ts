@@ -13,7 +13,7 @@
  * (por defecto https://ntfy.sh), APP_URL (enlace del aviso) y SUPABASE_URL y
  * SUPABASE_SERVICE_ROLE_KEY (sin ellas no se borran los comprobantes de más de 3 meses). Avisos en el
  * celular (spec 013): VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY (sin ellas no se envían: quedan en cola y
- * caducan) y, opcional, VAPID_SUBJECT.
+ * caducan) y, opcional, VAPID_SUBJECT. Las campanas del panel (spec 014) no necesitan nada más.
  *
  * Prueba local: node --env-file=.env scripts/cron.ts
  */
@@ -332,6 +332,16 @@ export function describePushLine(report: ScheduledTasksReport, problem: string |
   return ` · avisos en la app: enviados ${sent} · fallidos ${failed} · aparatos dados de baja ${removedDevices}${problem ? ` (${problem})` : ""}`;
 }
 
+/**
+ * "· avisos del panel: N (borrados, más de 30 días: N)": lo que guardó esta pasada en las campanas del
+ * panel (spec 014). Sólo cifras: el registro es público.
+ */
+export function describePanelLine(report: ScheduledTasksReport): string {
+  if (!report.panelNotices) return "";
+  const { created, purged } = report.panelNotices;
+  return ` · avisos del panel: ${created} (borrados, más de 30 días: ${purged ?? "no se pudo"})`;
+}
+
 /** El cron no pudo trabajar: aviso urgente y el job de GitHub termina con error. */
 async function fail(reason: string): Promise<void> {
   await notify({
@@ -385,6 +395,7 @@ async function main(): Promise<void> {
         `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ` +
         `emails sin contenido (más de 90 días): ${report.emailContentPurged} · ` +
         `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"}` +
+        `${describePanelLine(report)}` +
         `${describePushLine(report, config.webPushProblem ? `sin envío: ${config.webPushProblem}` : null)} · ${report.durationMs} ms`,
     );
     const notices = [

@@ -1282,3 +1282,35 @@ export interface PushDevice {
   mutedKinds: PushKind[];
   createdAt: ISODateTime;
 }
+
+/* ----------------------------------------- Centro de avisos del panel (spec 014) -- */
+
+/**
+ * Los avisos de la campana del panel: los mismos tipos que en el celular, sin el aviso de prueba (R13).
+ * Los siete del negocio y los cuatro del super admin (ver src/lib/constants/notices.ts).
+ */
+export type NoticeKind = Exclude<PushKind, "test">;
+
+/** Un aviso de la campana, ya armado para quien lo lee (con el nombre completo del paciente). */
+export interface PanelNotice {
+  id: string;
+  kind: NoticeKind;
+  /** «Nueva reserva» */
+  title: string;
+  /** «Mañana 16:00 · Limpieza · Juan Pérez» */
+  body: string;
+  /** La pantalla que abre al tocarlo: «/dashboard/calendar?date=…&appointment=…». */
+  url: string;
+  createdAt: ISODateTime;
+  /** Esta persona ya lo leyó (cada una lleva el suyo). */
+  read: boolean;
+}
+
+/** Una página de la campana o de la página «Avisos». */
+export interface PanelNoticePage {
+  notices: PanelNotice[];
+  /** Los sin leer de esta persona (todos, no sólo los de esta página). */
+  unread: number;
+  /** Para «Cargar más»: el createdAt y el id del último («2026-10-15T09:12:00.000000Z|…»); null si no hay más. */
+  nextCursor: string | null;
+}

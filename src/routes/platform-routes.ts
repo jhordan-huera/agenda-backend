@@ -6,6 +6,7 @@ import { requireSuperAdminTwoFactor } from "../http/session.ts";
 import { adminService, platformService } from "../services/admin-service.ts";
 import { appointmentPageService } from "../services/appointment-page-service.ts";
 import { categoryService } from "../services/category-service.ts";
+import { platformNoticeService } from "../services/panel-notices.ts";
 import { paymentService } from "../services/payment-service.ts";
 import { publicBookingService } from "../services/public-booking-service.ts";
 
@@ -270,4 +271,22 @@ adminRoutes.put(
 adminRoutes.put(
   "/panel-colors",
   handle((req) => adminService.updatePanelColors(req.ctx, req.body)),
+);
+// Centro de avisos (spec 014): la campana de /admin, con los cuatro avisos del super admin (cada uno
+// lleva su propio leído). Leer no va a la actividad.
+adminRoutes.get(
+  "/notices/unread",
+  handle((req) => platformNoticeService.unread(req.ctx)),
+);
+adminRoutes.get(
+  "/notices",
+  handle((req) => platformNoticeService.list(req.ctx, req.query)),
+);
+adminRoutes.post(
+  "/notices/read-all",
+  handle((req) => platformNoticeService.markAllRead(req.ctx)),
+);
+adminRoutes.post(
+  "/notices/:noticeId/read",
+  handle((req) => platformNoticeService.markRead(req.ctx, req.params.noticeId)),
 );

@@ -173,7 +173,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 `validation` (400), `unauthorized` (401), `plan_limit` (402), `forbidden` (403), `not_found` (404),
 `conflict` (409), `rate_limited` (429), `push_failed` (502, el aviso de prueba en el celular no salió) y
 `unavailable` (503). El super admin sin la verificación en dos pasos recibe `two_factor_required` (403) en
-`/admin`, `/businesses`, `/images` y `/push` (ver más abajo).
+`/admin` (también su campana), `/businesses`, `/images` y `/push` (ver más abajo).
 
 | Grupo | Rutas |
 | --- | --- |
@@ -185,6 +185,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) · `GET /public/payments/:token` (+ `receipts`) · `GET /public/appointments/:token` · `POST …/confirm` · `POST …/cancel` («Tu cita», spec 010) |
 | Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, último cron, última copia e intentos fallidos; spec 006) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
 | Avisos en el celular (spec 013) | `GET /push/config` · `PUT /push/device` · `PATCH /push/device` · `POST /push/device/off` · `POST /push/device/test` (sólo el propietario de un negocio activo y el super admin; el aparato va en el cuerpo, nunca en la URL) |
+| Centro de avisos (spec 014) | `GET /businesses/:id/notices/unread` · `GET …/notices` (`?limit&unread=1&cursor`) · `POST …/notices/:noticeId/read` · `POST …/notices/read-all` (cualquier rol del equipo; el super admin en modo soporte recibe 403) y lo mismo en `/admin/notices` (el super admin, con la verificación en dos pasos). Ninguna escribe en la actividad |
 | Estado | `GET /health` (con `push`: si la API tiene claves VAPID válidas) |
 
 ## Contraseñas, modo soporte e historia clínica
@@ -830,7 +831,8 @@ se suma.
     los 1, 5, 15 y 60 minutos, hasta 24 h. Un 404 o 410 da de baja el aparato (desinstaló la app),
     salvo en sus 2 primeros minutos: Google a veces lo responde nada más suscribirse y segundos después
     lo acepta. Cinco rechazos seguidos (400, 401, 403, 413) también lo dan de baja.
-  - Qué dice cada aviso y a quién va: `src/services/push-notices.ts`. Las rutas: `src/routes/push-routes.ts`
+  - Qué dice cada aviso (los textos salen de `describeNotice`, en `src/shared/lib/notices.ts`, los
+    mismos de la campana del panel) y a quién va: `src/services/push-notices.ts`. Las rutas: `src/routes/push-routes.ts`
     (`avisos-aparato`: 30 cambios y `aviso-prueba`: 5 avisos de prueba por conexión en 15 min).
   - El cron (`runPushJobs` en `scheduled-tasks.ts`) pone en cola las citas por cerrar, el resumen de
     las 8 y los del super admin, envía la cola (60 s como mucho) y limpia: avisos de más de 7 días y
@@ -854,6 +856,60 @@ se suma.
   pruebas (`tests/helpers/harness.ts`); nunca en la nube ni con la base de producción.
 - **iPhone:** sólo con la app instalada en la pantalla de inicio e iOS 16.4 o más reciente (regla de
   Apple); la tarjeta de Configuración lo explica.
+
+## Centro de avisos del panel
+
+Spec 014. El panel del negocio y el de /admin tienen una **campana** con el número de avisos sin
+leer («9+» con más de 9): en la computadora, junto al logo del menú lateral; en el celular, a la
+derecha de la barra de arriba. Al tocarla se ven los últimos 20, y «Ver todos» abre la página
+«Avisos» con los de los últimos 30 días. No hace falta activar nada: la campana no depende de los
+avisos en el celular (que siguen igual, sólo para el propietario y el super admin).
+
+- **Qué le llega a cada uno** (la tabla de la spec, decidida al leer con lo que la persona es hoy):
+  - **el propietario:** las reservas online (también «Por verificar»), los comprobantes, las
+    confirmaciones y las cancelaciones del paciente y las citas por cerrar de todas las agendas, el
+    resumen de las 8 del negocio y «Cita nueva en tu agenda» de la suya;
+  - **Recepción y los administradores:** las reservas, los comprobantes, las confirmaciones y las
+    cancelaciones del paciente de todas las agendas;
+  - **quien tiene una agenda** (sea cual sea su rol; el rol Profesional sólo ve por aquí): todo lo de
+    su agenda, también «Cita nueva en tu agenda» si la agendó otra persona, sus citas por cerrar y el
+    resumen de las 8 de su agenda;
+  - **el super admin**, en /admin: los negocios nuevos, las solicitudes de plan, los cambios de
+    seguridad en cuentas de super admin y los intentos fallidos. En modo soporte no ve la campana del
+    negocio (la API responde 403 «La campana es del equipo del negocio.»).
+
+  Además, quien lo provocó no lo ve, cada persona sólo ve lo de desde que entró al equipo y la cita
+  cuenta en su agenda de hoy (si se mueve a otra agenda, lo ve la profesional nueva). La regla es una
+  constante compartida con el front y la beta, `NOTICE_AUDIENCE` (`src/shared/lib/constants/notices.ts`),
+  y la consulta (`AUDIENCE_SQL` en `src/services/panel-notices.ts`) sale de ella.
+- **Privacidad:** dentro del panel el paciente va con su nombre completo («Juan Pérez», decisión del
+  dueño del 2026-10-15), porque el equipo ya lo ve así en la agenda; el celular y ntfy siguen a medias.
+  Nunca la cédula, el email, el teléfono ni nada de la historia clínica. Los avisos de citas **no
+  guardan el texto**: se arma al leer con los datos de hoy de la cita y los mismos constructores del
+  celular (`describeNotice`, `src/shared/lib/notices.ts`). Así las fechas no se quedan viejas
+  («Mañana» de ayer dice «Hoy») y al borrar un paciente (y con él sus citas) sus avisos desaparecen
+  sin dejar su nombre en ninguna parte. Los del super admin sí guardan su texto (no tienen pacientes).
+- **Actividad:** leer un aviso o «Marcar todo como leído» no va a la actividad (es una consulta de la
+  propia persona), y crear los avisos tampoco: lo que los provoca ya queda registrado.
+- **Cómo funciona:**
+  - Migración 041: `panel_notices` (un aviso por suceso, no uno por persona), `panel_notice_reads`
+    (qué leyó cada persona) y `panel_notice_state` (la hora de su «Marcar todo como leído»).
+  - Los avisos se guardan en los mismos puntos que los del celular (`push-notices.ts`), haya o no
+    aparatos, cada uno en su propio punto de guardado (`aviso_panel`): **si algo falla (p. ej. falta la
+    migración 041), la reserva, la cita, los emails y el aviso al celular siguen igual**, y el registro
+    sólo dice el tipo y el código.
+  - El cron mira ahora todos los negocios activos para las citas por cerrar y el resumen de las 8 (el
+    resumen va también por agenda, a quien la tiene si no es el propietario), guarda los del super
+    admin y borra los avisos de más de 30 días. Su línea del registro suma «avisos del panel: N
+    (borrados, más de 30 días: N)».
+  - El contador (`…/notices/unread`) es una consulta con índices y sin textos: el front lo pide al
+    abrir el panel, al volver a la pestaña, cada 3 minutos sólo con la pestaña visible y al momento
+    cuando el service worker recibe un aviso al celular en ese navegador. Unos 10 minutos de CPU de
+    Vercel al mes en una cuenta generosa; si sube, se alarga `NOTICE_REFRESH_MS`.
+- **Publicación:** la migración 041 se aplica antes del código que la usa (`npm run db:migrate`, como
+  paso aparte). Mientras el backend nuevo no está publicado, el front no muestra la campana (la ruta
+  responde 404) y nada da error. No hay variables nuevas. En local, `npm run dev:local` aplica la 041
+  al arrancar.
 
 ### Token de Gmail que sólo puede enviar (`GMAIL_TRANSPORT=api`)
 

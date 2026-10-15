@@ -30,7 +30,7 @@ Las decisiones R1–R14 están en `research.md`.
   - **Principio II:** el nombre completo, sólo en la campana del panel;
   - **Principio III:** quién recibe qué en la campana, el modo soporte y que leer no va a la
     actividad.
-- [ ] T002 Código compartido en `front/` y después `npm run sync:shared` en `back/`. Los archivos nuevos
+- [x] T002 Código compartido en `front/` y después `npm run sync:shared` en `back/`. Los archivos nuevos
   se crean vacíos antes en `back/src/shared/`.
   - **`src/types/index.ts`:**
     - `NoticeKind = Exclude<PushKind, "test">`;
@@ -53,7 +53,7 @@ Las decisiones R1–R14 están en `research.md`.
     - `limit`: de 1 a 50, 20 por defecto;
     - `unread`: `"1"` opcional;
     - `cursor`: `<ISO>|<uuid>` opcional.
-- [ ] T003 `back/db/migrations/041_panel_notices.sql`, según data-model:
+- [x] T003 `back/db/migrations/041_panel_notices.sql`, según data-model:
   - **`panel_notices`:**
     - `business_id` nulo (= plataforma) `references businesses on delete cascade`;
     - `kind` con `check` de los 11 tipos, y otro `check`: los 7 del negocio con `business_id`, los 4 de
@@ -70,12 +70,12 @@ Las decisiones R1–R14 están en `research.md`.
   - **`panel_notice_reads`:** clave `(user_id, notice_id)`, las dos en cascada.
   - **`panel_notice_state`:** `user_id` como clave, `read_all_at not null`.
   - **RLS** activado en las tres.
-- [ ] T004 [P] `back/src/db/seed.ts`: `panel_notice_reads`, `panel_notice_state` y `panel_notices` al
+- [x] T004 [P] `back/src/db/seed.ts`: `panel_notice_reads`, `panel_notice_state` y `panel_notices` al
   principio de `TABLES`.
 
 ## Fase 2: El motor (R1–R3, R7, R9)
 
-- [ ] T005 `back/src/services/panel-notices.ts` (nuevo):
+- [x] T005 `back/src/services/panel-notices.ts` (nuevo):
   - **Crear:** `addAppointmentNotice(db, { kind, businessId, appointmentId, clientId?, professionalId?,
     actorUserId?, data?, dedupeKey? })` y `addPlatformNotice(db, { kind, title, body, url, dedupeKey? })`.
     - Van en un punto de guardado propio (`aviso_panel`, o el pool para el cron).
@@ -85,12 +85,12 @@ Las decisiones R1–R14 están en `research.md`.
   - **Leer y marcar:** `countUnread`, `listNotices` (el cursor; arma los textos con `describeNotice` y el
     nombre completo), `markRead` (404 si no lo puede ver) y `markAllRead`.
   - **Borrado:** `cleanupPanelNotices` (más de 30 días).
-- [ ] T006 `back/src/services/push-notices.ts`: los textos del celular salen de `describeNotice` con
+- [x] T006 `back/src/services/push-notices.ts`: los textos del celular salen de `describeNotice` con
   `shortName`. Los textos tienen que ser idénticos a los de hoy (`push-notices` lo comprueba).
 
 ## Fase 3: Historia 1 - La campana con lo nuevo (P1)
 
-- [ ] T007 [US1] `back/src/services/push-notices.ts`: cada función añade su aviso del panel con
+- [x] T007 [US1] `back/src/services/push-notices.ts`: cada función añade su aviso del panel con
   `addAppointmentNotice`, haya o no aparatos, antes de mirar los del celular:
   - `notifyOnlineBooking` → `booking`;
   - `notifyReceipt` → `receipt`;
@@ -98,14 +98,14 @@ Las decisiones R1–R14 están en `research.md`.
   - `notifyPatientCancel` → `patient_cancel`;
   - `notifyNewAppointment` → `new_appointment`, con `actorUserId`, en cualquier agenda con usuario;
   - `notifyNewSeries` → uno solo, con `data.count` y la primera cita.
-- [ ] T008 [US1] `back/src/routes/business-routes.ts`: las rutas de `contracts/api.md`:
+- [x] T008 [US1] `back/src/routes/business-routes.ts`: las rutas de `contracts/api.md`:
   - `GET /:businessId/notices/unread`;
   - `GET /:businessId/notices`;
   - `POST /:businessId/notices/:noticeId/read`;
   - `POST /:businessId/notices/read-all`.
 
   Usan `authorize` sin permiso. En modo soporte, 403 «La campana es del equipo del negocio.».
-- [ ] T009 [US1] `front/src/lib/data/repository.ts` y `api-repository.ts`: `notices` (los cuatro
+- [x] T009 [US1] `front/src/lib/data/repository.ts` y `api-repository.ts`: `notices` (los cuatro
   métodos, del negocio y de /admin). Además:
   - `front/src/hooks/queries/query-keys.ts`;
   - `front/src/hooks/queries/use-notices.ts` (nuevo):
@@ -114,7 +114,7 @@ Las decisiones R1–R14 están en `research.md`.
     - `useNoticeList`, `useMarkNoticeRead` y `useMarkAllNoticesRead`;
     - escucha `agenda360:aviso` del service worker;
     - con un 404 no reintenta y la campana se oculta (R10).
-- [ ] T010 [US1] `front/src/features/notices/` (nuevo):
+- [x] T010 [US1] `front/src/features/notices/` (nuevo):
   - `notice-bell.tsx`: el botón, el número («9+»), la etiqueta «Avisos, N sin leer» y el `Popover`;
   - `notice-list.tsx`: los últimos 20, «Marcar todo como leído», «Ver todos» y «No tienes avisos»;
   - `notice-item.tsx`: título, texto, hace cuánto y el no leído resaltado. Al tocarlo, marca leído y
@@ -124,12 +124,12 @@ Las decisiones R1–R14 están en `research.md`.
   - `front/src/components/layout/app-shell.tsx`: la campana en la barra del celular (prop nueva);
   - `front/src/components/layout/sidebar-content.tsx`: junto al logo;
   - `front/src/components/layout/dashboard-layout.tsx`: sin campana en modo soporte.
-- [ ] T011 [P] [US1] `front/src/sw.ts`: en `push`, después de `showNotification`, manda
+- [x] T011 [P] [US1] `front/src/sw.ts`: en `push`, después de `showNotification`, manda
   `{ type: "agenda360:aviso" }` a las ventanas abiertas (R11).
 
 ## Fase 4: Historia 2 - Cada uno ve lo suyo (P1)
 
-- [ ] T012 [US2] `back/src/services/push-notices.ts`:
+- [x] T012 [US2] `back/src/services/push-notices.ts`:
   - `queueUnclosedNotices` y `queueEveningSummaries` recorren todos los negocios activos (R5):
     - el aviso del panel sale siempre; el del celular, sólo con aparatos;
     - el resumen sale una vez para el negocio y una vez por cada agenda con usuario que no sea el
@@ -140,7 +140,7 @@ Las decisiones R1–R14 están en `research.md`.
 
 ## Fase 5: Historia 3 - La página «Avisos» (P2)
 
-- [ ] T013 [US3] `front/src/pages/dashboard/notices-page.tsx` (nuevo):
+- [x] T013 [US3] `front/src/pages/dashboard/notices-page.tsx` (nuevo):
   - agrupados por día («Hoy», «Ayer», «Mar 13 oct»);
   - «Sólo los no leídos», «Marcar todo como leído» y «Cargar más».
 
@@ -148,13 +148,13 @@ Las decisiones R1–R14 están en `research.md`.
 
 ## Fase 6: Historia 4 - El super admin tiene la suya (P2)
 
-- [ ] T014 [US4] `back/src/services/push-notices.ts`: `addPlatformNotice` en:
+- [x] T014 [US4] `back/src/services/push-notices.ts`: `addPlatformNotice` en:
   - `notifyNewBusiness` y `notifyPlanRequest`;
   - `queueAccountSecurityNotices`, con la clave `cuenta:<registro>`;
   - `queueLoginAttackNotice`, con la clave `intentos:<cuenta>:<hora>`.
 
   Siempre, haya o no aparatos.
-- [ ] T015 [US4] `back/src/routes/platform-routes.ts`: `/admin/notices` (las cuatro rutas, con la
+- [x] T015 [US4] `back/src/routes/platform-routes.ts`: `/admin/notices` (las cuatro rutas, con la
   verificación en dos pasos). En el front:
   - `front/src/components/layout/admin-sidebar.tsx` y `admin-layout.tsx`: la campana;
   - `front/src/pages/admin/admin-notices-page.tsx` (nuevo);
@@ -162,7 +162,7 @@ Las decisiones R1–R14 están en `research.md`.
 
 ## Fase 7: Pruebas del backend
 
-- [ ] T016 `back/tests/panel-notices.test.ts` (nuevo): los nueve puntos del quickstart §1.
+- [x] T016 `back/tests/panel-notices.test.ts` (nuevo): los nueve puntos del quickstart §1.
   - Los cuatro roles en la Clínica Dental Sonrisa, más un administrador creado por la prueba y una
     agenda sin usuario, comparados con `NOTICE_AUDIENCE`.
   - El cron con la hora simulada.
@@ -173,16 +173,16 @@ Las decisiones R1–R14 están en `research.md`.
     - la cita movida, el paciente borrado, los 30 días y el negocio suspendido.
   - RF-011, con la tabla renombrada.
   - /admin y sin actividad.
-- [ ] T017 [P] `back/tests/push-notices.test.ts` (sigue igual: los textos del celular no cambian) y
+- [x] T017 [P] `back/tests/push-notices.test.ts` (sigue igual: los textos del celular no cambian) y
   `back/tests/cron.test.mjs` (la expresión regular de la línea del registro, con «avisos del panel»).
 
 ## Fase 8: Comprobación del back y el front
 
-- [ ] T018 `back/`: `npm run typecheck` y `env -u DATABASE_URL npm test`. `front/`: `npm run build` y
+- [x] T018 `back/`: `npm run typecheck` y `env -u DATABASE_URL npm test`. `front/`: `npm run build` y
   `npm run lint`.
-- [ ] T019 Recorrido con Playwright del quickstart §2: la versión compilada, en escritorio y a 390 px,
+- [x] T019 Recorrido con Playwright del quickstart §2: la versión compilada, en escritorio y a 390 px,
   con la API en el 4180 y el preview en el 5199. Se detienen por PID.
-- [ ] T020 [P] READMEs del backend y del front: la campana.
+- [x] T020 [P] READMEs del backend y del front: la campana.
 
 ## Fase 9: La beta (después del back y el front)
 

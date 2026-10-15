@@ -25,6 +25,7 @@ import { deleteStalePendingReceipts, purgeOldReceipts } from "../services/paymen
 import { processEmailQueue, scrubEmails, type EmailQueueReport } from "../services/mailer.ts";
 import { maskEmail, shortName } from "../services/masking.ts";
 import { runDailyAgendaJob, runReminderJob } from "../services/notifications.ts";
+import { cleanupPanelNotices } from "../services/panel-notices.ts";
 import { runPushJobs, type PushReport } from "../services/push-notices.ts";
 import type { EmailType } from "../shared/types/index.ts";
 
@@ -135,6 +136,12 @@ export interface ScheduledTasksReport {
   security: LoginAlert[];
   /** Avisos en el celular (spec 013): los que puso en cola esta pasada y el envío de toda la cola. */
   push?: PushReport;
+  /**
+   * Centro de avisos del panel (spec 014): los que guardó esta pasada en las campanas (citas por cerrar,
+   * resumen de las 8 y los del super admin) y los de más de 30 días que borró (null: no se pudo, p. ej.
+   * sin la migración 041).
+   */
+  panelNotices?: { created: number; purged: number | null };
   /** Registros de auditoría borrados por antigüedad (purge_audit_logs: sesiones 90 días, acciones 5 meses, historia clínica 5 años). */
   auditPurged: number;
   /** Emails con más de EMAIL_CONTENT_DAYS días a los que se les borró el contenido. */
@@ -286,6 +293,11 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     accountChanges: accountChanges.changes,
     loginAttacks: security,
   });
+  // Las campanas del panel (spec 014) guardan 30 días: si falla el borrado, el cron sigue.
+  const panelPurged = await cleanupPanelNotices().catch((error: unknown) => {
+    console.error(`[avisos] No se pudieron borrar los avisos del panel de más de 30 días (${(error as { code?: string })?.code ?? "error"}).`);
+    return null;
+  });
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
     reminderFailures: reminders.failures,
@@ -316,6 +328,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     pending: totals?.pending ?? 0,
     security,
     push,
+    panelNotices: { created: push.panel ?? 0, purged: panelPurged },
     auditPurged: purged?.deleted ?? 0,
     emailContentPurged,
     receiptsPurged,

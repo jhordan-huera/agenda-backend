@@ -73,6 +73,12 @@ sql(`insert into appointments (business_id, client_id, service_id, professional_
             (now() at time zone '${noonZone}')::date, '14:00', '14:30', 'confirmed', 0, now() - interval '3 days'
        from businesses b where b.slug = 'jhordan'`);
 
+// Un aviso de la campana del panel de hace 31 días (spec 014): el cron lo borra.
+const oldPanelNotice = sql(
+  `insert into panel_notices (business_id, kind, data, created_at)
+   select id, 'evening_summary', '{"date": "2026-01-01", "count": 1}', now() - interval '31 days' from businesses where slug = 'jhordan' returning id`,
+).split("\n")[0];
+
 console.log("Cron directo contra la base");
 const queuedBefore = Number(sql("select count(*) from notifications where status = 'queued'"));
 const remindersBefore = Number(sql("select count(*) from notifications where type = 'appointment_reminder'"));
@@ -106,6 +112,14 @@ ok(
     first.report.push?.sent === 0,
   "la línea suma los avisos en la app (spec 013): sin claves VAPID dice que no los envía",
   run.output.slice(-300),
+);
+ok(
+  / · avisos del panel: \d+ \(borrados, más de 30 días: \d+\) · avisos en la app: /.test(run.output) &&
+    first.report.panelNotices?.created === Number(sql("select count(*) from panel_notices")) &&
+    first.report.panelNotices?.purged >= 1 &&
+    sql(`select count(*) from panel_notices where id = '${oldPanelNotice}'`) === "0",
+  "y los de la campana del panel (spec 014): cuántos guardó y que borra los de más de 30 días",
+  [first.report.panelNotices, run.output.slice(-400)],
 );
 run = await runScript();
 let second = lastRun();
