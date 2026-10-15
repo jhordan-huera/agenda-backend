@@ -1244,3 +1244,40 @@ export interface PublicAppointmentResult {
   /** Ya estaba confirmada (o cancelada, en /cancel): no se hizo nada. */
   already: boolean;
 }
+
+/* ------------------------------------------- Avisos en el celular (spec 013) -- */
+
+/**
+ * Tipos de aviso en el celular (Web Push). Los seis primeros son del propietario del negocio y los
+ * cuatro siguientes, del super admin (ver src/lib/constants/push.ts). `test` es el aviso de prueba:
+ * siempre sale y no se puede apagar.
+ */
+export type PushKind =
+  | "booking"
+  | "receipt"
+  | "patient_cancel"
+  | "new_appointment"
+  | "unclosed"
+  | "evening_summary"
+  | "new_business"
+  | "plan_request"
+  | "account_security"
+  | "login_attack"
+  | "test";
+
+/** Lo que necesita el front antes de activar los avisos (GET /api/push/config). */
+export interface PushConfig {
+  /** false: la API no tiene las claves del servicio de avisos (no se ofrece activarlos). */
+  available: boolean;
+  /** Clave pública VAPID en base64url (87 caracteres); null si no están disponibles. */
+  publicKey: string | null;
+  /** Los tipos del rol, en el orden de la tarjeta. */
+  kinds: PushKind[];
+}
+
+/** El aparato (este navegador) con los avisos activados. La dirección y las claves nunca salen de la API. */
+export interface PushDevice {
+  /** Los tipos apagados en este aparato: los demás llegan (también los que se añadan en el futuro). */
+  mutedKinds: PushKind[];
+  createdAt: ISODateTime;
+}

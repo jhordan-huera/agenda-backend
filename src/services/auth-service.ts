@@ -11,6 +11,7 @@ import { hashPassword, verifyPassword } from "./accounts.ts";
 import { parseInput, requireUser, type RequestContext } from "./context.ts";
 import { queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
+import { pausePushDevices } from "./push-device-service.ts";
 import { queueAccountSecurityEmail } from "./account-alerts.ts";
 import {
   isLockedOut,
@@ -356,6 +357,8 @@ export const authService = {
 
   async signOut(ctx: RequestContext, connection: ClientConnection): Promise<void> {
     if (!ctx.sessionId) return;
+    // Antes de borrar la sesión (que les quitaría el enlace): sus aparatos dejan de recibir avisos (spec 013).
+    await pausePushDevices(ctx.sessionId);
     await pool.query("delete from sessions where id = $1", [ctx.sessionId]);
     if (ctx.user) await logSessionEvent(ctx.user, { action: "session.logout", summary: "Cerró sesión" }, connection);
   },

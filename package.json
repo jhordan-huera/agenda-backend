@@ -22,6 +22,7 @@
     "backup": "node --env-file-if-exists=.env scripts/backup.ts",
     "backup:decrypt": "node --env-file-if-exists=.env scripts/decrypt-backup.ts",
     "sync:shared": "node scripts/sync-shared.ts",
+    "push:keys": "node scripts/push-keys.ts",
     "lambda:package": "node scripts/package-lambda.ts"
   },
   "dependencies": {

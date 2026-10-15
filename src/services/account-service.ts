@@ -47,6 +47,7 @@ import { authorize, parseInput, requireUser, type RequestContext } from "./conte
 import { assertRoleAllowed, countUsers, getPlanUsage } from "./plan-limits.ts";
 import { appOrigin, queueEmail } from "./notifications.ts";
 import { listProfessionals } from "./professional-service.ts";
+import { notifyNewBusiness, notifyPlanRequest } from "./push-notices.ts";
 import { logSessionEvent, recordFailedSessionCheck, startSessionCheck, type ClientConnection } from "./session-security.ts";
 
 const ROLE_ORDER: Record<BusinessRole, number> = { owner: 0, admin: 1, professional: 2, staff: 3 };
@@ -226,6 +227,8 @@ export const businessService = {
         entityId: business.id,
         summary: `Creó el negocio ${business.name}`,
       });
+      // «Negocio nuevo» en el celular de los super admin (spec 013): sólo el alta del onboarding.
+      await notifyNewBusiness(db, business);
       await logAudit(db, {
         businessId: business.id,
         actor,
@@ -526,6 +529,14 @@ export const subscriptionService = {
         entityType: "subscription",
         entityId: request.id,
         summary: `Solicitó cambiar el plan de ${current.name} a ${requested.name}`,
+      });
+      // Aviso en el celular de los super admin (spec 013), además de su email.
+      await notifyPlanRequest(db, {
+        id: request.id,
+        businessId,
+        businessName: business.name,
+        currentPlanName: current.name,
+        requestedPlanName: requested.name,
       });
       return request;
     });

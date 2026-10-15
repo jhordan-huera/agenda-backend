@@ -52,6 +52,7 @@ import {
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
 import { notifySeriesCancelled, notifySeriesCreated } from "./notifications.ts";
 import { planOf } from "./plan-limits.ts";
+import { notifyNewSeries } from "./push-notices.ts";
 
 /**
  * Citas que se repiten (spec 011): desde «Nueva cita» del panel se agenda de una vez una serie («cada
@@ -272,6 +273,8 @@ export const appointmentSeriesService = {
       }
 
       await notifySeriesCreated(db, created, actor.userId);
+      // «Citas nuevas en tu agenda» en el celular del propietario: un solo aviso por serie (spec 013).
+      await notifyNewSeries(db, created, actor.userId);
       const names = joinNames(await clientNamesOf(db, appointmentClientIds(created[0])));
       const missing = data.repeat.count - created.length;
       await logAudit(db, {

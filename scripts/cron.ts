@@ -11,7 +11,9 @@
  * GMAIL_REFRESH_TOKEN, GMAIL_FROM_NAME, FRONTEND_URL (enlaces de los emails), NODE_ENV=production
  * (si no, los emails se redirigen a la cuenta de Gmail), NTFY_TOPIC y, opcionales, NTFY_SERVER
  * (por defecto https://ntfy.sh), APP_URL (enlace del aviso) y SUPABASE_URL y
- * SUPABASE_SERVICE_ROLE_KEY (sin ellas no se borran los comprobantes de más de 3 meses).
+ * SUPABASE_SERVICE_ROLE_KEY (sin ellas no se borran los comprobantes de más de 3 meses). Avisos en el
+ * celular (spec 013): VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY (sin ellas no se envían: quedan en cola y
+ * caducan) y, opcional, VAPID_SUBJECT.
  *
  * Prueba local: node --env-file=.env scripts/cron.ts
  */
@@ -306,6 +308,30 @@ export function buildSecurityNotice(report: ScheduledTasksReport): Notice | null
   };
 }
 
+/**
+ * Avisos en el celular (spec 013): si en esta pasada fallaron avisos y no salió ninguno (p. ej. las
+ * claves VAPID mal puestas), ntfy lo dice. Sólo el servicio y el código de respuesta, nunca un aviso.
+ */
+export function buildPushNotice(report: ScheduledTasksReport): Notice | null {
+  const push = report.push;
+  if (!push || push.failed === 0 || push.sent > 0) return null;
+  const detail = push.errors.length > 0 ? ` (servicio: ${push.errors.join("; ")})` : "";
+  return {
+    title: "Agenda360: los avisos en la app no salen",
+    message: `Fallaron ${plural(push.failed, "aviso", "avisos")} en esta pasada${detail}. Revisa las claves VAPID en Vercel, Lambda y GitHub.`,
+    priority: 4,
+    tags: ["warning"],
+    click: "/admin/activity",
+  };
+}
+
+/** "· avisos en la app: enviados N · fallidos N · aparatos dados de baja N" (sólo cifras: el registro es público). */
+export function describePushLine(report: ScheduledTasksReport, problem: string | null = null): string {
+  if (!report.push) return "";
+  const { sent, failed, removedDevices } = report.push;
+  return ` · avisos en la app: enviados ${sent} · fallidos ${failed} · aparatos dados de baja ${removedDevices}${problem ? ` (${problem})` : ""}`;
+}
+
 /** El cron no pudo trabajar: aviso urgente y el job de GitHub termina con error. */
 async function fail(reason: string): Promise<void> {
   await notify({
@@ -324,9 +350,11 @@ async function main(): Promise<void> {
   const { config } = await import("../src/config.ts");
   const { pool } = await import("../src/db/pool.ts");
   const { disableImmediateDelivery, scrubEmails } = await import("../src/services/mailer.ts");
+  const { disableImmediatePushDelivery } = await import("../src/services/push-delivery.ts");
   const { runScheduledTasks } = await import("../src/jobs/scheduled-tasks.ts");
-  // Este proceso envía él mismo, al final, lo que pone en cola.
+  // Este proceso envía él mismo, al final, lo que pone en cola (emails y avisos en el celular).
   disableImmediateDelivery();
+  disableImmediatePushDelivery();
   if (!config.isProduction) console.warn(`NODE_ENV=${config.env}: los emails se redirigen a ${config.emailRedirectTo ?? "(nadie)"}.`);
 
   try {
@@ -356,13 +384,15 @@ async function main(): Promise<void> {
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +
         `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ` +
         `emails sin contenido (más de 90 días): ${report.emailContentPurged} · ` +
-        `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"} · ${report.durationMs} ms`,
+        `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"}` +
+        `${describePushLine(report, config.webPushProblem ? `sin envío: ${config.webPushProblem}` : null)} · ${report.durationMs} ms`,
     );
     const notices = [
       ...buildBookingNotices(report),
       buildNotice(report, { gmailConfigured: Boolean(config.gmail) }),
       buildSecurityNotice(report),
       ...buildAccountNotices(report),
+      buildPushNotice(report),
     ].filter((notice) => notice !== null);
     for (const notice of notices) await notify(notice);
     if (notices.length === 0) console.info("Sin correos, errores ni alertas: no se envía aviso.");

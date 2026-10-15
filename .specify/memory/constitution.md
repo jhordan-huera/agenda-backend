@@ -20,8 +20,10 @@ Agenda360 guarda datos de salud (historia clínica, citas, contacto de pacientes
 
 - Los repositorios y los registros de GitHub Actions son públicos: nunca se imprimen emails,
   teléfonos, cédulas ni nombres completos de pacientes en logs, títulos de avisos ni commits.
-- Los avisos por ntfy llevan al paciente sólo a medias (`masking.ts`: "Juan P.", "ju***@gmail.com",
-  "***5555", sólo los últimos 4 dígitos del teléfono desde el 2026-10-14).
+- Los avisos por ntfy y en el celular llevan al paciente sólo a medias (`masking.ts`: "Juan P.",
+  "ju***@gmail.com", "***5555", sólo los últimos 4 dígitos del teléfono desde el 2026-10-14). Los
+  del celular sólo llevan el nombre a medias: nunca su contacto, su cédula ni nada de la historia
+  clínica.
 - La analítica (Vercel Analytics / Speed Insights) recibe rutas sin identificadores ni tokens y sin
   parámetros.
 - Las páginas públicas (reservas, pago y «Tu cita») no exponen datos internos del negocio ni de otros pacientes.
@@ -94,6 +96,18 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   importados no reciben emails y quedan con origen «importado». El archivo se lee en el navegador y
   no se guarda, y lo que lee el Excel se carga sólo en esa pantalla. La actividad registra una
   entrada por importación y ntfy avisa una vez, con la cifra y sin nombres (2026-10-14).
+- Los avisos en el celular (Web Push estándar, sin tiendas de aplicaciones) son sólo para el
+  propietario de cada negocio y para los super admin; Recepción, los administradores y el rol
+  Profesional no los reciben, y el super admin en modo soporte no recibe los del negocio. Al entrar
+  al panel se ofrecen una vez por aparato («Ahora no» lo deja 7 días) y vienen con todos los tipos
+  encendidos; en Configuración se apaga cada tipo o se desactivan en ese aparato, y cerrar sesión
+  los pausa en él. El propietario recibe al momento las reservas online (también «Por verificar»),
+  los comprobantes de pago, las cancelaciones del paciente desde su email y las citas nuevas en su
+  agenda que agendó otra persona (una sola por serie); desde el cron, cada cita que terminó hace 30
+  minutos y sigue Pendiente o Confirmada y, a las 8 de la noche en la hora del negocio, el resumen
+  de las de hoy sin cerrar. El super admin recibe al momento los negocios nuevos y las solicitudes
+  de plan, y desde el cron los cambios de seguridad en cuentas de super admin y los intentos
+  fallidos, además de ntfy. Si los avisos fallan, la reserva y los emails siguen igual (2026-10-14).
 - En la portada no hay testimonios, cifras ni precios inventados.
 
 ### IV. Se comprueba en local, nunca en producción
@@ -143,6 +157,10 @@ Tipos, validaciones, constantes y plantillas de email se editan sólo en agenda-
   siempre lo dice como paso aparte.
 - Emails por Gmail con cola en la tabla `notifications`; los secretos (contraseñas) no quedan en el
   registro de emails.
+- Avisos en el celular con Web Push y claves VAPID propias (`VAPID_PUBLIC_KEY`,
+  `VAPID_PRIVATE_KEY`) en Vercel, Lambda y los secretos de GitHub. Sin ellas la API arranca igual y
+  no hay avisos. Sólo se envían a los servicios de avisos de los navegadores (Google, Apple, Mozilla
+  y Microsoft).
 - Seguridad vigente: bloqueo de login por intentos (contado antes de comprobar, exacto también con
   intentos simultáneos), CAPTCHA (Turnstile) en reservas y registro, registros de auditoría no
   editables, cabeceras y CSP en `vercel.json`, la IP del proxy firmada con caducidad y el secreto
@@ -193,4 +211,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.7.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-14
+**Versión**: 1.8.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-14

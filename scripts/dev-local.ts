@@ -15,10 +15,11 @@
  * cola y se ven en el historial de emails del panel.
  */
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
+import { generateVapidKeys } from "../src/services/web-push.ts";
 import { findPostgresBin } from "./postgres-bin.ts";
 
 const ROOT = new URL("..", import.meta.url).pathname;
@@ -90,6 +91,14 @@ function stopDatabase(): void {
   }
 }
 
+/**
+ * Avisos en el celular (spec 013): un par de claves VAPID de desarrollo, creado la primera vez en
+ * .local-db/vapid.json (fuera de git). Sólo sirve con esta base local: nunca las de producción.
+ */
+const VAPID_FILE = join(DIR, "vapid.json");
+if (!existsSync(VAPID_FILE)) writeFileSync(VAPID_FILE, JSON.stringify(generateVapidKeys(), null, 2), { mode: 0o600 });
+const vapid = JSON.parse(readFileSync(VAPID_FILE, "utf8")) as { publicKey: string; privateKey: string };
+
 const env: NodeJS.ProcessEnv = {
   PATH: process.env.PATH,
   HOME: process.env.HOME,
@@ -101,6 +110,8 @@ const env: NodeJS.ProcessEnv = {
   FRONTEND_URL: "http://localhost:5173",
   LOCAL_STORAGE_DIR: join(DIR, "archivos"),
   REMINDER_JOB_INTERVAL_MINUTES: reminders ? "5" : "0",
+  VAPID_PUBLIC_KEY: vapid.publicKey,
+  VAPID_PRIVATE_KEY: vapid.privateKey,
   ...(sendEmails ? { ...gmail, EMAIL_REDIRECT_TO: testInbox } : {}),
 };
 const node = (args: string[]) => execFileSync(process.execPath, args, { cwd: ROOT, env, stdio: "inherit" });

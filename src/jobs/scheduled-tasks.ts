@@ -25,6 +25,7 @@ import { deleteStalePendingReceipts, purgeOldReceipts } from "../services/paymen
 import { processEmailQueue, scrubEmails, type EmailQueueReport } from "../services/mailer.ts";
 import { maskEmail, shortName } from "../services/masking.ts";
 import { runDailyAgendaJob, runReminderJob } from "../services/notifications.ts";
+import { runPushJobs, type PushReport } from "../services/push-notices.ts";
 import type { EmailType } from "../shared/types/index.ts";
 
 /** Emails puestos en cola y negocios en los que falló el trabajo (se siguió con los demás). */
@@ -132,6 +133,8 @@ export interface ScheduledTasksReport {
   pending: number;
   /** Cuentas con muchos intentos fallidos de inicio de sesión (ver findLoginAttacks). */
   security: LoginAlert[];
+  /** Avisos en el celular (spec 013): los que puso en cola esta pasada y el envío de toda la cola. */
+  push?: PushReport;
   /** Registros de auditoría borrados por antigüedad (purge_audit_logs: sesiones 90 días, acciones 5 meses, historia clínica 5 años). */
   auditPurged: number;
   /** Emails con más de EMAIL_CONTENT_DAYS días a los que se les borró el contenido. */
@@ -275,6 +278,14 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const statusChanges = await findStatusChanges(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const accountChanges = await findAccountChanges(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const clientImports = await findClientImports(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
+  // Avisos en el celular (spec 013), después de los de ntfy: citas por cerrar, el resumen de las 8 y los
+  // del super admin; después, el envío de la cola y su limpieza.
+  const push = await runPushJobs({
+    since: previous?.ranAt ?? null,
+    until: totals?.at ?? new Date().toISOString(),
+    accountChanges: accountChanges.changes,
+    loginAttacks: security,
+  });
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
     reminderFailures: reminders.failures,
@@ -304,6 +315,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     since: previous?.ranAt ?? null,
     pending: totals?.pending ?? 0,
     security,
+    push,
     auditPurged: purged?.deleted ?? 0,
     emailContentPurged,
     receiptsPurged,

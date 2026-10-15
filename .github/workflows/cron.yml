@@ -58,6 +58,11 @@ jobs:
           # Para borrar los comprobantes de pago de más de 3 meses (sin ellas, se omite).
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Avisos en el celular (spec 013): las mismas claves que en Vercel y Lambda (npm run push:keys).
+          # Sin ellas el cron no los envía: quedan en cola y caducan a las 24 h.
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
         run: node scripts/cron.ts
 
       # Señal de vida para healthchecks.io: si deja de llegar, avisa que el cron se detuvo.

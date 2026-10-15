@@ -134,6 +134,7 @@ Publica primero la API y después agenda-front si el cambio toca a los dos.
 | `npm run db:create-admin -- <email> [--nombre X] [--apellido Y]` | Crea el super admin (pide la contraseña sin mostrarla; mínimo 8 caracteres) |
 | `npm run db:move-images` | Pasa al bucket `imagenes` los logos y fotos antiguos guardados dentro de la base (data URL); se puede repetir |
 | `npm run sync:shared` | Copia de agenda-front el código compartido (ver abajo) |
+| `npm run push:keys` | Crea el par de claves VAPID de los avisos en el celular y muestra las dos líneas para copiarlas (ver "Avisos en el celular") |
 | `npm run lambda:package` | Prepara `dist/lambda.zip` para AWS Lambda (ver "Backend en AWS Lambda") |
 | `npm run backup:decrypt -- <archivo>` | Descifra una copia de seguridad en `~/Agenda360-copias` (ver "Copias de seguridad") |
 
@@ -170,8 +171,9 @@ disponibilidad, plantillas de email, planes y permisos), para que frontend y API
 Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 `{ "error": { "code": "conflict", "message": "Texto para el usuario" } }` con los códigos
 `validation` (400), `unauthorized` (401), `plan_limit` (402), `forbidden` (403), `not_found` (404),
-`conflict` (409), `rate_limited` (429) y `unavailable` (503). El super admin sin la verificación en dos
-pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` (ver más abajo).
+`conflict` (409), `rate_limited` (429), `push_failed` (502, el aviso de prueba en el celular no salió) y
+`unavailable` (503). El super admin sin la verificación en dos pasos recibe `two_factor_required` (403) en
+`/admin`, `/businesses`, `/images` y `/push` (ver más abajo).
 
 | Grupo | Rutas |
 | --- | --- |
@@ -182,7 +184,8 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
 | Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) · `GET /public/payments/:token` (+ `receipts`) · `GET /public/appointments/:token` · `POST …/confirm` · `POST …/cancel` («Tu cita», spec 010) |
 | Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, último cron, última copia e intentos fallidos; spec 006) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
-| Estado | `GET /health` |
+| Avisos en el celular (spec 013) | `GET /push/config` · `PUT /push/device` · `PATCH /push/device` · `POST /push/device/off` · `POST /push/device/test` (sólo el propietario de un negocio activo y el super admin; el aparato va en el cuerpo, nunca en la URL) |
+| Estado | `GET /health` (con `push`: si la API tiene claves VAPID válidas) |
 
 ## Contraseñas, modo soporte e historia clínica
 
@@ -783,6 +786,70 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
 - Gmail gratuito permite unos 500 emails al día; para más volumen conviene un proveedor
   transaccional (Resend, SES…): sólo cambia `mailer.ts`.
 
+## Avisos en el celular
+
+Spec 013. El propietario de cada negocio y los super admin reciben avisos en el celular (o en la
+computadora) desde la app instalada, como cualquier aplicación, con los avisos estándar de los
+navegadores (Web Push): sin Play Store, App Store ni servicios de pago. Los emails no cambian: el aviso
+se suma.
+
+- **Qué avisa:**
+  - **al propietario, al momento:** cada reserva online (con «· Por verificar» si lo está), cada
+    comprobante de pago, cada cancelación del paciente desde su email y cada cita nueva en su agenda
+    que agendó otra persona (Recepción, un administrador o el super admin en modo soporte);
+  - **al propietario, desde el cron:** cada cita que terminó hace 30 minutos y sigue Pendiente o
+    Confirmada («Cita por cerrar») y, a las 8 de la noche en la hora del negocio, «Tienes 3 citas de
+    hoy sin cerrar» si queda alguna;
+  - **al super admin:** al momento los negocios nuevos (el alta del registro, no los que crea él) y las
+    solicitudes de plan; desde el cron los cambios de seguridad en cuentas de super admin y los
+    intentos fallidos (además de ntfy, que no cambia).
+- **Privacidad:** el paciente siempre a medias («Juan P.», `masking.ts`), nunca su cédula, email,
+  teléfono ni nada de la historia clínica. El aviso viaja cifrado: Google, Apple, Mozilla o Microsoft
+  lo transportan pero no lo pueden leer. Los registros (también los públicos del cron) sólo tienen
+  cifras y el servicio (`fcm.googleapis.com, 403`), nunca títulos, textos ni direcciones de aparatos.
+- **Cómo funciona:**
+  - `src/services/web-push.ts`: el estándar con `node:crypto`, **sin librería** — cifrado
+    `aes128gcm` (RFC 8291, comprobado byte a byte con el ejemplo de la RFC en
+    `tests/web-push.test.ts`), firma VAPID (JWT ES256, RFC 8292) y el `POST` al servicio de avisos
+    (RFC 8030). Sólo envía a los servicios de los navegadores (`fcm.googleapis.com` y
+    `jmt<N>.google.com` de Chrome, `updates.push.services.mozilla.com`, `web.push.apple.com` y
+    `*.notify.windows.com`); cualquier otra dirección se rechaza al guardarla y al enviar.
+  - `push_subscriptions` (migración 040): un aparato por navegador, del usuario, con los tipos que
+    no quiere. El negocio se deduce al enviar (`businesses.owner_id`): cambiar el propietario deja de
+    avisar al anterior. «Cerrar sesión» pausa los aparatos de esa sesión; al volver a entrar, la app
+    los reanuda sola. Hasta 10 por persona.
+  - `push_messages`: la cola, como la de los emails. Quien provoca el aviso lo pone en cola dentro de
+    su transacción, en un punto de guardado: **si algo falla (p. ej. falta la migración), la reserva y
+    sus emails siguen igual**. Sale al momento, 1 s después y sin retrasar la respuesta (en Vercel con
+    `waitUntil`; en Lambda, `flushPushDelivery` al responder). Lo que no salió lo reintenta el cron a
+    los 1, 5, 15 y 60 minutos, hasta 24 h. Un 404 o 410 da de baja el aparato (desinstaló la app),
+    salvo en sus 2 primeros minutos: Google a veces lo responde nada más suscribirse y segundos después
+    lo acepta. Cinco rechazos seguidos (400, 401, 403, 413) también lo dan de baja.
+  - Qué dice cada aviso y a quién va: `src/services/push-notices.ts`. Las rutas: `src/routes/push-routes.ts`
+    (`avisos-aparato`: 30 cambios y `aviso-prueba`: 5 avisos de prueba por conexión en 15 min).
+  - El cron (`runPushJobs` en `scheduled-tasks.ts`) pone en cola las citas por cerrar, el resumen de
+    las 8 y los del super admin, envía la cola (60 s como mucho) y limpia: avisos de más de 7 días y
+    aparatos en pausa hace más de 90. Su registro suma «avisos en la app: enviados N · fallidos N ·
+    aparatos dados de baja N»; si fallan avisos y no sale ninguno, ntfy avisa con «Agenda360: los
+    avisos en la app no salen».
+  - **Enganche para las series de la spec 011:** `notifyNewSeries(db, citas, actor.userId)` avisa una
+    sola vez por serie («Citas nuevas en tu agenda · 8 citas desde el mar 20 oct 10:00 · Juan P.»).
+- **Las claves (VAPID):** `npm run push:keys` crea el par y muestra `VAPID_PUBLIC_KEY=…` y
+  `VAPID_PRIVATE_KEY=…`. Van en Vercel, en Lambda y en los secretos de GitHub (ver "Despliegue en
+  Vercel"); `VAPID_SUBJECT` (el contacto, `mailto:` o `https:`) es opcional. **Sin claves, o con una
+  mal copiada, la API arranca igual** y no hay avisos: `/api/health` dice `"push": false` y el
+  registro, «Avisos en el celular desactivados: falta VAPID_PRIVATE_KEY.» (nunca un valor). Guárdalas
+  como `TWO_FACTOR_KEY`: si se pierden o se cambian, cada aparato tiene que volver a activar los avisos
+  (en Chrome, Edge y Firefox se arregla solo al abrir el panel; en el iPhone hace falta un toque).
+- **En local:** `npm run dev:local` crea un par de desarrollo en `.local-db/vapid.json` (fuera de git)
+  y las pruebas, el suyo. Los avisos sólo se prueban con la versión compilada del front (`npm run
+  build` y `npx vite preview`): en `npm run dev` no hay service worker. Chrome los recibe de verdad
+  en `http://localhost` (el servicio de Google funciona también en local). Con la base local, la API
+  acepta además direcciones `http://127.0.0.1:<puerto>`, para el servicio de avisos falso de las
+  pruebas (`tests/helpers/harness.ts`); nunca en la nube ni con la base de producción.
+- **iPhone:** sólo con la app instalada en la pantalla de inicio e iOS 16.4 o más reciente (regla de
+  Apple); la tarjeta de Configuración lo explica.
+
 ### Token de Gmail que sólo puede enviar (`GMAIL_TRANSPORT=api`)
 
 Por SMTP (lo de siempre, `GMAIL_TRANSPORT` vacía o `smtp`) Google exige el permiso
@@ -909,6 +976,8 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    | `THIRD_PARTY_EMAILS_PER_DAY` | Opcional: tope de emails a pacientes y bienvenidas en 24 h (por defecto 400; súbelo con Google Workspace) |
    | `PUBLIC_EMAILS_PER_DAY` | Opcional: de ésos, los que provocan las reservas online y los registros (por defecto 150) |
    | `NTFY_TOPIC` | Opcional: el del cron, para que la API avise al llegar al tope de emails |
+   | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Avisos en el celular (`npm run push:keys`, ver "Avisos en el celular"). Sin ellas la API arranca igual, sin avisos (`/api/health` dice `"push": false`). Las mismas en Lambda y en los secretos de GitHub |
+   | `VAPID_SUBJECT` | Opcional: el contacto para los servicios de avisos (`mailto:` o `https:`); por defecto `APP_URL` si es https o el email de `GMAIL_USER` |
 
 3. **Proyecto del frontend** (agenda-front): variables `API_URL` (URL de este proyecto, p. ej.
    `https://agenda-backend.vercel.app`) y `PROXY_SECRET`.
@@ -917,18 +986,21 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    - Secrets: `DATABASE_URL` (la misma de Vercel), `GMAIL_USER`, `GMAIL_CLIENT_ID`,
      `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `NTFY_TOPIC` (canal de ntfy al que te suscribes en
      el celular), `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` (las de Vercel: para borrar los
-     comprobantes de pago de más de 3 meses; sin ellas se omite) y, opcional, `HEALTHCHECK_URL`
-     (healthchecks.io avisa si el cron deja de ejecutarse).
+     comprobantes de pago de más de 3 meses; sin ellas se omite), `VAPID_PUBLIC_KEY` y
+     `VAPID_PRIVATE_KEY` (las de Vercel: sin ellas el cron no envía los avisos en el celular, que
+     caducan en cola) y, opcional, `HEALTHCHECK_URL` (healthchecks.io avisa si el cron deja de
+     ejecutarse).
    - Variables: `APP_URL` (la del frontend: enlaces de los emails y del aviso) y, opcionales,
-     `GMAIL_FROM_NAME` (por defecto "Agenda360"), `GMAIL_TRANSPORT` (`api`, ver "Emails") y
-     `NTFY_SERVER`.
+     `GMAIL_FROM_NAME` (por defecto "Agenda360"), `GMAIL_TRANSPORT` (`api`, ver "Emails"),
+     `NTFY_SERVER` y `VAPID_SUBJECT`.
    - Copias de seguridad: secretos `BACKUP_PASSPHRASE` (el de `.env`) y `BACKUP_EMAIL` (quién recibe
      las copias; secreto y no variable, porque el registro de Actions es público y mostraría el valor
      de una variable) y, opcional, secreto `BACKUP_HEALTHCHECK_URL`. Pruébalo en
      **Actions → Copia de seguridad → Run workflow**.
    - Pruébalo en **Actions → Recordatorios y correos → Run workflow**.
-5. **Comprobación:** `https://<frontend>/api/health` responde `{"ok":true,"database":true}`, el
-   login funciona (la cookie pasa por el proxy) y una reserva de prueba envía su email.
+5. **Comprobación:** `https://<frontend>/api/health` responde `{"ok":true,"database":true}` (y
+   `"push":true` con las claves VAPID), el login funciona (la cookie pasa por el proxy) y una reserva
+   de prueba envía su email.
 
 El cron corre cada 10 minutos (el repositorio es público: GitHub Actions no tiene límite de
 minutos). Sus registros son públicos, por eso sólo muestran cifras. El programador de GitHub puede

@@ -24,6 +24,7 @@ import { authorize, parseInput, type RequestContext } from "./context.ts";
 import { receiptStorage, type FileStorage } from "./file-storage.ts";
 import { notifyReceiptReceived } from "./notifications.ts";
 import { greetingName } from "./public-booking-service.ts";
+import { notifyReceipt } from "./push-notices.ts";
 
 /**
  * Pago por transferencia. Cada cita tiene un enlace privado (/pago/:token) donde el paciente ve
@@ -215,6 +216,8 @@ export const paymentService = {
           entityId: appointment.id,
           summary: `Comprobante de pago recibido de ${await describeAppointment(db, updated)}`,
         });
+        // Aviso en el celular del propietario (spec 013).
+        await notifyReceipt(db, updated);
       }
       const ready = await one<PaymentReceipt>(db, `select ${paymentReceiptColumns()} from payment_receipts where id = $1`, [receiptId]);
       return { receipt: ready!, discarded: null, tooLarge: null };
