@@ -134,6 +134,7 @@ Publica primero la API y después agenda-front si el cambio toca a los dos.
 | `npm run db:create-admin -- <email> [--nombre X] [--apellido Y]` | Crea el super admin (pide la contraseña sin mostrarla; mínimo 8 caracteres) |
 | `npm run db:move-images` | Pasa al bucket `imagenes` los logos y fotos antiguos guardados dentro de la base (data URL); se puede repetir |
 | `npm run sync:shared` | Copia de agenda-front el código compartido (ver abajo) |
+| `npm run push:keys` | Crea el par de claves VAPID de los avisos en el celular y muestra las dos líneas para copiarlas (ver "Avisos en el celular") |
 | `npm run lambda:package` | Prepara `dist/lambda.zip` para AWS Lambda (ver "Backend en AWS Lambda") |
 | `npm run backup:decrypt -- <archivo>` | Descifra una copia de seguridad en `~/Agenda360-copias` (ver "Copias de seguridad") |
 
@@ -170,19 +171,22 @@ disponibilidad, plantillas de email, planes y permisos), para que frontend y API
 Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 `{ "error": { "code": "conflict", "message": "Texto para el usuario" } }` con los códigos
 `validation` (400), `unauthorized` (401), `plan_limit` (402), `forbidden` (403), `not_found` (404),
-`conflict` (409), `rate_limited` (429) y `unavailable` (503). El super admin sin la verificación en dos
-pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` (ver más abajo).
+`conflict` (409), `rate_limited` (429), `push_failed` (502, el aviso de prueba en el celular no salió) y
+`unavailable` (503). El super admin sin la verificación en dos pasos recibe `two_factor_required` (403) en
+`/admin` (también su campana), `/businesses`, `/images` y `/push` (ver más abajo).
 
 | Grupo | Rutas |
 | --- | --- |
 | Sesión | `GET /auth/session` (con `panelColors` para el super admin) · `POST /auth/login` · `register` · `logout` · `change-password` (sólo super admin) |
 | Perfil | `GET/PUT /users/:userId` |
 | Negocio | `POST /businesses` (onboarding) · `GET /businesses/slug-availability` · `GET/PATCH /businesses/:id` · `GET …/professional` |
-| Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status` con `notify`: `false` cambia el estado sin avisar al paciente) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
+| Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` (+ `POST …/clients/import`, importar pacientes desde un Excel o un CSV, spec 012) · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status` con `notify`: `false` cambia el estado sin avisar al paciente; `POST …/:id/cancel-following` cancela ésa y las siguientes de su serie) · `appointment-series` (`POST …/preview` y `POST`, citas que se repiten, spec 011) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
 | Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
-| Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) |
+| Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) · `GET /public/payments/:token` (+ `receipts`) · `GET /public/appointments/:token` · `POST …/confirm` · `POST …/cancel` («Tu cita», spec 010) |
 | Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, último cron, última copia e intentos fallidos; spec 006) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
-| Estado | `GET /health` |
+| Avisos en el celular (spec 013) | `GET /push/config` · `PUT /push/device` · `PATCH /push/device` · `POST /push/device/off` · `POST /push/device/test` (sólo el propietario de un negocio activo y el super admin; el aparato va en el cuerpo, nunca en la URL) |
+| Centro de avisos (spec 014) | `GET /businesses/:id/notices/unread` · `GET …/notices` (`?limit&unread=1&cursor`) · `POST …/notices/:noticeId/read` · `POST …/notices/read-all` (cualquier rol del equipo; el super admin en modo soporte recibe 403) y lo mismo en `/admin/notices` (el super admin, con la verificación en dos pasos). Ninguna escribe en la actividad |
+| Estado | `GET /health` (con `push`: si la API tiene claves VAPID válidas) |
 
 ## Contraseñas, modo soporte e historia clínica
 
@@ -332,6 +336,102 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   para que el almacenamiento no se llene, el cron borra los de citas de hace más de 3 meses
   (`RECEIPT_RETENTION_MONTHS`; la cita conserva `paid_at` y `receipt_at`). El navegador reduce las
   fotos antes de subirlas (WebP, 2000 px: unos 200–450 KB); los PDF van tal cual.
+- **«Tu cita»: el paciente confirma o cancela desde el email** (spec 010, migración 037,
+  `src/services/appointment-page-service.ts`). Los emails de una cita activa (solicitud, confirmación,
+  cambio, restablecida, vuelve a pendiente y recordatorio) llevan el enlace privado de cada persona a
+  `/cita/:token` del frontend: el del paciente principal es su `payment_token` (el mismo del pago) y
+  cada otra persona de una sesión tiene el suyo (`appointment_clients.access_token`, que no abre
+  `/pago`). Sin sesión:
+  - `GET /public/appointments/:token`: la cita para la página (`PublicAppointment`: servicio, fecha,
+    hora, profesional, modalidad y negocio; nada del paciente, ni la dirección de la visita, ni el
+    enlace de la videollamada, ni el precio) y lo que puede hacer quien la abre (`canConfirm`,
+    `cancellation.status`, `payment`). Responde el mismo 404 si el token no existe, si esa persona ya
+    no está en la cita, si cambió el principal, si el negocio está suspendido o si pasaron más de 30
+    días desde la cita (`APPOINTMENT_PAGE_DAYS`). `Cache-Control: private, no-store`.
+  - `POST …/confirm` («Confirmo que voy»): guarda `appointments.client_confirmed_at` o
+    `appointment_clients.confirmed_at` sin cambiar el estado (confirmar la cita sigue siendo del
+    negocio), registra `appointment.client_confirmed` la primera vez y no manda emails ni ntfy;
+    repetirlo responde `already: true`. El botón del recordatorio abre `/cita/:token?confirmar=1`, y
+    es la página la que confirma con un `POST` (con `X-Requested-With`): un antivirus que abre el
+    enlace no confirma nada.
+  - `POST …/cancel` («Cancelar mi cita»): sólo el principal, si el negocio tiene «Permitir
+    cancelaciones» y falta **más** que su antelación (`canCancelOnline`, comprobado con la cita
+    bloqueada). Usa el mismo cambio de estado que el panel (`cancelFromPatientLink`): la cancelación a
+    cada persona, la copia al profesional («La canceló el paciente desde su email.»), un aviso al
+    negocio (`patient_cancelled`) si su email no es el del profesional, la actividad
+    `appointment.client_cancelled` y el aviso por ntfy. La hora queda libre.
+  - **La confirmación se borra sola** (triggers de la 037) si cambian la fecha, la hora o el
+    profesional, o si la cita se cancela; Atendida y No asistió la conservan. Cambiar el paciente
+    principal desde el panel le da a la cita un `payment_token` nuevo y la deja sin confirmar; unir a
+    la ficha (spec 009) conserva enlaces y confirmaciones.
+  - El panel recibe `clientConfirmations` (`[{ clientId, confirmedAt }]`, el principal primero) en
+    cada cita, para la marca «Confirmó el paciente».
+  - Límites por conexión: `mi-cita` (60 vistas en 15 min) y `mi-cita-acciones` (20 confirmaciones o
+    cancelaciones en 15 min).
+- **Citas que se repiten** (spec 011, migración 038, `src/services/appointment-series-service.ts`).
+  Desde «Nueva cita» del panel se agenda de una vez una serie: cada semana, cada 2 semanas o cada mes
+  (el mismo día del mes; si no existe, el último), de 2 a 24 citas contando la primera, desde hoy y
+  Pendiente o Confirmada. La reserva online no crea series.
+  - `POST /businesses/:id/appointment-series/preview`: la lista de fechas, sin cambiar nada. Cada
+    fecha con su marca (`free`, `busy` si hay otra cita del profesional, `blocked`, `day_off`,
+    `outside_hours` o `plan_limit`), su motivo («Ya hay una cita de 10:00 a 11:00», sin nombrar al
+    otro paciente) y, en las de otra cita, un bloqueo o fuera del horario, las horas libres de ese día
+    en la cuadrícula del negocio. Con el cupo de cada mes topado en 24 (`planRemaining`) y el tope del
+    plan (`monthlyLimit`). La lista la calcula `src/shared/lib/appointment-series.ts`, la misma
+    función que usan la creación, el panel y la beta.
+  - `POST /businesses/:id/appointment-series` (201): con las fechas que quedaron en la lista (sólo se
+    puede cambiar la hora o quitar fechas). En una transacción con el negocio bloqueado, como una cita
+    suelta: cada fecha se vuelve a comprobar y la que se ocupó, se bloqueó o pasó el cupo mientras se
+    revisaba la lista vuelve en `skipped`. Las de un bloqueo, un día sin atención o fuera del horario
+    sólo se crean con `allowOutsideHours` («Agendar igual»). Si no se puede crear ninguna, no se crea
+    nada (409, o 402 si todas pasaban el cupo).
+  - **Cada cita sigue siendo una cita normal** (su recordatorio, sus estados, sus avisos, su pago y su
+    «Tu cita») y se cambia sola. Llevan `series: { id, index, total, frequency }` («Cita 3 de 8»);
+    las sueltas, `series: null`. La serie (`appointment_series`) guarda la frecuencia, cuántas se
+    pidieron, cuántas se crearon y quién la creó.
+  - **Un solo email por paciente** (`appointment_series`, «Tus próximas 8 citas en …») con todas las
+    fechas, cada una con el enlace a su «Tu cita», con la copia al profesional (sin esos enlaces) y,
+    si corresponde, un solo aviso al profesional. Sólo con «Confirmaciones». Una sola entrada de
+    actividad (`appointment.series_created`) y un solo aviso de ntfy por serie.
+  - `POST /businesses/:id/appointments/:id/cancel-following` (`{ notify }`): «Cancelar ésta y las
+    siguientes», por su número en la serie y sólo las que siguen Pendientes o Confirmadas (el rol
+    Profesional, sólo las de su agenda). Un solo email por paciente (`appointment_series_cancelled`)
+    y una copia por profesional, con «Cancelaciones» y la casilla «Avisar al paciente»; una entrada
+    de actividad y un aviso de ntfy.
+- **Importar pacientes desde un Excel o un CSV** (spec 012, migración 039,
+  `src/services/client-import-service.ts`): Clientes → «Importar pacientes», del propietario, los
+  administradores y el super admin en modo soporte (permiso `clients.import`; Recepción y el rol
+  Profesional reciben 403). El archivo se lee en el navegador y no se sube ni se guarda: la API recibe
+  sólo los datos de cada fila.
+  - `POST /businesses/:id/clients/import` con `{ rows: [{ row, name, documentId, email, phone, address,
+    notes }], includeIncomplete? }`. **Ampliación del 2026-10-15:**
+    - con `includeIncomplete: true`, basta el nombre: las filas a las que les falta un dato obligatorio
+      del negocio entran y salen en `incomplete` (`{ row, missing }`);
+    - lo que viene se valida igual, y una cédula o un email mal escritos siguen con error;
+    - sin él, la ruta hace lo mismo que antes;
+    - «Por completar» no se guarda: se calcula con `missingRequiredFields` y los datos obligatorios de
+      hoy. Contenido de la ruta: todas las filas no vacías de la hoja (de 1 a 5.000; `row` es el número de fila de
+    Excel), también las que la revisión marcó con error. Primero exige la sesión (sin ella, 401 sin leer
+    el cuerpo), después el límite `importar-pacientes` (20 cada 15 min por conexión) y por último lee el
+    JSON, de hasta **4 MB** sólo en esta ruta (`app.ts` la salta en el lector general de 2 MB).
+  - Cada fila se limpia y se valida con el mismo código que la revisión del panel
+    (`src/shared/lib/validations/client-import.ts`: `prepareImportRow` y `classifyImportRows`), con las
+    reglas del formulario del paciente del negocio (`clientSchemaFor` con los datos obligatorios y
+    `documentIdError`). La limpieza quita espacios, puntos y guiones de la cédula, le vuelve a poner el 0
+    que quitó Excel a una cédula de 9 dígitos en Ecuador (sólo si así es válida), pasa los teléfonos o
+    emails de más de una celda a las notas y cambia el punto del teléfono por un espacio.
+  - Todo o nada, en una transacción con el negocio bloqueado (`authorize` con `lock`): crea en una sola
+    sentencia los válidos y nuevos (`source = 'import'`, el mismo `created_at`, `on conflict` en la
+    cédula) hasta el cupo del plan (`remainingClientSlots`). Un paciente que ya existe no se toca: con
+    la misma cédula o, si no tiene cédula, con el mismo nombre, email y teléfono. Repetir la importación
+    (o dos a la vez) no duplica: lo que ya entró cuenta como «ya existía».
+  - Responde `{ created, existing: [{ row, clientId }], repeated: [{ row, firstRow }], errors: [{ row,
+    reason }], overLimit: [row] }`; `reason` nunca repite el valor de la celda.
+  - No sale ningún email. Si se creó al menos uno, una entrada `client.imported` en la actividad
+    («Importó 190 pacientes (3 ya existían, 5 con errores, 2 repetidas en el archivo)», sin nombres) y
+    un solo aviso por ntfy en la siguiente pasada del cron.
+  - Los importados cuentan para el tope del plan y en el total, pero no como «pacientes nuevos del mes»
+    en el Inicio del super admin (`/admin/stats`, decisión del dueño del producto).
 - **Almacenamiento** (`src/services/file-storage.ts`): tres buckets de Supabase Storage que se crean
   solos con su tamaño máximo y sus tipos de archivo: `historias-clinicas` (privado, o el de
   `STORAGE_BUCKET`), `comprobantes` (privado) e `imagenes` (público: logos y fotos). Las imágenes se
@@ -559,7 +659,7 @@ pasos recibe `two_factor_required` (403) en `/admin`, `/businesses` e `/images` 
   superan. Además, PostgreSQL impide citas activas solapadas (restricción `appointments_no_overlap`).
 - **CSRF:** las peticiones que modifican datos exigen la cabecera `X-Requested-With`; CORS sólo
   admite `FRONTEND_URL`.
-- **Límite de intentos** por IP en login, registro, reservas públicas, pagos e imágenes. Las cuentas
+- **Límite de intentos** por IP en login, registro, reservas públicas, pagos, «Tu cita» e imágenes. Las cuentas
   se guardan en PostgreSQL (tabla `rate_limits`, `src/http/rate-limit-store.ts`): todas las
   instancias de Vercel o Lambda comparten el mismo límite (antes cada una contaba en su memoria). Las
   IPv6 cuentan por subred /64. El cron borra las cuentas caducadas. En Vercel la IP del visitante
@@ -667,10 +767,21 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
     - **cada reserva por la página:** dice de cada persona si es «Paciente nuevo» o «Ya era paciente»;
     - **cada cita agendada desde el panel:** lo mismo que una reserva, con quién la agendó y su rol
       (sale del registro de actividad `appointment.created`);
-    - **cada paciente registrado desde el panel:** dice quién lo registró y con qué rol;
+    - **cada paciente registrado desde el panel:** dice quién lo registró y con qué rol (sólo
+      `source = 'dashboard'`: los importados no salen uno por uno);
+    - **cada importación de pacientes** (spec 012): «Agenda360: pacientes importados», con el negocio,
+      la cifra («Importó 200 pacientes (3 ya existían, 5 con errores)») y quién la hizo, sin datos de
+      pacientes. Sale del registro de actividad (`client.imported`); la línea del registro del cron
+      suma «importaciones: N»;
     - **cada cambio de estado de una cita** (spec 008): de qué estado a cuál, quién lo hizo y a quién
       salieron los emails, o «Sin avisar al paciente». Sale del registro de actividad (las entradas
-      con «Estado» en `changes`), así que entran los botones de estado y el formulario de la cita.
+      con «Estado» en `changes`), así que entran los botones de estado, el formulario de la cita y la
+      cancelación desde «Tu cita» (spec 010), que se titula «Agenda360: cita cancelada por el
+      paciente» y dice «Cancelada por el paciente desde su email». «Confirmo que voy» no avisa;
+    - **cada serie de citas del panel** (spec 011): un solo aviso («Agenda360: nueva serie de citas»)
+      con cuántas, cada cuánto, desde y hasta cuándo, cuántas no se crearon, quién y sus emails; sus
+      citas no tienen aviso propio. «Cancelar ésta y las siguientes» también avisa una sola vez
+      («Agenda360: serie de citas cancelada»), sin un cambio de estado por cada cita.
 
     Hasta 10 de cada tipo por pasada; del resto sólo se dice cuántos son.
   - **Avisos al paciente en cada cambio de estado** (spec 008): además de la confirmación, la
@@ -681,6 +792,130 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
     Con `notify: false` (la casilla «Avisar al paciente» desmarcada) no sale ninguno.
 - Gmail gratuito permite unos 500 emails al día; para más volumen conviene un proveedor
   transaccional (Resend, SES…): sólo cambia `mailer.ts`.
+
+## Avisos en el celular
+
+Spec 013. El propietario de cada negocio y los super admin reciben avisos en el celular (o en la
+computadora) desde la app instalada, como cualquier aplicación, con los avisos estándar de los
+navegadores (Web Push): sin Play Store, App Store ni servicios de pago. Los emails no cambian: el aviso
+se suma.
+
+- **Qué avisa:**
+  - **al propietario, al momento:** cada reserva online (con «· Por verificar» si lo está), cada
+    comprobante de pago, cada «Confirmo que voy» (la primera vez) y cada cancelación del paciente
+    desde su email, y cada cita nueva en su agenda que agendó otra persona (Recepción, un
+    administrador o el super admin en modo soporte);
+  - **al propietario, desde el cron:** cada cita que terminó hace 30 minutos y sigue Pendiente o
+    Confirmada («Cita por cerrar») y, a las 8 de la noche en la hora del negocio, «Tienes 3 citas de
+    hoy sin cerrar» si queda alguna;
+  - **al super admin:** al momento los negocios nuevos (el alta del registro, no los que crea él) y las
+    solicitudes de plan; desde el cron los cambios de seguridad en cuentas de super admin y los
+    intentos fallidos (además de ntfy, que no cambia).
+- **Privacidad:** el paciente siempre a medias («Juan P.», `masking.ts`), nunca su cédula, email,
+  teléfono ni nada de la historia clínica. El aviso viaja cifrado: Google, Apple, Mozilla o Microsoft
+  lo transportan pero no lo pueden leer. Los registros (también los públicos del cron) sólo tienen
+  cifras y el servicio (`fcm.googleapis.com, 403`), nunca títulos, textos ni direcciones de aparatos.
+- **Actividad:** activar los avisos en un aparato, cambiar sus tipos, desactivarlos y el aviso de
+  prueba quedan en la actividad del negocio (o de la plataforma, los del super admin), con el
+  navegador («Chrome en Mac»). La puesta al día silenciosa al abrir el panel y la pausa al cerrar
+  sesión no.
+- **Cómo funciona:**
+  - `src/services/web-push.ts`: el estándar con `node:crypto`, **sin librería** — cifrado
+    `aes128gcm` (RFC 8291, comprobado byte a byte con el ejemplo de la RFC en
+    `tests/web-push.test.ts`), firma VAPID (JWT ES256, RFC 8292) y el `POST` al servicio de avisos
+    (RFC 8030). Sólo envía a los servicios de los navegadores (`fcm.googleapis.com` y
+    `jmt<N>.google.com` de Chrome, `updates.push.services.mozilla.com`, `web.push.apple.com` y
+    `*.notify.windows.com`); cualquier otra dirección se rechaza al guardarla y al enviar.
+  - `push_subscriptions` (migración 040): un aparato por navegador, del usuario, con los tipos que
+    no quiere. El negocio se deduce al enviar (`businesses.owner_id`): cambiar el propietario deja de
+    avisar al anterior. «Cerrar sesión» pausa los aparatos de esa sesión; al volver a entrar, la app
+    los reanuda sola. Hasta 10 por persona.
+  - `push_messages`: la cola, como la de los emails. Quien provoca el aviso lo pone en cola dentro de
+    su transacción, en un punto de guardado: **si algo falla (p. ej. falta la migración), la reserva y
+    sus emails siguen igual**. Sale al momento, 1 s después y sin retrasar la respuesta (en Vercel con
+    `waitUntil`; en Lambda, `flushPushDelivery` al responder). Lo que no salió lo reintenta el cron a
+    los 1, 5, 15 y 60 minutos, hasta 24 h. Un 404 o 410 da de baja el aparato (desinstaló la app),
+    salvo en sus 2 primeros minutos: Google a veces lo responde nada más suscribirse y segundos después
+    lo acepta. Cinco rechazos seguidos (400, 401, 403, 413) también lo dan de baja.
+  - Qué dice cada aviso (los textos salen de `describeNotice`, en `src/shared/lib/notices.ts`, los
+    mismos de la campana del panel) y a quién va: `src/services/push-notices.ts`. Las rutas: `src/routes/push-routes.ts`
+    (`avisos-aparato`: 30 cambios y `aviso-prueba`: 5 avisos de prueba por conexión en 15 min).
+  - El cron (`runPushJobs` en `scheduled-tasks.ts`) pone en cola las citas por cerrar, el resumen de
+    las 8 y los del super admin, envía la cola (60 s como mucho) y limpia: avisos de más de 7 días y
+    aparatos en pausa hace más de 90. Su registro suma «avisos en la app: enviados N · fallidos N ·
+    aparatos dados de baja N»; si fallan avisos y no sale ninguno, ntfy avisa con «Agenda360: los
+    avisos en la app no salen».
+  - **Enganche para las series de la spec 011:** `notifyNewSeries(db, citas, actor.userId)` avisa una
+    sola vez por serie («Citas nuevas en tu agenda · 8 citas desde el mar 20 oct 10:00 · Juan P.»).
+- **Las claves (VAPID):** `npm run push:keys` crea el par y muestra `VAPID_PUBLIC_KEY=…` y
+  `VAPID_PRIVATE_KEY=…`. Van en Vercel, en Lambda y en los secretos de GitHub (ver "Despliegue en
+  Vercel"); `VAPID_SUBJECT` (el contacto, `mailto:` o `https:`) es opcional. **Sin claves, o con una
+  mal copiada, la API arranca igual** y no hay avisos: `/api/health` dice `"push": false` y el
+  registro, «Avisos en el celular desactivados: falta VAPID_PRIVATE_KEY.» (nunca un valor). Guárdalas
+  como `TWO_FACTOR_KEY`: si se pierden o se cambian, cada aparato tiene que volver a activar los avisos
+  (en Chrome, Edge y Firefox se arregla solo al abrir el panel; en el iPhone hace falta un toque).
+- **En local:** `npm run dev:local` crea un par de desarrollo en `.local-db/vapid.json` (fuera de git)
+  y las pruebas, el suyo. Los avisos sólo se prueban con la versión compilada del front (`npm run
+  build` y `npx vite preview`): en `npm run dev` no hay service worker. Chrome los recibe de verdad
+  en `http://localhost` (el servicio de Google funciona también en local). Con la base local, la API
+  acepta además direcciones `http://127.0.0.1:<puerto>`, para el servicio de avisos falso de las
+  pruebas (`tests/helpers/harness.ts`); nunca en la nube ni con la base de producción.
+- **iPhone:** sólo con la app instalada en la pantalla de inicio e iOS 16.4 o más reciente (regla de
+  Apple); la tarjeta de Configuración lo explica.
+
+## Centro de avisos del panel
+
+Spec 014. El panel del negocio y el de /admin tienen una **campana** con el número de avisos sin
+leer («9+» con más de 9): en la computadora, junto al logo del menú lateral; en el celular, a la
+derecha de la barra de arriba. Al tocarla se ven los últimos 20, y «Ver todos» abre la página
+«Avisos» con los de los últimos 30 días. No hace falta activar nada: la campana no depende de los
+avisos en el celular (que siguen igual, sólo para el propietario y el super admin).
+
+- **Qué le llega a cada uno** (la tabla de la spec, decidida al leer con lo que la persona es hoy):
+  - **el propietario:** las reservas online (también «Por verificar»), los comprobantes, las
+    confirmaciones y las cancelaciones del paciente y las citas por cerrar de todas las agendas, el
+    resumen de las 8 del negocio y «Cita nueva en tu agenda» de la suya;
+  - **Recepción y los administradores:** las reservas, los comprobantes, las confirmaciones y las
+    cancelaciones del paciente de todas las agendas;
+  - **quien tiene una agenda** (sea cual sea su rol; el rol Profesional sólo ve por aquí): todo lo de
+    su agenda, también «Cita nueva en tu agenda» si la agendó otra persona, sus citas por cerrar y el
+    resumen de las 8 de su agenda;
+  - **el super admin**, en /admin: los negocios nuevos, las solicitudes de plan, los cambios de
+    seguridad en cuentas de super admin y los intentos fallidos. En modo soporte no ve la campana del
+    negocio (la API responde 403 «La campana es del equipo del negocio.»).
+
+  Además, quien lo provocó no lo ve, cada persona sólo ve lo de desde que entró al equipo y la cita
+  cuenta en su agenda de hoy (si se mueve a otra agenda, lo ve la profesional nueva). La regla es una
+  constante compartida con el front y la beta, `NOTICE_AUDIENCE` (`src/shared/lib/constants/notices.ts`),
+  y la consulta (`AUDIENCE_SQL` en `src/services/panel-notices.ts`) sale de ella.
+- **Privacidad:** dentro del panel el paciente va con su nombre completo («Juan Pérez», decisión del
+  dueño del 2026-10-15), porque el equipo ya lo ve así en la agenda; el celular y ntfy siguen a medias.
+  Nunca la cédula, el email, el teléfono ni nada de la historia clínica. Los avisos de citas **no
+  guardan el texto**: se arma al leer con los datos de hoy de la cita y los mismos constructores del
+  celular (`describeNotice`, `src/shared/lib/notices.ts`). Así las fechas no se quedan viejas
+  («Mañana» de ayer dice «Hoy») y al borrar un paciente (y con él sus citas) sus avisos desaparecen
+  sin dejar su nombre en ninguna parte. Los del super admin sí guardan su texto (no tienen pacientes).
+- **Actividad:** leer un aviso o «Marcar todo como leído» no va a la actividad (es una consulta de la
+  propia persona), y crear los avisos tampoco: lo que los provoca ya queda registrado.
+- **Cómo funciona:**
+  - Migración 041: `panel_notices` (un aviso por suceso, no uno por persona), `panel_notice_reads`
+    (qué leyó cada persona) y `panel_notice_state` (la hora de su «Marcar todo como leído»).
+  - Los avisos se guardan en los mismos puntos que los del celular (`push-notices.ts`), haya o no
+    aparatos, cada uno en su propio punto de guardado (`aviso_panel`): **si algo falla (p. ej. falta la
+    migración 041), la reserva, la cita, los emails y el aviso al celular siguen igual**, y el registro
+    sólo dice el tipo y el código.
+  - El cron mira ahora todos los negocios activos para las citas por cerrar y el resumen de las 8 (el
+    resumen va también por agenda, a quien la tiene si no es el propietario), guarda los del super
+    admin y borra los avisos de más de 30 días. Su línea del registro suma «avisos del panel: N
+    (borrados, más de 30 días: N)».
+  - El contador (`…/notices/unread`) es una consulta con índices y sin textos: el front lo pide al
+    abrir el panel, al volver a la pestaña, cada 3 minutos sólo con la pestaña visible y al momento
+    cuando el service worker recibe un aviso al celular en ese navegador. Unos 10 minutos de CPU de
+    Vercel al mes en una cuenta generosa; si sube, se alarga `NOTICE_REFRESH_MS`.
+- **Publicación:** la migración 041 se aplica antes del código que la usa (`npm run db:migrate`, como
+  paso aparte). Mientras el backend nuevo no está publicado, el front no muestra la campana (la ruta
+  responde 404) y nada da error. No hay variables nuevas. En local, `npm run dev:local` aplica la 041
+  al arrancar.
 
 ### Token de Gmail que sólo puede enviar (`GMAIL_TRANSPORT=api`)
 
@@ -808,6 +1043,8 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    | `THIRD_PARTY_EMAILS_PER_DAY` | Opcional: tope de emails a pacientes y bienvenidas en 24 h (por defecto 400; súbelo con Google Workspace) |
    | `PUBLIC_EMAILS_PER_DAY` | Opcional: de ésos, los que provocan las reservas online y los registros (por defecto 150) |
    | `NTFY_TOPIC` | Opcional: el del cron, para que la API avise al llegar al tope de emails |
+   | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Avisos en el celular (`npm run push:keys`, ver "Avisos en el celular"). Sin ellas la API arranca igual, sin avisos (`/api/health` dice `"push": false`). Las mismas en Lambda y en los secretos de GitHub |
+   | `VAPID_SUBJECT` | Opcional: el contacto para los servicios de avisos (`mailto:` o `https:`); por defecto `APP_URL` si es https o el email de `GMAIL_USER` |
 
 3. **Proyecto del frontend** (agenda-front): variables `API_URL` (URL de este proyecto, p. ej.
    `https://agenda-backend.vercel.app`) y `PROXY_SECRET`.
@@ -816,18 +1053,21 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    - Secrets: `DATABASE_URL` (la misma de Vercel), `GMAIL_USER`, `GMAIL_CLIENT_ID`,
      `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `NTFY_TOPIC` (canal de ntfy al que te suscribes en
      el celular), `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` (las de Vercel: para borrar los
-     comprobantes de pago de más de 3 meses; sin ellas se omite) y, opcional, `HEALTHCHECK_URL`
-     (healthchecks.io avisa si el cron deja de ejecutarse).
+     comprobantes de pago de más de 3 meses; sin ellas se omite), `VAPID_PUBLIC_KEY` y
+     `VAPID_PRIVATE_KEY` (las de Vercel: sin ellas el cron no envía los avisos en el celular, que
+     caducan en cola) y, opcional, `HEALTHCHECK_URL` (healthchecks.io avisa si el cron deja de
+     ejecutarse).
    - Variables: `APP_URL` (la del frontend: enlaces de los emails y del aviso) y, opcionales,
-     `GMAIL_FROM_NAME` (por defecto "Agenda360"), `GMAIL_TRANSPORT` (`api`, ver "Emails") y
-     `NTFY_SERVER`.
+     `GMAIL_FROM_NAME` (por defecto "Agenda360"), `GMAIL_TRANSPORT` (`api`, ver "Emails"),
+     `NTFY_SERVER` y `VAPID_SUBJECT`.
    - Copias de seguridad: secretos `BACKUP_PASSPHRASE` (el de `.env`) y `BACKUP_EMAIL` (quién recibe
      las copias; secreto y no variable, porque el registro de Actions es público y mostraría el valor
      de una variable) y, opcional, secreto `BACKUP_HEALTHCHECK_URL`. Pruébalo en
      **Actions → Copia de seguridad → Run workflow**.
    - Pruébalo en **Actions → Recordatorios y correos → Run workflow**.
-5. **Comprobación:** `https://<frontend>/api/health` responde `{"ok":true,"database":true}`, el
-   login funciona (la cookie pasa por el proxy) y una reserva de prueba envía su email.
+5. **Comprobación:** `https://<frontend>/api/health` responde `{"ok":true,"database":true}` (y
+   `"push":true` con las claves VAPID), el login funciona (la cookie pasa por el proxy) y una reserva
+   de prueba envía su email.
 
 El cron corre cada 10 minutos (el repositorio es público: GitHub Actions no tiene límite de
 minutos). Sus registros son públicos, por eso sólo muestran cifras. El programador de GitHub puede

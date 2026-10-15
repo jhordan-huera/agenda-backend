@@ -148,6 +148,24 @@ ok(
 let r = await valeria("POST", `${B}/clients/${provisional[0]}/confirm-claim`, { updateEmail: true });
 ok(r.status === 403 && /recepción o al propietario/.test(r.body.error.message), "y no lo puede unir a la ficha", r.body);
 
+console.log("«Tu cita» de una reserva por verificar (spec 010)");
+const tokenA = sql(`select payment_token from appointments where id = '${a.body.appointmentId}'`);
+const createdMail = sql(`select body from notifications where appointment_id = '${a.body.appointmentId}' and type = 'booking_created' and to_email = '${claimer.email}'`);
+ok(createdMail.includes(`/cita/${tokenA}`), "el enlace a «Tu cita» llega al correo escrito al reservar", createdMail.slice(0, 300));
+r = await visitor("POST", `/public/appointments/${tokenA}/confirm`);
+ok(r.status === 200 && r.body.appointment.confirmedAt, "y con él confirma que va", r.body);
+const confirmedA = sql(`select client_confirmed_at::text from appointments where id = '${a.body.appointmentId}'`);
+// También es otra persona de una sesión de la clínica, ya confirmada (como la deja «Confirmo que voy»).
+const [companionAppointment, companionToken, companionConfirmed] = sql(
+  `insert into appointment_clients (appointment_id, client_id, business_id, confirmed_at)
+   select id, '${provisional[0]}', business_id, now() from appointments
+    where business_id = '${businessId}' and client_id <> '${provisional[0]}' and client_id <> '${realId}' and status = 'confirmed'
+    order by date desc limit 1
+   returning appointment_id || '|' || access_token || '|' || confirmed_at::text`,
+)
+  .split("\n")[0]
+  .split("|");
+
 console.log("Unir a la ficha");
 r = await elena("POST", `${B}/clients/${provisional[0]}/confirm-claim`, { updateEmail: true });
 ok(r.status === 200 && r.body.id === realId && r.body.email === claimer.email && r.body.phone === real.phone, "Recepción lo une: la ficha se queda con el email nuevo y su teléfono", r.body);
@@ -156,6 +174,17 @@ ok(
   "las dos citas pasan a la ficha",
 );
 ok(count(`select count(*) from clients where id = '${provisional[0]}'`) === 0, "y el paciente aparte desaparece");
+ok(
+  sql(`select payment_token || '|' || coalesce(client_confirmed_at::text, '') from appointments where id = '${a.body.appointmentId}'`) === `${tokenA}|${confirmedA}`,
+  "unir a la ficha conserva el enlace a «Tu cita» y la confirmación",
+);
+ok(
+  sql(`select access_token || '|' || coalesce(confirmed_at::text, '') from appointment_clients where appointment_id = '${companionAppointment}' and client_id = '${realId}'`) ===
+    `${companionToken}|${companionConfirmed}`,
+  "también los de otra persona de una sesión",
+);
+r = await visitor("GET", `/public/appointments/${tokenA}`);
+ok(r.status === 200 && r.body.confirmedAt && (await visitor("GET", `/public/appointments/${companionToken}`)).status === 200, "y los enlaces de los emails siguen funcionando", r.body);
 ok(count(`select count(*) from audit_logs where action = 'client.claim_confirmed' and entity_id = '${realId}'`) === 1, "queda en la actividad");
 r = await elena("POST", `${B}/clients/${realId}/confirm-claim`, {});
 ok(r.status === 409, "una ficha normal no se «une»", r.body);

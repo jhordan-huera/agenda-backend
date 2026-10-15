@@ -77,6 +77,39 @@ const before = {
 };
 ok(before.appointments > 0 && before.notes > 0, "tiene citas e historias clínicas", before);
 
+// Una serie de citas (spec 011): se borra con el negocio.
+const agendaId = sql(`select id from professionals where business_id = '${id}' and is_active order by sort_order limit 1`);
+const serviceId = sql(
+  `select s.id from services s join professionals p on p.id = '${agendaId}'
+    where s.business_id = '${id}' and s.is_active
+      and (p.all_services or exists (select 1 from professional_services ps where ps.professional_id = p.id and ps.service_id = s.id))
+    order by s.created_at limit 1`,
+);
+const farDate = sql("select to_char(current_date + 300, 'YYYY-MM-DD')");
+const nextWeek = sql("select to_char(current_date + 307, 'YYYY-MM-DD')");
+r = await ricardo("POST", `${B}/appointment-series`, {
+  appointment: {
+    clientId: patient.id,
+    extraClientIds: [],
+    serviceId,
+    date: farDate,
+    startTime: "06:00",
+    durationMinutes: 30,
+    price: 20,
+    status: "confirmed",
+    notes: "",
+    homeVisit: null,
+    isVirtual: false,
+    professionalId: agendaId,
+  },
+  repeat: { frequency: "weekly", count: 2 },
+  dates: [
+    { date: farDate, startTime: "06:00", allowOutsideHours: true },
+    { date: nextWeek, startTime: "06:00", allowOutsideHours: true },
+  ],
+});
+ok(r.status === 201 && r.body.created.length === 2 && count(`select count(*) from appointment_series where business_id = '${id}'`) === 1, "y una serie de citas", r.body);
+
 console.log("Subidas que nunca se completaron (las borra el cron)");
 const { pool } = await import("../src/db/pool.ts");
 const { deleteStalePendingAttachments } = await import("../src/services/clinical-attachment-service.ts");
@@ -133,13 +166,21 @@ const orphans = [
 ];
 const otherBusinessFile = putFile("historias-clinicas", `${ls.businessId}/otro/archivo.pdf`);
 
+// Un aviso en el celular de la clínica (spec 013), aún en cola, en un aparato del super admin (que no se borra).
+const pushEndpoint = `https://fcm.googleapis.com/fcm/send/prueba-${id}`;
+sql(`insert into push_subscriptions (user_id, endpoint, p256dh, auth) select id, '${pushEndpoint}', 'clave', 'secreto' from users where email = 'admin@demo.com'`);
+sql(
+  `insert into push_messages (subscription_id, business_id, kind, title, body, url, tag)
+   select id, '${id}', 'booking', 'Nueva reserva', 'Prueba', '/dashboard', 'prueba' from push_subscriptions where endpoint = '${pushEndpoint}'`,
+);
+
 console.log("Eliminar");
 r = await admin("DELETE", `/admin/businesses/${id}`, { confirmName: `  ${name.toUpperCase()} ` });
 ok(r.status === 204, "con el nombre (sin importar mayúsculas ni espacios) → 204", r.body);
 const left = (table, column = "business_id") => count(`select count(*) from ${table} where ${column} = '${id}'`);
 const leftovers = Object.fromEntries(
   [
-    "business_users", "professionals", "subscriptions", "clients", "services", "appointments", "schedules",
+    "business_users", "professionals", "subscriptions", "clients", "services", "appointments", "appointment_series", "schedules",
     "blocked_times", "notifications", "audit_logs", "plan_change_requests", "clinical_profiles", "clinical_notes",
     "clinical_note_addenda", "clinical_attachments", "clinical_templates",
   ].map((table) => [table, left(table)]),
@@ -158,6 +199,9 @@ const logs = (await admin("GET", "/admin/audit-logs?scope=admin")).body.entries;
 ok(logs.some((l) => l.action === "platform.business_deleted" && l.summary.includes(name) && /3 cuentas/.test(l.summary)), "queda en la actividad de la plataforma", logs.slice(0, 2));
 r = await admin("DELETE", `/admin/businesses/${id}`, { confirmName: name });
 ok(r.status === 404, "eliminarlo otra vez → 404", r.body);
+
+ok(count(`select count(*) from push_messages where business_id = '${id}'`) === 0, "no deja avisos en el celular suyos en cola (spec 013)");
+ok(count(`select count(*) from push_subscriptions where endpoint = '${pushEndpoint}'`) === 1, "y el aparato del super admin sigue");
 
 console.log("El resto sigue igual");
 ok(count("select count(*) from businesses") === before.businesses - 1, "sólo se eliminó ese negocio");

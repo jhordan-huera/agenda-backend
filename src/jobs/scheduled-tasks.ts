@@ -3,13 +3,19 @@ import { deleteExpiredRateLimits } from "../http/rate-limit-store.ts";
 import { accountChangeNotice, findAccountChanges } from "../services/account-alerts.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
 import {
+  clientImportNotice,
+  findClientImports,
   findOnlineBookings,
   findPanelAppointments,
   findPanelClients,
+  findPanelSeries,
+  findSeriesCancellations,
   findStatusChanges,
   newClientNotice,
   onlineBookingNotice,
   panelAppointmentNotice,
+  panelSeriesNotice,
+  seriesCancelledNotice,
   statusChangeNotice,
   type BookingNotice,
 } from "../services/booking-alerts.ts";
@@ -19,6 +25,8 @@ import { deleteStalePendingReceipts, purgeOldReceipts } from "../services/paymen
 import { processEmailQueue, scrubEmails, type EmailQueueReport } from "../services/mailer.ts";
 import { maskEmail, shortName } from "../services/masking.ts";
 import { runDailyAgendaJob, runReminderJob } from "../services/notifications.ts";
+import { cleanupPanelNotices } from "../services/panel-notices.ts";
+import { runPushJobs, type PushReport } from "../services/push-notices.ts";
 import type { EmailType } from "../shared/types/index.ts";
 
 /** Emails puestos en cola y negocios en los que falló el trabajo (se siguió con los demás). */
@@ -100,10 +108,22 @@ export interface ScheduledTasksReport {
   panelAppointments?: number;
   /** El aviso de cada una (hasta MAX_APPOINTMENT_NOTICES), con quién la agendó y los pacientes a medias. */
   appointmentNotices?: BookingNotice[];
+  /** Series de citas agendadas desde el panel desde la ejecución anterior (spec 011): un aviso por serie. */
+  panelSeries?: number;
+  /** El aviso de cada una (hasta MAX_SERIES_NOTICES), con sus fechas, quién la agendó y los pacientes a medias. */
+  seriesNotices?: BookingNotice[];
+  /** «Cancelar ésta y las siguientes» desde la ejecución anterior (spec 011). */
+  seriesCancellations?: number;
+  /** El aviso de cada una (hasta MAX_SERIES_NOTICES): cuántas citas, desde cuándo, quién y sus emails. */
+  seriesCancelNotices?: BookingNotice[];
   /** Cambios de estado de citas desde la ejecución anterior (spec 008). */
   statusChanges?: number;
   /** El aviso de cada uno (hasta MAX_STATUS_NOTICES): de qué estado a cuál, quién y sus emails. */
   statusNotices?: BookingNotice[];
+  /** Importaciones de pacientes desde un Excel o un CSV desde la ejecución anterior (spec 012). */
+  clientImports?: number;
+  /** El aviso de cada una (hasta MAX_IMPORT_NOTICES), con la cifra y quién la hizo, sin datos de pacientes. */
+  importNotices?: BookingNotice[];
   /** Cambios de seguridad en cuentas de super admin desde la ejecución anterior (spec 009). */
   accountChanges?: number;
   /** El aviso de cada uno (hasta MAX_ACCOUNT_NOTICES), con la cuenta enmascarada. */
@@ -114,6 +134,14 @@ export interface ScheduledTasksReport {
   pending: number;
   /** Cuentas con muchos intentos fallidos de inicio de sesión (ver findLoginAttacks). */
   security: LoginAlert[];
+  /** Avisos en el celular (spec 013): los que puso en cola esta pasada y el envío de toda la cola. */
+  push?: PushReport;
+  /**
+   * Centro de avisos del panel (spec 014): los que guardó esta pasada en las campanas (citas por cerrar,
+   * resumen de las 8 y los del super admin) y los de más de 30 días que borró (null: no se pudo, p. ej.
+   * sin la migración 041).
+   */
+  panelNotices?: { created: number; purged: number | null };
   /** Registros de auditoría borrados por antigüedad (purge_audit_logs: sesiones 90 días, acciones 5 meses, historia clínica 5 años). */
   auditPurged: number;
   /** Emails con más de EMAIL_CONTENT_DAYS días a los que se les borró el contenido. */
@@ -252,8 +280,24 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const online = await findOnlineBookings(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const panel = await findPanelClients(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const panelAppointments = await findPanelAppointments(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
+  const panelSeries = await findPanelSeries(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
+  const seriesCancellations = await findSeriesCancellations(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const statusChanges = await findStatusChanges(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const accountChanges = await findAccountChanges(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
+  const clientImports = await findClientImports(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
+  // Avisos en el celular (spec 013), después de los de ntfy: citas por cerrar, el resumen de las 8 y los
+  // del super admin; después, el envío de la cola y su limpieza.
+  const push = await runPushJobs({
+    since: previous?.ranAt ?? null,
+    until: totals?.at ?? new Date().toISOString(),
+    accountChanges: accountChanges.changes,
+    loginAttacks: security,
+  });
+  // Las campanas del panel (spec 014) guardan 30 días: si falla el borrado, el cron sigue.
+  const panelPurged = await cleanupPanelNotices().catch((error: unknown) => {
+    console.error(`[avisos] No se pudieron borrar los avisos del panel de más de 30 días (${(error as { code?: string })?.code ?? "error"}).`);
+    return null;
+  });
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
     reminderFailures: reminders.failures,
@@ -270,13 +314,21 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     clientNotices: panel.clients.map(newClientNotice),
     panelAppointments: panelAppointments.total,
     appointmentNotices: panelAppointments.appointments.map(panelAppointmentNotice),
+    panelSeries: panelSeries.total,
+    seriesNotices: panelSeries.series.map(panelSeriesNotice),
+    seriesCancellations: seriesCancellations.total,
+    seriesCancelNotices: seriesCancellations.cancellations.map(seriesCancelledNotice),
     statusChanges: statusChanges.total,
     statusNotices: statusChanges.changes.map(statusChangeNotice),
+    clientImports: clientImports.total,
+    importNotices: clientImports.imports.map(clientImportNotice),
     accountChanges: accountChanges.total,
     accountNotices: accountChanges.changes.map(accountChangeNotice),
     since: previous?.ranAt ?? null,
     pending: totals?.pending ?? 0,
     security,
+    push,
+    panelNotices: { created: push.panel ?? 0, purged: panelPurged },
     auditPurged: purged?.deleted ?? 0,
     emailContentPurged,
     receiptsPurged,

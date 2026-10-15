@@ -121,7 +121,16 @@ export interface NotificationSettings {
  * quedar pendiente; "unconfirmed": una cita confirmada (o atendida, o no asistió) vuelve a
  * pendiente de confirmar (spec 008).
  */
-export type WhatsAppNoticeKind = "confirmed" | "cancelled" | "rescheduled" | "completed" | "no_show" | "pending" | "unconfirmed";
+export type WhatsAppNoticeKind =
+  | "confirmed"
+  | "cancelled"
+  | "rescheduled"
+  | "completed"
+  | "no_show"
+  | "pending"
+  | "unconfirmed"
+  /** «Cancelar ésta y las siguientes» de una serie (spec 011): un mensaje con todas las fechas. */
+  | "series_cancelled";
 
 /** Un negocio suspendido no puede usar el panel ni recibir reservas online. */
 export type BusinessStatus = "active" | "suspended";
@@ -181,6 +190,9 @@ export interface ClientRequiredFields {
   phone: boolean;
   address: boolean;
 }
+
+/** Un dato del paciente que el negocio puede hacer obligatorio (el nombre lo es siempre). */
+export type ClientRequiredField = keyof ClientRequiredFields;
 
 /**
  * Roles dentro de un negocio (tabla business_users). "staff" es Recepción (todas las agendas);
@@ -344,6 +356,51 @@ export interface Client {
    * ficha, hasta que el negocio lo une a ella o cancela la cita. null: paciente normal.
    */
   claimedClientId: string | null;
+  /** De dónde salió: el panel, la página de reservas o una importación desde un archivo (spec 012). */
+  source: ClientSource;
+}
+
+/**
+ * Origen de un paciente. "import": lo creó una importación desde un Excel o un CSV (spec 012); no
+ * cuenta como paciente nuevo del mes en el Inicio, pero sí en el total y en el tope del plan.
+ */
+export type ClientSource = "dashboard" | "booking_page" | "import";
+
+/**
+ * Una fila de la importación de pacientes (spec 012), tal como la manda el panel: con las columnas ya
+ * asignadas y los datos como vienen en el archivo (la limpieza la hacen los dos lados con las mismas
+ * reglas, ver lib/validations/client-import.ts). `row`: el número de fila en la hoja, como lo muestra Excel.
+ */
+export interface ClientImportRow {
+  row: number;
+  name: string;
+  documentId: string;
+  email: string;
+  phone: string;
+  address: string;
+  /** La columna Notas y las columnas «Añadir a las notas», una por línea («Título: valor»). */
+  notes: string;
+}
+
+/** Resultado de una importación (o de su revisión): los números de fila son los de la hoja. */
+export interface ClientImportResult {
+  /** Pacientes creados (en la revisión, los que se crearán). */
+  created: number;
+  /** Ya eran pacientes del negocio: no se tocan. `clientId`: su ficha. */
+  existing: { row: number; clientId: string }[];
+  /** La misma persona que una fila anterior del archivo (`firstRow`, la que se usa). */
+  repeated: { row: number; firstRow: number }[];
+  /** No pasan las reglas del formulario del paciente. `reason` nunca repite el valor de la celda. */
+  errors: { row: number; reason: string }[];
+  /** No entran por el tope de pacientes del plan. */
+  overLimit: number[];
+  /**
+   * Con «Importar también los que tienen datos por completar» (ampliación del 2026-10-15): las filas
+   * que se crean aunque les falte un dato obligatorio del negocio (`missing`, en el orden del
+   * formulario). Ya cuentan en `created`; quedan «Por completar» hasta que se completan en su ficha.
+   * Sin la casilla, esas filas van a `errors` y esta lista queda vacía.
+   */
+  incomplete: { row: number; missing: ClientRequiredField[] }[];
 }
 
 /** Modalidades de un servicio: en el local, en casa del cliente o por videollamada. */
@@ -424,8 +481,78 @@ export interface Appointment {
   receiptAt: ISODateTime | null;
   /** Cuándo se marcó como pagada; null: sin marcar. */
   paidAt: ISODateTime | null;
+  /**
+   * Quienes confirmaron que van desde su email (spec 010), el principal primero. Vacía: nadie. Un
+   * backend anterior no la manda: el panel la trata como vacía.
+   */
+  clientConfirmations: ClientConfirmation[];
+  /**
+   * La serie con la que se agendó («cada semana, 8 sesiones», spec 011); null: una cita suelta. Un
+   * backend anterior no la manda: el panel la trata como null.
+   */
+  series: AppointmentSeriesRef | null;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
+}
+
+/** «Confirmo que voy» de un paciente de la cita (spec 010): no cambia el estado de la cita. */
+export interface ClientConfirmation {
+  clientId: string;
+  confirmedAt: ISODateTime;
+}
+
+/**
+ * Cada cuánto se repite una serie de citas (spec 011). «Cada mes» es el mismo día del mes que la primera
+ * (el 15 de cada mes); si ese mes no lo tiene, el último.
+ */
+export type AppointmentSeriesFrequency = "weekly" | "biweekly" | "monthly";
+
+/** La serie de una cita (spec 011): «Cita 3 de 8 · cada semana». */
+export interface AppointmentSeriesRef {
+  id: string;
+  /** Su número en la serie: 1, 2, 3… sin huecos. */
+  index: number;
+  /** Cuántas citas se crearon con la serie («Cita 3 de 8»): sin las quitadas ni las que chocaron. */
+  total: number;
+  frequency: AppointmentSeriesFrequency;
+}
+
+/**
+ * La marca de una fecha en la lista de la serie, antes de crearla (spec 011): libre, otra cita del
+ * profesional, un bloqueo, un día que no atiende, fuera de su horario o más allá del cupo del plan.
+ */
+export type SeriesDateStatus = "free" | "busy" | "blocked" | "day_off" | "outside_hours" | "plan_limit";
+
+/** Una fecha de la lista de la serie (respuesta de la vista previa: no se guarda). */
+export interface SeriesDatePreview {
+  date: ISODate;
+  startTime: TimeString;
+  endTime: TimeString;
+  status: SeriesDateStatus;
+  /** Lo que se muestra («Ya hay una cita de 10:00 a 11:00», «Bloqueado: Vacaciones»…); null si está libre. */
+  reason: string | null;
+  /** Las horas libres de ese día para «Otra hora» (sólo en las marcadas busy, blocked y outside_hours). */
+  freeTimes: TimeString[];
+}
+
+/** Las citas que quedan en el cupo del plan en cada mes de la serie ("2026-11": 12), topadas en 24. */
+export type SeriesPlanRemaining = Record<string, number>;
+
+/** La lista de fechas de una serie, antes de crearla (POST …/appointment-series/preview). */
+export interface AppointmentSeriesPreview {
+  dates: SeriesDatePreview[];
+  /** null: el plan no tiene tope de citas al mes. */
+  planRemaining: SeriesPlanRemaining | null;
+  /** El tope de citas al mes del plan (20 en Free), para el motivo de la marca; null: sin tope. */
+  monthlyLimit: number | null;
+}
+
+/** La serie creada (POST …/appointment-series): las citas, en orden, y las fechas que no se crearon. */
+export interface AppointmentSeriesCreated {
+  series: { id: string; total: number; frequency: AppointmentSeriesFrequency };
+  created: Appointment[];
+  /** Llegaron y no se crearon: se ocuparon, se bloquearon o pasaron el cupo mientras se revisaba la lista. */
+  skipped: { date: ISODate; startTime: TimeString; reason: string }[];
 }
 
 export interface TimeRange {
@@ -495,7 +622,13 @@ export type EmailType =
   /** El paciente no asistió: invitación a elegir otra hora (spec 008). */
   | "appointment_no_show"
   /** Cambio de seguridad en una cuenta de super admin: verificación en dos pasos o contraseña (spec 009). */
-  | "account_security_changed";
+  | "account_security_changed"
+  /** Aviso al negocio: el paciente canceló su cita desde «Tu cita», el enlace de sus emails (spec 010). */
+  | "patient_cancelled"
+  /** Al paciente: todas las fechas de una serie de citas nueva, en un solo email (spec 011). */
+  | "appointment_series"
+  /** Al paciente: «Cancelar ésta y las siguientes» de una serie, con las fechas canceladas (spec 011). */
+  | "appointment_series_cancelled";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -1077,4 +1210,117 @@ export interface PublicPayment {
   /** El negocio ya marcó la cita como pagada. */
   paid: boolean;
   receiptsEnabled: boolean;
+}
+
+/** Página «Tu cita» (/cita/:token), sin sesión: el token es la autorización (spec 010). */
+export interface PublicAppointment {
+  business: Pick<
+    PublicBusiness,
+    "name" | "slug" | "logoUrl" | "phone" | "address" | "lat" | "lng" | "timezone" | "brandColors"
+  >;
+  serviceName: string;
+  professionalName: string;
+  date: ISODate;
+  startTime: TimeString;
+  endTime: TimeString;
+  /** En el local, virtual o a domicilio (sin la dirección de la visita ni el enlace de la videollamada). */
+  place: ServiceMode;
+  status: AppointmentStatus;
+  /** Ya empezó o pasó, en la hora del negocio. */
+  past: boolean;
+  /** Cuándo confirmó que va quien abre el enlace; null: aún no. */
+  confirmedAt: ISODateTime | null;
+  /** Puede pulsar «Confirmo que voy»: la cita está pendiente o confirmada y aún no empieza. */
+  canConfirm: boolean;
+  cancellation: {
+    /**
+     * allowed: puede cancelar aquí · too_late: falta menos que la antelación · disabled: el negocio no
+     * permite cancelaciones · not_main: es otra persona de la sesión · closed: cancelada, atendida,
+     * no asistió o ya pasó.
+     */
+    status: "allowed" | "too_late" | "disabled" | "not_main" | "closed";
+    /** La antelación del negocio, en horas («Para cancelar con menos de 24 h…»). */
+    noticeHours: number;
+    /** La política de cancelación del negocio ("" si no permite cancelaciones). */
+    policy: string;
+  };
+  /** Quien abre es el principal y la cita tiene un pago por transferencia pendiente: la página lleva a /pago/:token. */
+  payment: boolean;
+}
+
+/** Respuesta de «Confirmo que voy» y de «Cancelar mi cita». */
+export interface PublicAppointmentResult {
+  appointment: PublicAppointment;
+  /** Ya estaba confirmada (o cancelada, en /cancel): no se hizo nada. */
+  already: boolean;
+}
+
+/* ------------------------------------------- Avisos en el celular (spec 013) -- */
+
+/**
+ * Tipos de aviso en el celular (Web Push). Los siete primeros son del propietario del negocio y los
+ * cuatro siguientes, del super admin (ver src/lib/constants/push.ts). `test` es el aviso de prueba:
+ * siempre sale y no se puede apagar.
+ */
+export type PushKind =
+  | "booking"
+  | "receipt"
+  | "patient_confirm"
+  | "patient_cancel"
+  | "new_appointment"
+  | "unclosed"
+  | "evening_summary"
+  | "new_business"
+  | "plan_request"
+  | "account_security"
+  | "login_attack"
+  | "test";
+
+/** Lo que necesita el front antes de activar los avisos (GET /api/push/config). */
+export interface PushConfig {
+  /** false: la API no tiene las claves del servicio de avisos (no se ofrece activarlos). */
+  available: boolean;
+  /** Clave pública VAPID en base64url (87 caracteres); null si no están disponibles. */
+  publicKey: string | null;
+  /** Los tipos del rol, en el orden de la tarjeta. */
+  kinds: PushKind[];
+}
+
+/** El aparato (este navegador) con los avisos activados. La dirección y las claves nunca salen de la API. */
+export interface PushDevice {
+  /** Los tipos apagados en este aparato: los demás llegan (también los que se añadan en el futuro). */
+  mutedKinds: PushKind[];
+  createdAt: ISODateTime;
+}
+
+/* ----------------------------------------- Centro de avisos del panel (spec 014) -- */
+
+/**
+ * Los avisos de la campana del panel: los mismos tipos que en el celular, sin el aviso de prueba (R13).
+ * Los siete del negocio y los cuatro del super admin (ver src/lib/constants/notices.ts).
+ */
+export type NoticeKind = Exclude<PushKind, "test">;
+
+/** Un aviso de la campana, ya armado para quien lo lee (con el nombre completo del paciente). */
+export interface PanelNotice {
+  id: string;
+  kind: NoticeKind;
+  /** «Nueva reserva» */
+  title: string;
+  /** «Mañana 16:00 · Limpieza · Juan Pérez» */
+  body: string;
+  /** La pantalla que abre al tocarlo: «/dashboard/calendar?date=…&appointment=…». */
+  url: string;
+  createdAt: ISODateTime;
+  /** Esta persona ya lo leyó (cada una lleva el suyo). */
+  read: boolean;
+}
+
+/** Una página de la campana o de la página «Avisos». */
+export interface PanelNoticePage {
+  notices: PanelNotice[];
+  /** Los sin leer de esta persona (todos, no sólo los de esta página). */
+  unread: number;
+  /** Para «Cargar más»: el createdAt y el id del último («2026-10-15T09:12:00.000000Z|…»); null si no hay más. */
+  nextCursor: string | null;
 }

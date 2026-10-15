@@ -20,11 +20,16 @@ Agenda360 guarda datos de salud (historia clínica, citas, contacto de pacientes
 
 - Los repositorios y los registros de GitHub Actions son públicos: nunca se imprimen emails,
   teléfonos, cédulas ni nombres completos de pacientes en logs, títulos de avisos ni commits.
-- Los avisos por ntfy llevan al paciente sólo a medias (`masking.ts`: "Juan P.", "ju***@gmail.com",
-  "***5555", sólo los últimos 4 dígitos del teléfono desde el 2026-10-14).
+- Los avisos por ntfy y en el celular llevan al paciente sólo a medias (`masking.ts`: "Juan P.",
+  "ju***@gmail.com", "***5555", sólo los últimos 4 dígitos del teléfono desde el 2026-10-14). Los
+  del celular sólo llevan el nombre a medias: nunca su contacto, su cédula ni nada de la historia
+  clínica.
+- En la campana del panel (spec 014) el paciente va con su nombre completo, porque está dentro del
+  panel, donde el equipo ya lo ve. Nunca su contacto, su cédula ni nada de la historia clínica
+  (2026-10-15).
 - La analítica (Vercel Analytics / Speed Insights) recibe rutas sin identificadores ni tokens y sin
   parámetros.
-- Las páginas públicas (reservas, pago) no exponen datos internos del negocio ni de otros pacientes.
+- Las páginas públicas (reservas, pago y «Tu cita») no exponen datos internos del negocio ni de otros pacientes.
 - Nunca se copian datos de producción a local ni a pruebas, ni siquiera anonimizados.
 - La base de producción sólo se consulta en lectura desde el equipo; las migraciones las aplica el
   dueño del producto.
@@ -71,6 +76,61 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   (marcada) para no avisar al corregir un error. «Atendida» y «No asistió» van con el interruptor
   «Seguimiento» (encendido) y sólo para citas de los últimos 7 días. El dueño del producto recibe por
   ntfy cada cambio de estado (2026-10-14).
+- El paciente confirma o cancela su cita desde «Tu cita», el enlace privado que traen los emails
+  de una cita activa, sin iniciar sesión. El del paciente principal es el mismo del pago, y cada
+  otra persona de una sesión tiene el suyo. «Confirmo que voy» es una marca aparte: no cambia el
+  estado (confirmar la cita sigue siendo decisión del negocio), no avisa por ntfy (al celular del
+  propietario sí, desde el 2026-10-15) y se borra si cambian la fecha, la hora o el profesional, o
+  si la cita se cancela; la actividad dice cuándo se borró. Cancelar desde ahí sólo lo
+  puede el paciente principal, si el negocio tiene «Permitir cancelaciones» y falta más que su
+  antelación; si no, la página da el WhatsApp o el teléfono del negocio. La cancelación avisa
+  como todo cambio de estado, y la copia al profesional no lleva los botones del paciente
+  (2026-10-14).
+- Una cita del panel se puede repetir cada semana, cada 2 semanas o cada mes (el mismo día del mes;
+  si no existe, el último), de 2 a 24 citas. Antes de crearlas se ve la lista de fechas: las que
+  chocan con otra cita o pasan el cupo del plan no se crean a esa hora; las de un bloqueo, un día sin
+  atención o fuera del horario quedan marcadas y se pueden agendar igual. A cada una se le cambia la
+  hora o se quita. El paciente recibe un solo email con todas las fechas (con copia al profesional) y
+  ntfy avisa una vez por serie. Cada cita sigue siendo una cita normal y se cambia sola; desde su
+  ficha se cancelan ella y las siguientes con un solo email, con la casilla «Avisar al paciente». La
+  reserva online no crea series (2026-10-14).
+- Importar pacientes desde un Excel (.xlsx) o un CSV es del propietario, los administradores y el
+  super admin en modo soporte; Recepción y el rol Profesional no lo ven. Cada fila pasa las mismas
+  reglas que el formulario del negocio, salvo que se elija «Importar también los que tienen datos por
+  completar»: entonces basta el nombre, lo que viene se valida igual y el paciente queda «Por
+  completar» hasta que se completa en su ficha (2026-10-15). Un paciente cuya cédula ya existe no se
+  cambia, los
+  importados no reciben emails y quedan con origen «importado». El archivo se lee en el navegador y
+  no se guarda, y lo que lee el Excel se carga sólo en esa pantalla. La actividad registra una
+  entrada por importación y ntfy avisa una vez, con la cifra y sin nombres (2026-10-14).
+- Los avisos en el celular (Web Push estándar, sin tiendas de aplicaciones) son sólo para el
+  propietario de cada negocio y para los super admin; Recepción, los administradores y el rol
+  Profesional no los reciben, y el super admin en modo soporte no recibe los del negocio. Al entrar
+  al panel se ofrecen una vez por aparato («Ahora no» lo deja 7 días) y vienen con todos los tipos
+  encendidos; en Configuración se apaga cada tipo o se desactivan en ese aparato, y cerrar sesión
+  los pausa en él. El propietario recibe al momento las reservas online (también «Por verificar»),
+  los comprobantes de pago, las confirmaciones («Confirmo que voy», desde el 2026-10-15) y las
+  cancelaciones del paciente desde su email, y las citas nuevas en su agenda que agendó otra
+  persona (una sola por serie); desde el cron, cada cita que terminó hace 30
+  minutos y sigue Pendiente o Confirmada y, a las 8 de la noche en la hora del negocio, el resumen
+  de las de hoy sin cerrar. El super admin recibe al momento los negocios nuevos y las solicitudes
+  de plan, y desde el cron los cambios de seguridad en cuentas de super admin y los intentos
+  fallidos, además de ntfy. Si los avisos fallan, la reserva y los emails siguen igual (2026-10-14).
+- Todo lo que cambia datos queda en la actividad, con quién, qué y cuándo: lo que hace el equipo en
+  el panel, lo que hace el paciente desde su enlace, las importaciones, las series y los avisos en
+  el celular (activarlos en un aparato, cambiar sus tipos, desactivarlos y el aviso de prueba). Lo
+  que pasa solo (la puesta al día del aparato al abrir el panel, la pausa al cerrar sesión, los
+  envíos del cron) y las consultas no se registran (2026-10-15).
+- El panel del negocio y el de /admin tienen una campana con los avisos de los últimos 30 días, sin
+  tener que activar nada; cada persona ve lo suyo y lleva su propio leído:
+  - el propietario, todo el negocio, y «Cita nueva» y el resumen de su agenda;
+  - Recepción y los administradores, las reservas, los comprobantes, las confirmaciones y las
+    cancelaciones del paciente de todas las agendas;
+  - quien tiene una agenda, lo de su agenda (también «Cita nueva», si la agendó otra persona, y las
+    citas por cerrar);
+  - el super admin, sus cuatro avisos en /admin, y en modo soporte no ve la del negocio.
+
+  Leer no se registra en la actividad (2026-10-15).
 - En la portada no hay testimonios, cifras ni precios inventados.
 
 ### IV. Se comprueba en local, nunca en producción
@@ -120,6 +180,10 @@ Tipos, validaciones, constantes y plantillas de email se editan sólo en agenda-
   siempre lo dice como paso aparte.
 - Emails por Gmail con cola en la tabla `notifications`; los secretos (contraseñas) no quedan en el
   registro de emails.
+- Avisos en el celular con Web Push y claves VAPID propias (`VAPID_PUBLIC_KEY`,
+  `VAPID_PRIVATE_KEY`) en Vercel, Lambda y los secretos de GitHub. Sin ellas la API arranca igual y
+  no hay avisos. Sólo se envían a los servicios de avisos de los navegadores (Google, Apple, Mozilla
+  y Microsoft).
 - Seguridad vigente: bloqueo de login por intentos (contado antes de comprobar, exacto también con
   intentos simultáneos), CAPTCHA (Turnstile) en reservas y registro, registros de auditoría no
   editables, cabeceras y CSP en `vercel.json`, la IP del proxy firmada con caducidad y el secreto
@@ -170,4 +234,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.6.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-14
+**Versión**: 1.11.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-15

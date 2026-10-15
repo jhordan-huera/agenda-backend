@@ -246,6 +246,63 @@ const pastStatus = sql(`select status || ' · ' || last_error from notifications
 ok(pass.skipped === 1 && /^failed · .*ya empezó/.test(pastStatus) && sent.length === 2, "el de una cita que ya pasó no se envía", pastStatus);
 sql(`update businesses set timezone = 'America/Guayaquil' where id = '${businessId}'`);
 
+console.log("«Tu cita» en el recordatorio (spec 010)");
+const bookingSettings = (patch: Record<string, unknown>) =>
+  sql(`update businesses set booking_settings = booking_settings || '${JSON.stringify(patch)}' where id = '${businessId}'`);
+bookingSettings({ allowCancellations: true, cancellationNoticeHours: 24 });
+const companion = sql(
+  `insert into clients (business_id, name, email) values ('${businessId}', 'Acompañante Recordatorio', 'acompanante.recordatorios@correo.ec') returning id`,
+).split("\n")[0];
+const withCompanion = insertAppointment("2031-04-15", "10:00", longAgo);
+sql(`insert into appointment_clients (appointment_id, client_id, business_id) values ('${withCompanion}', '${companion}', '${businessId}')`);
+await runJob(ecuador("2031-04-14", "12:00"));
+const reminderOf = (appointmentId: string, to: string) =>
+  sql(
+    `select replace(body, chr(10), ' ') from notifications where appointment_id = '${appointmentId}' and type = 'appointment_reminder' and to_email = '${to}'`,
+  );
+const mainToken = sql(`select payment_token from appointments where id = '${withCompanion}'`);
+const companionToken = sql(`select access_token from appointment_clients where appointment_id = '${withCompanion}'`);
+const mainReminder = reminderOf(withCompanion, "paciente.recordatorios@correo.ec");
+const companionReminder = reminderOf(withCompanion, "acompanante.recordatorios@correo.ec");
+ok(
+  mainReminder.includes(`Confirmo que voy: `) && mainReminder.includes(`/cita/${mainToken}?confirmar=1`) && !mainReminder.includes(companionToken),
+  "el recordatorio del principal lleva su «Confirmo que voy» y su enlace",
+  mainReminder,
+);
+ok(
+  companionReminder.includes(`/cita/${companionToken}?confirmar=1`) && !companionReminder.includes(mainToken) && mainToken !== companionToken,
+  "el de la otra persona de la sesión, el suyo",
+  companionReminder,
+);
+ok(
+  mainReminder.includes("Ver mi cita: ") && !mainReminder.includes("Ver o cancelar mi cita"),
+  "con los ajustes de fábrica (recordatorio y antelación de 24 h) ya no está en plazo: «Ver mi cita»",
+  mainReminder,
+);
+const reminderCopyBody = sql(
+  `select replace(body, chr(10), ' ') from notifications
+    where appointment_id = '${withCompanion}' and type = 'appointment_copy' and dedupe_key like 'reminder:%'`,
+);
+ok(
+  reminderCopyBody !== "" && !reminderCopyBody.includes("/cita/") && !reminderCopyBody.includes("Confirmo que voy"),
+  "la copia del recordatorio, sin los enlaces del paciente",
+  reminderCopyBody,
+);
+const confirmedOne = insertAppointment("2031-04-19", "10:00", longAgo);
+sql(`update appointments set client_confirmed_at = now() where id = '${confirmedOne}'`);
+await runJob(ecuador("2031-04-18", "12:00"));
+const thanks = reminderOf(confirmedOne, "paciente.recordatorios@correo.ec");
+ok(thanks.includes("Ya nos confirmaste que vienes. ¡Gracias!") && !thanks.includes("?confirmar=1"), "si ya confirmó, el gracias en lugar del botón", thanks);
+bookingSettings({ cancellationNoticeHours: 12 });
+const earlier = insertAppointment("2031-04-17", "10:00", longAgo);
+await runJob(ecuador("2031-04-16", "12:00"));
+ok(
+  reminderOf(earlier, "paciente.recordatorios@correo.ec").includes("Ver o cancelar mi cita: "),
+  "con antelación de 12 h, el de 22 h antes: «Ver o cancelar mi cita»",
+  reminderOf(earlier, "paciente.recordatorios@correo.ec"),
+);
+bookingSettings({ cancellationNoticeHours: 24 });
+
 await pool.end();
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de recordatorios pasaron");
 process.exitCode = failures ? 1 : 0;

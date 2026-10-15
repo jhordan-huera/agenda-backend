@@ -10,8 +10,21 @@ export type EmailBlock =
   | { kind: "text"; text: string }
   /** Botón (en texto: "Etiqueta: URL"). */
   | { kind: "button"; label: string; url: string }
-  /** Recuadro de datos: "Etiqueta: valor" (con enlace opcional). */
-  | { kind: "details"; title?: string; rows: { label: string; value: string; href?: string; mono?: boolean }[] }
+  /**
+   * Enlace subrayado, más discreto que un botón (en texto: "Etiqueta: URL"). No cuenta para el «Si el
+   * botón no funciona…» del final, que sigue siendo el del primer botón.
+   */
+  | { kind: "link"; label: string; url: string }
+  /**
+   * Recuadro de datos: "Etiqueta: valor" (con enlace opcional). En el texto, una fila con enlace muestra
+   * el enlace en lugar del valor; con `textWithHref`, el valor y después el enlace (las fechas de una
+   * serie, que llevan cada una a su página).
+   */
+  | {
+      kind: "details";
+      title?: string;
+      rows: { label: string; value: string; href?: string; mono?: boolean; textWithHref?: boolean }[];
+    }
   /** Aviso destacado (p. ej. motivo de un rechazo). */
   | { kind: "callout"; text: string; tone?: "info" | "warning" }
   /** Texto pequeño y gris. */
@@ -72,6 +85,8 @@ function renderBlockHtml(block: EmailBlock): string {
       return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 24px;"><tr>
 <td style="border-radius:8px;background:${COLORS.brand};"><a href="${safeUrl(block.url)}" target="_blank" style="display:inline-block;padding:12px 22px;font:600 15px/1.2 ${FONT};color:#ffffff;text-decoration:none;border-radius:8px;">${escapeHtml(block.label)}</a></td>
 </tr></table>`;
+    case "link":
+      return `<p style="margin:0 0 20px;font:600 15px/1.5 ${FONT};"><a href="${safeUrl(block.url)}" target="_blank" style="color:${COLORS.brand};text-decoration:underline;">${escapeHtml(block.label)}</a></p>`;
     case "callout": {
       const tone = COLORS[block.tone ?? "info"];
       return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;"><tr>
@@ -156,9 +171,17 @@ function renderBlockText(block: EmailBlock): string {
     case "callout":
       return block.text;
     case "button":
+    case "link":
       return `${block.label}: ${block.url}`;
     case "details":
-      return [block.title, ...block.rows.map((row) => `${row.label}: ${row.href ?? row.value}`)].filter(Boolean).join("\n");
+      return [
+        block.title,
+        ...block.rows.map((row) =>
+          row.href && row.textWithHref ? `${row.label}: ${row.value} · ${row.href}` : `${row.label}: ${row.href ?? row.value}`,
+        ),
+      ]
+        .filter(Boolean)
+        .join("\n");
   }
 }
 

@@ -14,6 +14,11 @@ import { createSeedDatabase } from "./seed-data.ts";
  *   crea cuentas con contraseñas conocidas (admin@demo.com / demo1234).
  */
 const TABLES = [
+  "panel_notice_reads",
+  "panel_notice_state",
+  "panel_notices",
+  "push_messages",
+  "push_subscriptions",
   "cron_runs",
   "rate_limits",
   "image_uploads",
@@ -25,6 +30,7 @@ const TABLES = [
   "notifications",
   "appointment_clients",
   "appointments",
+  "appointment_series",
   "blocked_times",
   "schedules",
   "services",
@@ -214,13 +220,15 @@ async function seed() {
       [
         "id", "business_id", "client_id", "service_id", "professional_id", "date", "start_time", "end_time",
         "status", "notes", "price", "home_visit", "is_virtual", "source", "payment_token", "created_at", "updated_at",
-        "scheduled_at",
+        "scheduled_at", "client_confirmed_at",
       ],
       // La fecha y hora de las citas demo se fijaron al crearlas (días antes): sí llevan recordatorio.
+      // Algunas, ya confirmadas por el paciente desde su email (spec 010).
       data.appointments.map((a) => [
         a.id, a.businessId, a.clientId, a.serviceId, a.professionalId, a.date, a.startTime, a.endTime,
         a.status, a.notes, a.price, a.homeVisit ? JSON.stringify(a.homeVisit) : null, a.isVirtual, a.source, a.paymentToken,
         a.createdAt, a.updatedAt, a.createdAt,
+        a.clientConfirmations.find((confirmation) => confirmation.clientId === a.clientId)?.confirmedAt ?? null,
       ]),
     );
     // Reservas online demo ya confirmadas o atendidas: el negocio las gestionó, así que dan acceso al

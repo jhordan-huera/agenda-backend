@@ -1,12 +1,15 @@
-import { Router } from "express";
+import express, { Router } from "express";
 import { clientIp } from "../http/client-ip.ts";
 import { handle, limitRequests, queryParam } from "../http/handlers.ts";
 import { requireSuperAdminTwoFactor } from "../http/session.ts";
 import { businessService, subscriptionService, teamService, userService } from "../services/account-service.ts";
 import { auditLogService, notificationService } from "../services/activity-service.ts";
+import { appointmentSeriesService } from "../services/appointment-series-service.ts";
 import { clinicalAttachmentService } from "../services/clinical-attachment-service.ts";
 import { clinicalService } from "../services/clinical-service.ts";
 import { clinicalTemplateService } from "../services/clinical-template-service.ts";
+import { clientImportService } from "../services/client-import-service.ts";
+import { requireUser } from "../services/context.ts";
 import {
   appointmentService,
   blockedTimeService,
@@ -16,6 +19,7 @@ import {
   setAppointmentArrival,
 } from "../services/business-data-service.ts";
 import { imageService } from "../services/image-service.ts";
+import { panelNoticeService } from "../services/panel-notices.ts";
 import { paymentService } from "../services/payment-service.ts";
 import { professionalService } from "../services/professional-service.ts";
 
@@ -162,6 +166,24 @@ businessRoutes.post(
   "/:businessId/clients",
   handle((req) => clientService.create(req.ctx, req.params.businessId, req.body)),
 );
+// Importar pacientes desde un Excel o un CSV (spec 012): primero la sesión (un anónimo no hace leer
+// 4 MB), después el límite por conexión y por último el cuerpo, de hasta 4 MB (el resto de la API, 2 MB:
+// ver app.ts). El rol y el negocio los comprueba el servicio.
+businessRoutes.post(
+  "/:businessId/clients/import",
+  (req, _res, next) => {
+    requireUser(req.ctx);
+    next();
+  },
+  limitRequests({
+    name: "importar-pacientes",
+    windowMinutes: 15,
+    max: 20,
+    message: "Demasiadas importaciones seguidas. Espera unos minutos.",
+  }),
+  express.json({ limit: "4mb" }),
+  handle((req) => clientImportService.importMany(req.ctx, req.params.businessId, req.body)),
+);
 businessRoutes.get(
   "/:businessId/clients/:clientId",
   handle((req) => clientService.getById(req.ctx, req.params.businessId, req.params.clientId)),
@@ -297,6 +319,24 @@ businessRoutes.get(
   "/:businessId/payment-receipts/:receiptId/url",
   handle((req) => paymentService.receiptUrl(req.ctx, req.params.businessId, req.params.receiptId)),
 );
+// Citas que se repiten (spec 011): la lista de fechas (no cambia nada), crear la serie y «Cancelar ésta
+// y las siguientes».
+businessRoutes.post(
+  "/:businessId/appointment-series/preview",
+  handle((req) => appointmentSeriesService.preview(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.post(
+  "/:businessId/appointment-series",
+  handle(async (req, res) => {
+    const created = await appointmentSeriesService.create(req.ctx, req.params.businessId, req.body);
+    res.status(201);
+    return created;
+  }),
+);
+businessRoutes.post(
+  "/:businessId/appointments/:appointmentId/cancel-following",
+  handle((req) => appointmentSeriesService.cancelFollowing(req.ctx, req.params.businessId, req.params.appointmentId, req.body)),
+);
 businessRoutes.post(
   "/:businessId/appointments/:appointmentId/whatsapp-notice",
   handle((req) =>
@@ -334,4 +374,23 @@ businessRoutes.get(
 businessRoutes.get(
   "/:businessId/audit-logs",
   handle((req) => auditLogService.list(req.ctx, req.params.businessId, req.query)),
+);
+
+// Centro de avisos del panel (spec 014): la campana de cada persona del equipo (cada una ve lo suyo y
+// lleva su propio leído). El super admin en modo soporte recibe 403. Leer no va a la actividad.
+businessRoutes.get(
+  "/:businessId/notices/unread",
+  handle((req) => panelNoticeService.unread(req.ctx, req.params.businessId)),
+);
+businessRoutes.get(
+  "/:businessId/notices",
+  handle((req) => panelNoticeService.list(req.ctx, req.params.businessId, req.query)),
+);
+businessRoutes.post(
+  "/:businessId/notices/read-all",
+  handle((req) => panelNoticeService.markAllRead(req.ctx, req.params.businessId)),
+);
+businessRoutes.post(
+  "/:businessId/notices/:noticeId/read",
+  handle((req) => panelNoticeService.markRead(req.ctx, req.params.businessId, req.params.noticeId)),
 );

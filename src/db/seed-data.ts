@@ -614,6 +614,7 @@ function seedTenant(
     notes,
     isActive,
     claimedClientId: null,
+    source: "dashboard" as const,
     createdAt: daysAgoISO(Math.max(1, age - 20 - index * 5)),
   }));
   db.clients.push(...clients);
@@ -733,6 +734,8 @@ function seedTenant(
       paymentToken: crypto.randomUUID().replaceAll("-", ""),
       receiptAt: null,
       paidAt: null,
+      clientConfirmations: [],
+      series: null,
       createdAt,
       updatedAt: createdAt,
     };
@@ -824,6 +827,25 @@ function seedTenant(
       }
     }
   }
+
+  // «Confirmo que voy» (spec 010): una de cada dos citas activas que quedan hoy y de las de mañana, ya
+  // confirmada por el paciente desde su email; las demás, sin confirmar (el negocio ve a quién llamar).
+  // Sin el generador aleatorio: así no cambian las demás citas demo.
+  const tomorrow = addDaysISO(now.date, 1);
+  db.appointments
+    .filter(
+      (a) =>
+        a.businessId === businessId &&
+        (a.status === "pending" || a.status === "confirmed") &&
+        (a.date === tomorrow || (a.date === now.date && !isPast(a.date, a.startTime, now))),
+    )
+    .sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime))
+    .forEach((appointment, index) => {
+      if (index % 2 === 1) return;
+      appointment.clientConfirmations = [
+        { clientId: appointment.clientId, confirmedAt: new Date(Date.now() - (3 + index) * 3_600_000).toISOString() },
+      ];
+    });
 
   seedClinicalRecords(db, tenant, { businessId, ownerId: userId, ownerName: ownerActor.name, clients });
 }

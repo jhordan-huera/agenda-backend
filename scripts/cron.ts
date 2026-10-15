@@ -11,7 +11,9 @@
  * GMAIL_REFRESH_TOKEN, GMAIL_FROM_NAME, FRONTEND_URL (enlaces de los emails), NODE_ENV=production
  * (si no, los emails se redirigen a la cuenta de Gmail), NTFY_TOPIC y, opcionales, NTFY_SERVER
  * (por defecto https://ntfy.sh), APP_URL (enlace del aviso) y SUPABASE_URL y
- * SUPABASE_SERVICE_ROLE_KEY (sin ellas no se borran los comprobantes de más de 3 meses).
+ * SUPABASE_SERVICE_ROLE_KEY (sin ellas no se borran los comprobantes de más de 3 meses). Avisos en el
+ * celular (spec 013): VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY (sin ellas no se envían: quedan en cola y
+ * caducan) y, opcional, VAPID_SUBJECT. Las campanas del panel (spec 014) no necesitan nada más.
  *
  * Prueba local: node --env-file=.env scripts/cron.ts
  */
@@ -36,11 +38,14 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   appointment_pending: ["Cita pendiente de confirmar", "Citas pendientes de confirmar"],
   appointment_completed: ["Gracias por la visita", "Gracias por la visita"],
   appointment_no_show: ["Aviso de No asistió", "Avisos de No asistió"],
+  appointment_series: ["Serie de citas", "Series de citas"],
+  appointment_series_cancelled: ["Serie de citas cancelada", "Series de citas canceladas"],
   booking_received: ["Aviso de nueva reserva (al negocio)", "Avisos de nueva reserva (al negocio)"],
   professional_new_appointment: ["Aviso de cita nueva (al profesional)", "Avisos de cita nueva (al profesional)"],
   appointment_copy: ["Copia al profesional", "Copias al profesional"],
   professional_daily_agenda: ["Agenda del día (al profesional)", "Agendas del día (al profesional)"],
   payment_receipt_received: ["Comprobante de pago (al negocio)", "Comprobantes de pago (al negocio)"],
+  patient_cancelled: ["Aviso de cancelación del paciente (al negocio)", "Avisos de cancelación del paciente (al negocio)"],
   business_created: ["Negocio creado", "Negocios creados"],
   team_invite: ["Alta en un equipo", "Altas en un equipo"],
   password_reset: ["Contraseña cambiada", "Contraseñas cambiadas"],
@@ -59,7 +64,14 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
 const when = (email: SentEmail) => (email.date ? `${formatShortDate(email.date)}${email.startTime ? ` ${email.startTime}` : ""}` : null);
 
 /** Emails al paciente sobre su cita: los que llevan copia al profesional (ver notifications.ts). */
-const COPIED_TYPES = new Set<EmailType>(["booking_created", "appointment_confirmed", "appointment_updated", "appointment_cancelled"]);
+const COPIED_TYPES = new Set<EmailType>([
+  "booking_created",
+  "appointment_confirmed",
+  "appointment_updated",
+  "appointment_cancelled",
+  "appointment_series",
+  "appointment_series_cancelled",
+]);
 
 /**
  * Una línea por email: de qué negocio, de qué cita (cuándo y de quién) y a quién salió, con la copia
@@ -171,9 +183,9 @@ export function buildNotice(report: ScheduledTasksReport, options: { gmailConfig
 }
 
 /**
- * Un aviso por cada reserva desde la página pública, cada cita agendada desde el panel y cada paciente
- * registrado desde el panel (ver booking-alerts.ts) y, si hubo más de los que se detallan, otro con
- * cuántos faltan.
+ * Un aviso por cada reserva desde la página pública, cada cita y cada serie de citas agendada desde el
+ * panel, cada serie cancelada, cada paciente registrado desde el panel y cada importación de pacientes
+ * (ver booking-alerts.ts) y, si hubo más de los que se detallan, otro con cuántos faltan.
  */
 export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
   const notices: Notice[] = [...(report.bookingNotices ?? [])];
@@ -199,6 +211,18 @@ export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
       click: "/admin/businesses",
     });
   }
+  const seriesNotices = report.seriesNotices ?? [];
+  notices.push(...seriesNotices);
+  const restSeries = (report.panelSeries ?? 0) - seriesNotices.length;
+  if (restSeries > 0) {
+    notices.push({
+      title: "Agenda360: más series de citas",
+      message: `…y ${plural(restSeries, "serie más", "series más")} de citas agendadas desde el panel (detalle en la agenda de cada negocio).`,
+      priority: 3,
+      tags: ["repeat"],
+      click: "/admin/businesses",
+    });
+  }
   const statusNotices = report.statusNotices ?? [];
   notices.push(...statusNotices);
   const restStatus = (report.statusChanges ?? 0) - statusNotices.length;
@@ -206,6 +230,18 @@ export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
     notices.push({
       title: "Agenda360: más cambios de estado",
       message: `…y ${plural(restStatus, "cambio de estado más", "cambios de estado más")} en citas (detalle en la actividad de cada negocio).`,
+      priority: 3,
+      tags: ["arrows_counterclockwise"],
+      click: "/admin/activity",
+    });
+  }
+  const seriesCancelNotices = report.seriesCancelNotices ?? [];
+  notices.push(...seriesCancelNotices);
+  const restCancelled = (report.seriesCancellations ?? 0) - seriesCancelNotices.length;
+  if (restCancelled > 0) {
+    notices.push({
+      title: "Agenda360: más series canceladas",
+      message: `…y ${plural(restCancelled, "serie cancelada más", "series canceladas más")} desde el panel (detalle en la actividad de cada negocio).`,
       priority: 3,
       tags: ["arrows_counterclockwise"],
       click: "/admin/activity",
@@ -220,6 +256,18 @@ export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
       message: `…y ${plural(restClients, "paciente nuevo más", "pacientes nuevos más")} registrados desde el panel (detalle en cada negocio).`,
       priority: 3,
       tags: ["bust_in_silhouette"],
+      click: "/admin/businesses",
+    });
+  }
+  const importNotices = report.importNotices ?? [];
+  notices.push(...importNotices);
+  const restImports = (report.clientImports ?? 0) - importNotices.length;
+  if (restImports > 0) {
+    notices.push({
+      title: "Agenda360: más importaciones",
+      message: `…y ${plural(restImports, "importación más", "importaciones más")} de pacientes (detalle en la actividad de cada negocio).`,
+      priority: 3,
+      tags: ["inbox_tray"],
       click: "/admin/businesses",
     });
   }
@@ -260,6 +308,40 @@ export function buildSecurityNotice(report: ScheduledTasksReport): Notice | null
   };
 }
 
+/**
+ * Avisos en el celular (spec 013): si en esta pasada fallaron avisos y no salió ninguno (p. ej. las
+ * claves VAPID mal puestas), ntfy lo dice. Sólo el servicio y el código de respuesta, nunca un aviso.
+ */
+export function buildPushNotice(report: ScheduledTasksReport): Notice | null {
+  const push = report.push;
+  if (!push || push.failed === 0 || push.sent > 0) return null;
+  const detail = push.errors.length > 0 ? ` (servicio: ${push.errors.join("; ")})` : "";
+  return {
+    title: "Agenda360: los avisos en la app no salen",
+    message: `Fallaron ${plural(push.failed, "aviso", "avisos")} en esta pasada${detail}. Revisa las claves VAPID en Vercel, Lambda y GitHub.`,
+    priority: 4,
+    tags: ["warning"],
+    click: "/admin/activity",
+  };
+}
+
+/** "· avisos en la app: enviados N · fallidos N · aparatos dados de baja N" (sólo cifras: el registro es público). */
+export function describePushLine(report: ScheduledTasksReport, problem: string | null = null): string {
+  if (!report.push) return "";
+  const { sent, failed, removedDevices } = report.push;
+  return ` · avisos en la app: enviados ${sent} · fallidos ${failed} · aparatos dados de baja ${removedDevices}${problem ? ` (${problem})` : ""}`;
+}
+
+/**
+ * "· avisos del panel: N (borrados, más de 30 días: N)": lo que guardó esta pasada en las campanas del
+ * panel (spec 014). Sólo cifras: el registro es público.
+ */
+export function describePanelLine(report: ScheduledTasksReport): string {
+  if (!report.panelNotices) return "";
+  const { created, purged } = report.panelNotices;
+  return ` · avisos del panel: ${created} (borrados, más de 30 días: ${purged ?? "no se pudo"})`;
+}
+
 /** El cron no pudo trabajar: aviso urgente y el job de GitHub termina con error. */
 async function fail(reason: string): Promise<void> {
   await notify({
@@ -278,9 +360,11 @@ async function main(): Promise<void> {
   const { config } = await import("../src/config.ts");
   const { pool } = await import("../src/db/pool.ts");
   const { disableImmediateDelivery, scrubEmails } = await import("../src/services/mailer.ts");
+  const { disableImmediatePushDelivery } = await import("../src/services/push-delivery.ts");
   const { runScheduledTasks } = await import("../src/jobs/scheduled-tasks.ts");
-  // Este proceso envía él mismo, al final, lo que pone en cola.
+  // Este proceso envía él mismo, al final, lo que pone en cola (emails y avisos en el celular).
   disableImmediateDelivery();
+  disableImmediatePushDelivery();
   if (!config.isProduction) console.warn(`NODE_ENV=${config.env}: los emails se redirigen a ${config.emailRedirectTo ?? "(nadie)"}.`);
 
   try {
@@ -302,19 +386,24 @@ async function main(): Promise<void> {
     console.info(
       `Recordatorios: ${report.reminders} · reservas por la página: ${report.onlineBookings ?? 0} · ` +
         `pacientes nuevos del panel: ${report.panelClients ?? 0} · citas del panel: ${report.panelAppointments ?? 0} · ` +
+        `series del panel: ${report.panelSeries ?? 0} · series canceladas: ${report.seriesCancellations ?? 0} · ` +
         `cambios de estado: ${report.statusChanges ?? 0} · cambios de cuenta: ${report.accountChanges ?? 0} · ` +
+        `importaciones: ${report.clientImports ?? 0} · ` +
         `enviados desde la anterior: ${report.sentSinceLastRun} · ` +
         `negocios con error: ${report.reminderFailures} · ` +
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +
         `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ` +
         `emails sin contenido (más de 90 días): ${report.emailContentPurged} · ` +
-        `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"} · ${report.durationMs} ms`,
+        `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"}` +
+        `${describePanelLine(report)}` +
+        `${describePushLine(report, config.webPushProblem ? `sin envío: ${config.webPushProblem}` : null)} · ${report.durationMs} ms`,
     );
     const notices = [
       ...buildBookingNotices(report),
       buildNotice(report, { gmailConfigured: Boolean(config.gmail) }),
       buildSecurityNotice(report),
       ...buildAccountNotices(report),
+      buildPushNotice(report),
     ].filter((notice) => notice !== null);
     for (const notice of notices) await notify(notice);
     if (notices.length === 0) console.info("Sin correos, errores ni alertas: no se envía aviso.");

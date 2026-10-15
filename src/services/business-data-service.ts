@@ -52,12 +52,13 @@ import { authorize, parseInput, type Actor, type RequestContext } from "./contex
 import { isRescheduled, notifyAppointmentChange } from "./notifications.ts";
 import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
 import { assertAppointmentLimit, assertClientLimit } from "./plan-limits.ts";
+import { notifyNewAppointment, notifyPatientCancel } from "./push-notices.ts";
 import { findProfessional, listProfessionals } from "./professional-service.ts";
 
 const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, "es");
 
 /** Busca un registro garantizando que pertenece al negocio (aislamiento multi-tenant). */
-async function findOwned<T>(db: Db, table: string, columns: string, businessId: string, id: string, notFound: string) {
+export async function findOwned<T>(db: Db, table: string, columns: string, businessId: string, id: string, notFound: string) {
   const row = isUuid(id)
     ? await one<T>(db, `select ${columns} from ${table} where id = $1 and business_id = $2`, [id, businessId])
     : null;
@@ -351,18 +352,22 @@ export const clientService = {
             and (a.client_id = $2 or exists (select 1 from appointment_clients other where other.appointment_id = a.id and other.client_id = $2))`,
         [clientId, claimed.id],
       );
-      const extras = await many<{ appointmentId: string; createdAt: string }>(
+      // Con su enlace a «Tu cita» y su «Confirmo que voy» (spec 010): es la misma persona, y el enlace de
+      // los emails que ya recibió tiene que seguir funcionando. Las horas, como texto: así no pierden los
+      // microsegundos al pasar por aquí.
+      const extras = await many<{ appointmentId: string; createdAt: string; accessToken: string; confirmedAt: string | null }>(
         db,
-        'delete from appointment_clients where client_id = $1 returning appointment_id as "appointmentId", created_at as "createdAt"',
+        `delete from appointment_clients where client_id = $1
+         returning appointment_id as "appointmentId", created_at::text as "createdAt", access_token as "accessToken",
+                   confirmed_at::text as "confirmedAt"`,
         [clientId],
       );
       for (const extra of extras) {
-        await db.query("insert into appointment_clients (appointment_id, client_id, business_id, created_at) values ($1, $2, $3, $4)", [
-          extra.appointmentId,
-          claimed.id,
-          businessId,
-          extra.createdAt,
-        ]);
+        await db.query(
+          `insert into appointment_clients (appointment_id, client_id, business_id, created_at, access_token, confirmed_at)
+           values ($1, $2, $3, $4::timestamptz, $5, $6::timestamptz)`,
+          [extra.appointmentId, claimed.id, businessId, extra.createdAt, extra.accessToken, extra.confirmedAt],
+        );
       }
       // Como principal (si la ficha era otra persona de esa cita, el trigger de la 032 la quita de ahí).
       const moved = await db.query("update appointments set client_id = $2 where client_id = $1", [clientId, claimed.id]);
@@ -548,7 +553,7 @@ async function assertNoConflict(db: Db, appointment: Appointment) {
  * Agenda de una cita creada desde el panel. El rol Profesional sólo agenda en la suya. Si no se eligió:
  * la de quien la crea o, si el negocio tiene una sola activa, esa.
  */
-async function resolveAppointmentProfessional(
+export async function resolveAppointmentProfessional(
   db: Db,
   businessId: string,
   actor: Actor,
@@ -577,7 +582,7 @@ async function resolveAppointmentProfessional(
 }
 
 /** El profesional tiene que atender el servicio de la cita (como en el formulario y en la página de reservas). */
-async function assertOffersService(db: Db, businessId: string, professionalId: string, serviceId: string) {
+export async function assertOffersService(db: Db, businessId: string, professionalId: string, serviceId: string) {
   const professional = await findProfessional(db, businessId, professionalId);
   if (offersService(professional, serviceId)) return;
   const service = await one<{ name: string }>(db, "select name from services where id = $1", [serviceId]);
@@ -600,7 +605,8 @@ async function assertLimitOnChange(db: Db, before: Appointment, after: Appointme
   }
 }
 
-async function buildAppointmentFields(db: Db, businessId: string, input: unknown) {
+/** Los datos de una cita del formulario, con el paciente y el servicio comprobados (también los de una serie, spec 011). */
+export async function buildAppointmentFields(db: Db, businessId: string, input: unknown) {
   const data = parseInput(appointmentSchema, input);
   await findOwned<Client>(db, "clients", "id", businessId, data.clientId, "El cliente seleccionado no existe.");
   await findOwned<Service>(db, "services", "id", businessId, data.serviceId, "El servicio seleccionado no existe.");
@@ -623,22 +629,29 @@ async function buildAppointmentFields(db: Db, businessId: string, input: unknown
 }
 
 /** jsonb: el lugar de una visita a domicilio (o null si es en el local). */
-const homeVisitJson = (visit: HomeVisitAddress | null) => (visit ? JSON.stringify(visit) : null);
+export const homeVisitJson = (visit: HomeVisitAddress | null) => (visit ? JSON.stringify(visit) : null);
 
 /**
  * Guarda los campos editables de una cita y devuelve la fila actualizada. `rescheduled`: la fecha y
  * hora se fijaron de nuevo (ver resetsSchedule).
+ * Otro paciente principal (spec 010): la cita recibe un enlace nuevo (`payment_token`, el del pago y
+ * el de «Tu cita») y pierde su «Confirmo que voy». Así quien deja de ser el paciente no puede ver ni
+ * cancelar la cita de otro con su enlace viejo. En el `set`, `client_id` es el valor anterior. Unir a
+ * la ficha (confirmClaim) no pasa por aquí: es la misma persona y conserva los dos.
+ * La base borra sola la confirmación si cambian la fecha, la hora o el profesional, o si se cancela
+ * (migración 037). La de las otras personas la borra un trigger `after`, que corre después del
+ * `returning`: por eso la cita se vuelve a leer al final.
  */
-async function saveAppointment(db: Db, appointment: Appointment, rescheduled: boolean): Promise<Appointment> {
-  return (await one<Appointment>(
-    db,
+export async function saveAppointment(db: Db, appointment: Appointment, rescheduled: boolean): Promise<Appointment> {
+  await db.query(
     `update appointments
         set client_id = $2, service_id = $3, date = $4, start_time = $5, end_time = $6,
             status = $7, notes = $8, price = $9, home_visit = $10, professional_id = $11, is_virtual = $12,
             scheduled_at = case when $13 then now() else scheduled_at end,
+            payment_token = case when client_id is distinct from $2::uuid then replace(gen_random_uuid()::text, '-', '') else payment_token end,
+            client_confirmed_at = case when client_id is distinct from $2::uuid then null else client_confirmed_at end,
             updated_at = now()
-      where id = $1
-      returning ${appointmentColumns()}`,
+      where id = $1`,
     [
       appointment.id,
       appointment.clientId,
@@ -654,7 +667,8 @@ async function saveAppointment(db: Db, appointment: Appointment, rescheduled: bo
       appointment.isVirtual,
       rescheduled,
     ],
-  ))!;
+  );
+  return (await one<Appointment>(db, `select ${appointmentColumns()} from appointments where id = $1`, [appointment.id]))!;
 }
 
 /** La cita con los nombres que muestra la auditoría. */
@@ -667,6 +681,7 @@ async function appointmentForAudit(db: Db, appointment: Appointment): Promise<Ap
     [appointment.clientId, appointment.serviceId, appointment.professionalId],
   );
   const extraNames = await clientNamesOf(db, appointment.extraClientIds ?? []);
+  const confirmedNames = await clientNamesOf(db, (appointment.clientConfirmations ?? []).map((confirmation) => confirmation.clientId));
   return {
     date: appointment.date,
     time: formatTimeRange(appointment.startTime, appointment.endTime),
@@ -679,6 +694,7 @@ async function appointmentForAudit(db: Db, appointment: Appointment): Promise<Ap
     notes: appointment.notes,
     homeAddress: appointment.homeVisit?.address ?? null,
     modality: appointment.isVirtual ? "Virtual" : appointment.homeVisit ? "A domicilio" : "En el local",
+    patientConfirmed: confirmedNames.length > 0 ? joinNames(confirmedNames) : "Nadie",
   };
 }
 
@@ -770,6 +786,8 @@ export const appointmentService = {
         paymentToken: "",
         receiptAt: null,
         paidAt: null,
+        clientConfirmations: [],
+        series: null,
         createdAt: "",
         updatedAt: "",
       };
@@ -808,6 +826,8 @@ export const appointmentService = {
         entityId: appointment.id,
         summary: `Creó la cita de ${await describeAppointment(db, appointment)}`,
       });
+      // «Cita nueva en tu agenda» en el celular del propietario, si es de su agenda y no la agendó él (spec 013).
+      await notifyNewAppointment(db, appointment, actor.userId);
       return appointment;
     });
   },
@@ -952,6 +972,35 @@ export const appointmentService = {
   },
 };
 
+/** Autor de lo que hace el paciente desde «Tu cita», el enlace de sus emails (spec 010). */
+export const PATIENT_LINK_ACTOR = "Paciente (desde su email)";
+
+/**
+ * El paciente principal cancela su cita desde «Tu cita» (spec 010). La regla (el negocio lo permite y
+ * aún está en plazo) la comprueba appointment-page-service.ts con la cita bloqueada. Es el mismo
+ * camino que un cambio de estado del panel (spec 008): el email de cancelación a cada persona con la
+ * copia al profesional, el aviso al negocio y la actividad con «Estado», que es lo que lee el aviso
+ * de ntfy. La hora queda libre. El acceso del rol Profesional a la ficha no se libera: eso lo decide
+ * el negocio, nunca el paciente.
+ */
+export async function cancelFromPatientLink(db: Db, before: Appointment): Promise<Appointment> {
+  const appointment = await saveAppointment(db, { ...before, status: "cancelled" }, false);
+  await notifyAppointmentChange(db, before, appointment, "patient_link", null);
+  await logAudit(db, {
+    businessId: before.businessId,
+    actor: null,
+    actorName: PATIENT_LINK_ACTOR,
+    action: "appointment.client_cancelled",
+    entityType: "appointment",
+    entityId: appointment.id,
+    summary: `Cancelada por el paciente desde su email: ${await describeAppointment(db, appointment)}`,
+    changes: diffChanges(await appointmentForAudit(db, before), await appointmentForAudit(db, appointment), APPOINTMENT_FIELDS),
+  });
+  // Aviso en el celular del propietario (spec 013).
+  await notifyPatientCancel(db, appointment);
+  return appointment;
+}
+
 /**
  * Llegada del paciente (control de asistencia): recepción la marca al verlo en la sala de espera y
  * puede quitarla si se equivocó. Sólo en citas pendientes o confirmadas.
@@ -998,6 +1047,7 @@ const WHATSAPP_NOTICE_LABELS: Record<WhatsAppNoticeKind, string> = {
   no_show: "para reagendar (No asistió)",
   pending: "que la cita vuelve a estar agendada",
   unconfirmed: "que la cita quedó pendiente de confirmar",
+  series_cancelled: "la cancelación de las citas de la serie",
 };
 
 /* --------------------------------- Horarios ---------------------------------- */

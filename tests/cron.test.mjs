@@ -1,7 +1,7 @@
 // Cron de recordatorios (scripts/cron.ts, directo contra la base, sin Vercel), aviso de ntfy e IP real por el proxy.
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { buildNotice, describeSentEmails } from "../scripts/cron.ts";
+import { buildNotice, buildPushNotice, describePushLine, describeSentEmails } from "../scripts/cron.ts";
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { viaProxy as signedProxy } from "./helpers/proxy.mjs";
 
@@ -73,6 +73,12 @@ sql(`insert into appointments (business_id, client_id, service_id, professional_
             (now() at time zone '${noonZone}')::date, '14:00', '14:30', 'confirmed', 0, now() - interval '3 days'
        from businesses b where b.slug = 'jhordan'`);
 
+// Un aviso de la campana del panel de hace 31 días (spec 014): el cron lo borra.
+const oldPanelNotice = sql(
+  `insert into panel_notices (business_id, kind, data, created_at)
+   select id, 'evening_summary', '{"date": "2026-01-01", "count": 1}', now() - interval '31 days' from businesses where slug = 'jhordan' returning id`,
+).split("\n")[0];
+
 console.log("Cron directo contra la base");
 const queuedBefore = Number(sql("select count(*) from notifications where status = 'queued'"));
 const remindersBefore = Number(sql("select count(*) from notifications where type = 'appointment_reminder'"));
@@ -89,7 +95,7 @@ ok(
   "sin Gmail no envía nada: todo sigue en cola (recordatorios y sus copias)",
 );
 ok(
-  /Recordatorios: \d+ · reservas por la página: \d+ · pacientes nuevos del panel: \d+ · citas del panel: \d+ · cambios de estado: \d+ · cambios de cuenta: \d+ · enviados/.test(run.output) && !/@/.test(run.output),
+  /Recordatorios: \d+ · reservas por la página: \d+ · pacientes nuevos del panel: \d+ · citas del panel: \d+ · series del panel: \d+ · series canceladas: \d+ · cambios de estado: \d+ · cambios de cuenta: \d+ · importaciones: \d+ · enviados/.test(run.output) && !/@/.test(run.output),
   "el registro (público en GitHub) sólo lleva cifras, ningún email",
   run.output.slice(-300),
 );
@@ -100,6 +106,20 @@ ok(
     received.every((n) => n === gmailNotice || /^Agenda360: (nueva reserva|más reservas|nueva cita|más citas|nuevo paciente|más pacientes nuevos)$/.test(n.title)),
   "avisa que faltan las credenciales de Gmail",
   received.map((n) => n.title),
+);
+ok(
+  /avisos en la app: enviados 0 · fallidos 0 · aparatos dados de baja 0 \(sin envío: faltan VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY\)/.test(run.output) &&
+    first.report.push?.sent === 0,
+  "la línea suma los avisos en la app (spec 013): sin claves VAPID dice que no los envía",
+  run.output.slice(-300),
+);
+ok(
+  / · avisos del panel: \d+ \(borrados, más de 30 días: \d+\) · avisos en la app: /.test(run.output) &&
+    first.report.panelNotices?.created === Number(sql("select count(*) from panel_notices")) &&
+    first.report.panelNotices?.purged >= 1 &&
+    sql(`select count(*) from panel_notices where id = '${oldPanelNotice}'`) === "0",
+  "y los de la campana del panel (spec 014): cuántos guardó y que borra los de más de 30 días",
+  [first.report.panelNotices, run.output.slice(-400)],
 );
 run = await runScript();
 let second = lastRun();
@@ -192,6 +212,20 @@ ok(
   "sólo va aparte la copia cuyo email al paciente no está en esta tanda",
   copyLines,
 );
+const seriesEmails = [
+  sentEmail("appointment_series", "an***@gmail.com", "Ana T.", "2026-10-20", "10:00", "Mente Abierta", "s1"),
+  sentEmail("appointment_copy", "dr***@gmail.com", "Ana T.", "2026-10-20", "10:00", "Mente Abierta", "s1"),
+  sentEmail("appointment_series_cancelled", "an***@gmail.com", "Ana T.", "2026-11-03", "10:00", "Mente Abierta", "s3"),
+  sentEmail("appointment_copy", "dr***@gmail.com", "Ana T.", "2026-11-03", "10:00", "Mente Abierta", "s3"),
+];
+const seriesLines = describeSentEmails(seriesEmails, 4).join("\n");
+ok(
+  seriesLines.includes("Serie de citas · 1\n• Mente Abierta · mar 20 oct 10:00 · Ana T. → an***@gmail.com · copia: dr***@gmail.com") &&
+    seriesLines.includes("Serie de citas cancelada · 1\n• Mente Abierta · mar 3 nov 10:00 · Ana T. → an***@gmail.com · copia: dr***@gmail.com") &&
+    !/Copia al profesional/.test(seriesLines),
+  "las series (spec 011): «Serie de citas» y «Serie de citas cancelada», con su copia en la misma línea",
+  seriesLines,
+);
 ok(
   describeSentEmails(sample.slice(0, 1), 45).at(-1) === "…y 44 más (detalle en el panel: Actividad → Emails).",
   "si son muchos, dice cuántos faltan",
@@ -202,6 +236,24 @@ ok(/Sí se enviaron \(1\):\n\nRecordatorio de cita · 1\n• Dra\. Nadia · mié
 notice = buildNotice({ ...base, pending: 4, emails: emails({ failed: 2, retrying: 1, errors: ["invalid_grant"] }) });
 ok(notice?.priority === 4 && /3 correos no se pudieron enviar/.test(notice.title) && /No se enviarán.*2/.test(notice.message) && /Siguen en cola: 4/.test(notice.message), "fallos definitivos: prioridad alta", notice);
 ok(buildNotice({ ...base, emails: emails() }, { gmailConfigured: false }) === null, "sin Gmail pero sin nada en cola: no avisa");
+
+console.log("Avisos en la app que no salen (spec 013)");
+const pushReport = (patch) => ({ queued: 0, sent: 0, retrying: 0, failed: 0, removedDevices: 0, errors: [], ...patch });
+ok(buildPushNotice({ ...base, emails: emails() }) === null && buildPushNotice({ ...base, emails: emails(), push: pushReport() }) === null, "sin avisos fallidos no dice nada");
+ok(buildPushNotice({ ...base, emails: emails(), push: pushReport({ sent: 3, failed: 2 }) }) === null, "si alguno salió, tampoco (un aparato suelto puede fallar)");
+const pushNotice = buildPushNotice({ ...base, emails: emails(), push: pushReport({ failed: 4, errors: ["fcm.googleapis.com, 403"] }) });
+ok(
+  pushNotice?.title === "Agenda360: los avisos en la app no salen" &&
+    pushNotice.message === "Fallaron 4 avisos en esta pasada (servicio: fcm.googleapis.com, 403). Revisa las claves VAPID en Vercel, Lambda y GitHub." &&
+    pushNotice.priority === 4 && pushNotice.click === "/admin/activity",
+  "si fallan y no sale ninguno: «los avisos en la app no salen», con el servicio y el código",
+  pushNotice,
+);
+ok(
+  describePushLine({ ...base, push: pushReport({ sent: 1, failed: 2, removedDevices: 3 }) }) === " · avisos en la app: enviados 1 · fallidos 2 · aparatos dados de baja 3" &&
+    describePushLine(base) === "",
+  "la línea del registro: sólo cifras",
+);
 
 console.log("IP real por el proxy del frontend");
 const lookup = (headers) =>

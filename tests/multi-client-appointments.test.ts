@@ -171,6 +171,25 @@ ok(
   "cada email saluda sólo a su paciente y no muestra a los demás",
   bodies.map(({ to, body }) => ({ to, body: body.slice(0, 120) })),
 );
+// Spec 010: cada persona, con su propio enlace a «Tu cita»; el principal, el del pago.
+const linkOf = new Map([
+  [ana.email, sql(`select payment_token from appointments where id = '${session.id}'`)],
+  [carlos.email, sql(`select access_token from appointment_clients where appointment_id = '${session.id}' and client_id = '${carlos.id}'`)],
+  [luis.email, sql(`select access_token from appointment_clients where appointment_id = '${session.id}' and client_id = '${luis.id}'`)],
+]);
+ok(new Set(linkOf.values()).size === 3, "tres enlaces distintos a «Tu cita»", [...linkOf.values()]);
+ok(
+  bodies.every(({ to, body }) => body.includes(`/cita/${linkOf.get(to)}`) && [...linkOf.values()].every((token) => token === linkOf.get(to) || !body.includes(token))),
+  "cada email lleva el enlace de su paciente y no el de los demás",
+  bodies.map(({ to, body }) => ({ to, link: body.match(/\/cita\/\w+/)?.[0] })),
+);
+const visitor = agent();
+const pages = await Promise.all([...linkOf.values()].map(async (token) => (await visitor("GET", `/public/appointments/${token}`)).body));
+ok(
+  pages[0].cancellation.status !== "not_main" && pages.slice(1).every((page) => page.cancellation.status === "not_main" && page.payment === false),
+  "sólo el principal puede cancelar y pagar desde «Tu cita»",
+  pages.map((page) => [page.cancellation?.status, page.payment]),
+);
 const copies = sql(`select subject from notifications where appointment_id = '${session.id}' and type = 'appointment_copy'`).split("\n").filter(Boolean);
 ok(copies.length === 1 && copies[0].includes("Ana Pareja, Carlos Pareja y Luis Pareja"), "una sola copia al profesional, con los tres nombres", copies);
 const created = (await ricardo("GET", `${B}/audit-logs?entityType=appointment&entityId=${session.id}`)).body.entries as AuditLog[];
@@ -241,6 +260,19 @@ ok(
 );
 queued = await transaction((db) => runReminderJob(db, businessId, at));
 ok(queued === 0 && countOf(session.id, "appointment_reminder") === 3, "una sola vez cada uno");
+const reminderBodies = (
+  await pool.query(`select to_email as to, body from notifications where appointment_id = $1 and type = 'appointment_reminder'`, [session.id])
+).rows as { to: string; body: string }[];
+const reminderLinks = new Map([
+  [ana.email, sql(`select payment_token from appointments where id = '${session.id}'`)],
+  [carlos.email, sql(`select access_token from appointment_clients where appointment_id = '${session.id}' and client_id = '${carlos.id}'`)],
+  [diana.email, sql(`select access_token from appointment_clients where appointment_id = '${session.id}' and client_id = '${diana.id}'`)],
+]);
+ok(
+  reminderBodies.every(({ to, body }) => body.includes(`/cita/${reminderLinks.get(to)}?confirmar=1`)),
+  "cada recordatorio lleva el «Confirmo que voy» de su paciente (spec 010)",
+  reminderBodies.map(({ to, body }) => ({ to, link: body.match(/\/cita\/\S+/)?.[0] })),
+);
 const mainKey = sql(`select dedupe_key from notifications where appointment_id = '${session.id}' and type = 'appointment_reminder' and to_email = '${ana.email}'`);
 ok(/^reminder:[^:]+:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d+$/.test(mainKey), "el del principal conserva la clave de siempre", mainKey);
 const reminderCopy = () =>

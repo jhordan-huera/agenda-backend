@@ -58,6 +58,8 @@ try {
   ok(r.status === 204, "también el staff (gestiona citas)", r.body);
   r = await owner("POST", `${B}/appointments/${appointment.id}/whatsapp-notice`, { kind: "pending" });
   ok(r.status === 204, "el de una cita cancelada que vuelve a quedar pendiente", r.body);
+  r = await owner("POST", `${B}/appointments/${appointment.id}/whatsapp-notice`, { kind: "series_cancelled" });
+  ok(r.status === 204, "el de «Cancelar ésta y las siguientes» de una serie (spec 011)", r.body);
   r = await owner("POST", `${B}/appointments/${appointment.id}/whatsapp-notice`, { kind: "otra-cosa" });
   ok(r.status === 400, "un aviso que no existe → 400", r.body);
   const laura = (await other("GET", "/auth/session")).body;
@@ -66,9 +68,10 @@ try {
   const entries = (await owner("GET", `${B}/audit-logs?entityType=appointment&entityId=${appointment.id}`)).body.entries;
   const notices = entries.filter((entry) => entry.action === "appointment.whatsapp_notice");
   ok(
-    notices.length === 3 &&
+    notices.length === 4 &&
       notices.some((entry) => /^Abrió WhatsApp para avisar que la cita está confirmada a /.test(entry.summary)) &&
       notices.some((entry) => /que la cita vuelve a estar agendada/.test(entry.summary)) &&
+      notices.some((entry) => /^Abrió WhatsApp para avisar la cancelación de las citas de la serie a /.test(entry.summary)) &&
       notices.some((entry) => entry.actorName === "Miguel Ortega" && /cambio de la cita/.test(entry.summary)),
     "queda en la actividad de la cita, con quién lo abrió",
     notices.map((entry) => `${entry.actorName}: ${entry.summary}`),

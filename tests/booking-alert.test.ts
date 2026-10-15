@@ -8,7 +8,16 @@ import { buildBookingNotices } from "../scripts/cron.ts";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
 import type { PublicBusinessProfile } from "../src/shared/types/index.ts";
-import { newClientNotice, onlineBookingNotice, panelAppointmentNotice, statusChangeNotice, type OnlineBooking } from "../src/services/booking-alerts.ts";
+import {
+  clientImportNotice,
+  newClientNotice,
+  onlineBookingNotice,
+  panelAppointmentNotice,
+  panelSeriesNotice,
+  seriesCancelledNotice,
+  statusChangeNotice,
+  type OnlineBooking,
+} from "../src/services/booking-alerts.ts";
 import { maskEmail, maskPhone, shortName } from "../src/services/masking.ts";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
@@ -161,6 +170,82 @@ ok(
 const manyAppointments = buildBookingNotices({ panelAppointments: 11, appointmentNotices: Array.from({ length: 10 }, () => appointmentNotice) } as never);
 ok(manyAppointments.length === 11 && /…y 1 cita más agendadas desde el panel/.test(manyAppointments[10].message), "con muchas, detalla 10 y dice cuántas faltan", manyAppointments.at(-1));
 
+console.log("Series de citas del panel (spec 011)");
+const { date: _date, startTime: _startTime, ...appointmentBase } = panelAppointment;
+const panelSeries = {
+  ...appointmentBase,
+  frequency: "weekly" as const,
+  requested: 8,
+  created: 7,
+  first: { date: "2026-10-20", startTime: "10:00" },
+  last: { date: "2026-12-08", startTime: "10:00" },
+  emails: [
+    { type: "appointment_series" as const, to: "juan.perez@gmail.com", status: "sent" as const, reason: null },
+    { type: "appointment_copy" as const, to: "ana.torres@gmail.com", status: "queued" as const, reason: null },
+  ],
+};
+const seriesNotice = panelSeriesNotice(panelSeries);
+ok(
+  seriesNotice.title === "Agenda360: nueva serie de citas" &&
+    seriesNotice.click === "/admin/businesses/b1" &&
+    seriesNotice.message ===
+      [
+        "Mente Abierta · serie de 7 citas desde el panel",
+        "Cada semana · mar 20 oct 10:00 → mar 8 dic 10:00",
+        "Paciente: Juan P. · ju***@gmail.com · ***5555",
+        "Paciente: María L. · ***2222",
+        "Consulta inicial · 60 min · $15",
+        "Con Dra. Ana Torres · en el local",
+        "Confirmada",
+        "1 fecha no se creó",
+        "Agendada desde el panel por Laura G. (Recepción)",
+        "",
+        "Emails:",
+        "• Al paciente → ju***@gmail.com",
+        "• Copia al profesional → an***@gmail.com (en cola)",
+      ].join("\n"),
+  "una serie: cuántas, cada cuánto y desde cuándo hasta cuándo, sus pacientes a medias, cuántas no se crearon, quién y sus emails",
+  seriesNotice.message,
+);
+ok(!/fecha(s)? no se cre/.test(panelSeriesNotice({ ...panelSeries, requested: 7 }).message), "si se crearon todas, no lo dice");
+ok(/\n3 fechas no se crearon\n/.test(panelSeriesNotice({ ...panelSeries, requested: 10 }).message), "y en plural", panelSeriesNotice({ ...panelSeries, requested: 10 }).message);
+const manySeries = buildBookingNotices({ panelSeries: 12, seriesNotices: Array.from({ length: 10 }, () => seriesNotice) } as never);
+ok(manySeries.length === 11 && manySeries[10].title === "Agenda360: más series de citas" && /…y 2 series más/.test(manySeries[10].message), "con muchas, detalla 10 y dice cuántas faltan", manySeries.at(-1));
+const cancellation = {
+  businessId: "b1",
+  businessName: "Mente Abierta",
+  serviceName: "Consulta inicial",
+  count: 6,
+  first: { date: "2026-10-20", startTime: "10:00" },
+  clients: [{ name: "Juan Pérez", email: "juan.perez@gmail.com", phone: "0994445555" }],
+  by: { name: "Elena Suárez", role: "staff" as const, superAdmin: false },
+  withoutNotice: false,
+  emails: [
+    { type: "appointment_series_cancelled" as const, to: "juan.perez@gmail.com", status: "sent" as const, reason: null },
+    { type: "appointment_copy" as const, to: "ana.torres@gmail.com", status: "queued" as const, reason: null },
+  ],
+};
+notice = seriesCancelledNotice(cancellation);
+ok(
+  notice.title === "Agenda360: serie de citas cancelada" &&
+    notice.message ===
+      [
+        "Mente Abierta · 6 citas canceladas desde mar 20 oct 10:00",
+        "Paciente: Juan P. · ju***@gmail.com · ***5555",
+        "Consulta inicial",
+        "Cancelada desde el panel por Elena S. (Recepción)",
+        "",
+        "Emails:",
+        "• Al paciente → ju***@gmail.com",
+        "• Copia al profesional → an***@gmail.com (en cola)",
+      ].join("\n"),
+  "«Cancelar ésta y las siguientes»: cuántas, desde cuándo, quién y sus emails, sin el negocio en el título",
+  notice,
+);
+ok(seriesCancelledNotice({ ...cancellation, withoutNotice: true, emails: [] }).message.endsWith("Sin avisar al paciente (se desmarcó la casilla)."), "sin avisar al paciente: lo dice");
+const manyCancelled = buildBookingNotices({ seriesCancellations: 11, seriesCancelNotices: Array.from({ length: 10 }, () => notice) } as never);
+ok(manyCancelled.length === 11 && manyCancelled[10].title === "Agenda360: más series canceladas", "con muchas, detalla 10 y dice cuántas faltan", manyCancelled.at(-1));
+
 console.log("Aviso de un cambio de estado (spec 008)");
 const change = {
   businessId: "b1",
@@ -173,6 +258,7 @@ const change = {
   clients: [{ name: "Juan Pérez", email: "juan.perez@gmail.com", phone: "0994445555" }],
   by: { name: "Elena Suárez", role: "staff" as const, superAdmin: false },
   withoutNotice: false,
+  byPatient: false,
   emails: [
     { type: "appointment_cancelled" as const, to: "juan.perez@gmail.com", status: "sent" as const, reason: null },
     { type: "appointment_copy" as const, to: "ana.torres@gmail.com", status: "queued" as const, reason: null },
@@ -196,6 +282,30 @@ ok(
   "de qué estado a cuál, quién lo hizo y sus emails, con el paciente a medias y sin el negocio en el título",
   notice,
 );
+notice = statusChangeNotice({
+  ...change,
+  by: null,
+  byPatient: true,
+  emails: [...change.emails, { type: "patient_cancelled" as const, to: "recepcion@mente.ec", status: "queued" as const, reason: null }],
+});
+ok(
+  notice.title === "Agenda360: cita cancelada por el paciente" &&
+    notice.message ===
+      [
+        "Mente Abierta · mié 14 oct 16:30",
+        "Paciente: Juan P. · ju***@gmail.com · ***5555",
+        "Consulta inicial",
+        "De Confirmada a Cancelada",
+        "Cancelada por el paciente desde su email",
+        "",
+        "Emails:",
+        "• Al paciente → ju***@gmail.com",
+        "• Copia al profesional → an***@gmail.com (en cola)",
+        "• Aviso al negocio → re***@mente.ec (en cola)",
+      ].join("\n"),
+  "la cancelación desde «Tu cita» (spec 010): lo dice el título y en lugar de quién la cambió, con el aviso al negocio",
+  notice,
+);
 notice = statusChangeNotice({ ...change, from: "Confirmada", to: "Pendiente", withoutNotice: true, emails: [] });
 ok(
   notice.title === "Agenda360: cita pendiente de confirmar" && notice.message.endsWith("Sin avisar al paciente (se desmarcó la casilla)."),
@@ -204,6 +314,40 @@ ok(
 );
 const manyChanges = buildBookingNotices({ statusChanges: 12, statusNotices: Array.from({ length: 10 }, () => notice) } as never);
 ok(manyChanges.length === 11 && /…y 2 cambios de estado más/.test(manyChanges[10].message), "con muchos, detalla 10 y dice cuántos faltan", manyChanges.at(-1));
+
+console.log("Aviso de una importación de pacientes (spec 012)");
+const importEntry = {
+  businessId: "b1",
+  businessName: "Mente Abierta",
+  summary: "Importó 200 pacientes (3 ya existían, 5 con errores)",
+  by: { name: "Ana Torres", role: "owner" as const, superAdmin: false },
+};
+const importNotice = clientImportNotice(importEntry);
+ok(
+  importNotice.title === "Agenda360: pacientes importados" &&
+    importNotice.priority === 3 &&
+    importNotice.tags.includes("inbox_tray") &&
+    importNotice.click === "/admin/businesses/b1" &&
+    importNotice.message === ["Mente Abierta", "Importó 200 pacientes (3 ya existían, 5 con errores)", "Desde el panel por Ana T. (Propietario)"].join("\n"),
+  "el negocio, la cifra y quién la hizo a medias (título sin el negocio)",
+  importNotice,
+);
+ok(
+  clientImportNotice({ ...importEntry, by: { name: "Soporte", role: null, superAdmin: true } }).message.endsWith("\nDesde el panel por el super admin (modo soporte)"),
+  "hecha por el super admin en modo soporte",
+);
+const manyImports = buildBookingNotices({ clientImports: 13, importNotices: Array.from({ length: 10 }, () => importNotice) } as never);
+ok(
+  manyImports.length === 11 &&
+    manyImports[10].title === "Agenda360: más importaciones" &&
+    /…y 3 importaciones más de pacientes \(detalle en la actividad de cada negocio\)/.test(manyImports[10].message),
+  "con más de 10, detalla 10 y dice cuántas faltan",
+  manyImports.at(-1),
+);
+ok(
+  /…y 1 importación más de pacientes/.test(buildBookingNotices({ clientImports: 11, importNotices: manyImports.slice(0, 10) } as never).at(-1)?.message ?? ""),
+  "en singular cuando falta una",
+);
 
 console.log("En la pasada del cron");
 const received: { topic: string; title: string; message: string; priority: number; click?: string }[] = [];
@@ -365,6 +509,49 @@ try {
   ok(!received.some((n) => n.title === "Agenda360: nueva cita" && n.message.includes("Paciente A.")), "las reservas de la página no se repiten como citas del panel");
   await runCron();
   ok(appointmentNotices().length === 1, "cada cita se avisa una sola vez", appointmentNotices().length);
+
+  // Una serie de citas del panel (spec 011): un solo aviso, no uno por cita.
+  // Lejos de las citas de esta prueba y de las demo: el panel no tiene la antelación máxima de la página.
+  const farContext = scopeToProfessional({ ...context, settings: { ...context.settings, maxAdvanceDays: 400 } }, agenda.id);
+  const seriesDates: string[] = [];
+  for (let d = 100; d < 200 && seriesDates.length === 0; d++) {
+    const date = addDaysISO(now.date, d);
+    const later = addDaysISO(date, 7);
+    const [time] = getAvailableSlots(date, service.durationMinutes, farContext);
+    if (time && getAvailableSlots(later, service.durationMinutes, farContext).includes(time)) seriesDates.push(date, later, time);
+  }
+  const seriesInput = {
+    clientId: panelClientId,
+    serviceId: service.id,
+    professionalId: agenda.id,
+    date: seriesDates[0],
+    startTime: seriesDates[2],
+    durationMinutes: service.durationMinutes,
+    price: 15,
+    status: "confirmed",
+    notes: "",
+    homeVisit: null,
+    isVirtual: false,
+  };
+  r = await call("POST", `/businesses/${profile.business.id}/appointment-series`, {
+    appointment: seriesInput,
+    repeat: { frequency: "weekly", count: 2 },
+    dates: [
+      { date: seriesDates[0], startTime: seriesDates[2] },
+      { date: seriesDates[1], startTime: seriesDates[2] },
+    ],
+  });
+  ok(r.status === 201 && r.body.created.length === 2, "el propietario agenda una serie de 2 citas", r.body);
+  const appointmentsBefore = appointmentNotices().length;
+  run = await runCron();
+  const seriesSent = received.filter((n) => n.title === "Agenda360: nueva serie de citas" && n.message.includes("Paciente: Paciente P."));
+  ok(
+    run.code === 0 && seriesSent.length === 1 && seriesSent[0].message.startsWith(`${profile.business.name} · serie de 2 citas desde el panel\nCada semana · `),
+    "el cron avisa una vez por la serie",
+    received.map((n) => n.title),
+  );
+  ok(appointmentNotices().length === appointmentsBefore, "y sus citas no tienen aviso propio", appointmentNotices().length);
+  ok(/series del panel: 1/.test(run.output) && /citas del panel: 0/.test(run.output), "el registro público, sólo las cifras", run.output.slice(-500));
 
   // Cambios de estado de esa cita (spec 008): con los botones y con el formulario.
   const statusNotices = () => received.filter((n) => n.message.includes("Paciente: Paciente P.") && /\nDe \S/.test(n.message));
