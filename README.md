@@ -185,7 +185,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 | Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) · `GET /public/payments/:token` (+ `receipts`) · `GET /public/appointments/:token` · `POST …/confirm` · `POST …/cancel` («Tu cita», spec 010) |
 | Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, el cupo de Gmail —`emailQuota`, spec 015—, último cron, última copia e intentos fallidos; spec 006; el reparto por plan, `businessesByPlan`, sólo cuenta los negocios activos) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
-| Avisos en el celular (spec 013) | `GET /push/config` · `PUT /push/device` · `PATCH /push/device` · `POST /push/device/off` · `POST /push/device/test` (sólo el propietario de un negocio activo y el super admin; el aparato va en el cuerpo, nunca en la URL) |
+| Avisos en el celular (spec 013) | `GET /push/config` · `PUT /push/device` · `PATCH /push/device` · `POST /push/device/off` · `POST /push/device/test` (sólo el propietario de un negocio activo, el rol Profesional con su agenda activa —sólo el resumen de las 8, spec 017— y el super admin; el aparato va en el cuerpo, nunca en la URL) |
 | Analítica (spec 016) | `GET /admin/analytics?days=30\|90` (sólo el super admin, con la verificación en dos pasos): `{ snapshot }`, la última foto de ese periodo, o `{ snapshot: null }` si aún no hay; `days` distinto de 30 o 90, 400. Lee una fila y no calcula nada. La ficha (`GET /admin/businesses/:id`) suma `analytics`: su parte de la última foto de 30 días y su tipo |
 | Centro de avisos (spec 014) | `GET /businesses/:id/notices/unread` · `GET …/notices` (`?limit&unread=1&cursor`) · `POST …/notices/:noticeId/read` · `POST …/notices/read-all` (cualquier rol del equipo; el super admin en modo soporte recibe 403) y lo mismo en `/admin/notices` (el super admin, con la verificación en dos pasos). Ninguna escribe en la actividad |
 | Estado | `GET /health` (con `push`: si la API tiene claves VAPID válidas) |
@@ -830,8 +830,9 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
 
 Spec 013. El propietario de cada negocio y los super admin reciben avisos en el celular (o en la
 computadora) desde la app instalada, como cualquier aplicación, con los avisos estándar de los
-navegadores (Web Push): sin Play Store, App Store ni servicios de pago. Los emails no cambian: el aviso
-se suma.
+navegadores (Web Push): sin Play Store, App Store ni servicios de pago. Desde la spec 017, también cada
+profesional (el rol Profesional con su agenda), sólo con el resumen de las 8 de su agenda. Los emails
+no cambian: el aviso se suma.
 
 - **Qué avisa:**
   - **al propietario, al momento:** cada reserva online (con «· Por verificar» si lo está), cada
@@ -841,6 +842,13 @@ se suma.
   - **al propietario, desde el cron:** cada cita que terminó hace 30 minutos y sigue Pendiente o
     Confirmada («Cita por cerrar») y, a las 8 de la noche en la hora del negocio, «Tienes 3 citas de
     hoy sin cerrar» si queda alguna;
+  - **a cada profesional, desde el cron (spec 017):** a las 8 de la noche, «Tienes 2 citas de hoy sin
+    cerrar» con las de su agenda que ya terminaron y siguen Pendiente o Confirmada, si le queda alguna;
+    una vez al día (clave `resumen:<agenda>:<fecha>`), sólo con la cifra, y abre la agenda de ese día.
+    Va a quien tiene la agenda ese día, si sigue con el rol Profesional (audiencia `userOf` en
+    `push-delivery.ts`). El propietario no recibe un segundo aviso por su propia agenda (ya tiene el del
+    negocio). Su tarjeta sólo tiene ese tipo; sin una agenda activa no los puede activar (403 con el
+    motivo). Recepción y los administradores siguen sin avisos al celular;
   - **al super admin:** al momento los negocios nuevos (el alta del registro, no los que crea él) y las
     solicitudes de plan; desde el cron los cambios de seguridad en cuentas de super admin y los
     intentos fallidos (además de ntfy, que no cambia).
@@ -849,8 +857,8 @@ se suma.
   lo transportan pero no lo pueden leer. Los registros (también los públicos del cron) sólo tienen
   cifras y el servicio (`fcm.googleapis.com, 403`), nunca títulos, textos ni direcciones de aparatos.
 - **Actividad:** activar los avisos en un aparato, cambiar sus tipos, desactivarlos y el aviso de
-  prueba quedan en la actividad del negocio (o de la plataforma, los del super admin), con el
-  navegador («Chrome en Mac»). La puesta al día silenciosa al abrir el panel y la pausa al cerrar
+  prueba quedan en la actividad del negocio (también los del profesional, a su nombre; o de la
+  plataforma, los del super admin), con el navegador («Chrome en Mac»). La puesta al día silenciosa al abrir el panel y la pausa al cerrar
   sesión no.
 - **Cómo funciona:**
   - `src/services/web-push.ts`: el estándar con `node:crypto`, **sin librería** — cifrado
@@ -902,7 +910,8 @@ Spec 014. El panel del negocio y el de /admin tienen una **campana** con el núm
 leer («9+» con más de 9): en la computadora, junto al logo del menú lateral; en el celular, a la
 derecha de la barra de arriba. Al tocarla se ven los últimos 20, y «Ver todos» abre la página
 «Avisos» con los de los últimos 30 días. No hace falta activar nada: la campana no depende de los
-avisos en el celular (que siguen igual, sólo para el propietario y el super admin).
+avisos en el celular (los del propietario y el super admin y, desde la spec 017, el resumen de las 8
+de cada profesional).
 
 - **Qué le llega a cada uno** (la tabla de la spec, decidida al leer con lo que la persona es hoy):
   - **el propietario:** las reservas online (también «Por verificar»), los comprobantes, las

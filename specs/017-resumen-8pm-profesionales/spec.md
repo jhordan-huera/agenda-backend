@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/017-resumen-8pm-profesionales` (rama de trabajo: `dev`) · **Creada**: 2026-10-15
 
-**Estado**: Aprobada (2026-10-15, con su plan)
+**Estado**: Implementada (2026-10-15)
 
 **Repos**:
 - **agenda-backend:** quién puede activar los avisos y el envío del resumen.

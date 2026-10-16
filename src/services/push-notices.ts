@@ -28,8 +28,8 @@ import {
  *   («· con Dra. Pérez») sólo si el negocio tiene más de una agenda activa.
  * - **El día**, en la zona del negocio: «Hoy 16:00», «Mañana 16:00» o «Mar 20 oct 16:00».
  * - **La campana no depende del celular** (RF-003): su aviso se guarda siempre, haya o no aparatos, y
- *   antes de mirar los del celular. El celular sigue como en la spec 013: sólo el propietario y los
- *   super admin con aparatos.
+ *   antes de mirar los del celular. El celular sigue como en la spec 013: el propietario y los super
+ *   admin con aparatos y, desde la spec 017, cada profesional con el resumen de las 8 de su agenda.
  * - **Nunca rompen lo que los provoca:** el aviso del panel y el del celular van cada uno en su punto de
  *   guardado (`aviso_panel` y `aviso_celular`): si fallan, la reserva y los emails siguen igual (RF-011).
  */
@@ -366,7 +366,10 @@ export async function queueUnclosedNotices(since: string | null, until: string, 
  * Desde la spec 014, para todos los negocios activos (R5): en la campana, el del negocio entero al
  * propietario y uno por cada agenda con usuario que no sea el propietario, con sus propias citas (clave
  * `resumen:<agenda>:<fecha>`), si le queda alguna. En el celular, como antes, el del negocio al
- * propietario con aparatos. Devuelve los del celular; los de la campana se suman a `tally`.
+ * propietario con aparatos y, desde la spec 017, el de su agenda a cada profesional con aparatos
+ * (`userOf`: quien tiene la agenda ese día y sigue con el rol Profesional), con la misma clave. El
+ * propietario no recibe un segundo aviso por su propia agenda, y el aviso sólo lleva la cifra, nunca un
+ * paciente. Devuelve los del celular; los de la campana se suman a `tally`.
  */
 export async function queueEveningSummaries(since: string | null, until: string, tally?: PanelTally): Promise<number> {
   const window = cronWindow(since, until);
@@ -403,29 +406,32 @@ export async function queueEveningSummaries(since: string | null, until: string,
         );
         if (tally) tally.panel += saved;
       };
-      await save(null, open, `resumen:${business.id}:${day.date}`);
-      for (const agenda of agendas) {
-        if (!agenda.userId || !agenda.isActive || agenda.userId === business.ownerId) continue;
-        await save(agenda.professionalId, agenda.open, `resumen:${agenda.professionalId}:${day.date}`);
-      }
-      if (!(await ownerHasPhone(business.id, "evening_summary"))) continue;
-      queued += await guardedPush(
-        pool,
-        "evening_summary",
-        () =>
-          insertPush(
-            pool,
-            { ownerOf: business.id },
-            {
+      /** El aviso del celular: «Tienes N citas de hoy sin cerrar», que abre la agenda de ese día. */
+      const toPhone = (audience: PushAudience, count: number, key: string) =>
+        guardedPush(
+          pool,
+          "evening_summary",
+          () =>
+            insertPush(pool, audience, {
               kind: "evening_summary",
-              ...phoneText("evening_summary", { date: day.date, count: open }),
+              ...phoneText("evening_summary", { date: day.date, count }),
               tag: `resumen-${day.date}`,
               urgency: "normal",
-              dedupeKey: `resumen:${business.id}:${day.date}`,
-            },
-          ),
-        { inTransaction: false },
-      );
+              dedupeKey: key,
+            }),
+          { inTransaction: false },
+        );
+      await save(null, open, `resumen:${business.id}:${day.date}`);
+      if (await ownerHasPhone(business.id, "evening_summary")) {
+        queued += await toPhone({ ownerOf: business.id }, open, `resumen:${business.id}:${day.date}`);
+      }
+      for (const agenda of agendas) {
+        if (!agenda.userId || !agenda.isActive || agenda.userId === business.ownerId) continue;
+        const key = `resumen:${agenda.professionalId}:${day.date}`;
+        await save(agenda.professionalId, agenda.open, key);
+        // Una consulta por agenda: si esa persona no tiene aparatos (o no es del rol Profesional), no pone nada.
+        queued += await toPhone({ userOf: agenda.userId, businessId: business.id }, agenda.open, key);
+      }
     } catch (error) {
       console.error(`[avisos] Resumen de las 8: falló el negocio ${business.id} (${(error as { code?: string })?.code ?? "error"}).`);
     }

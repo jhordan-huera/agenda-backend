@@ -1,12 +1,13 @@
 // Avisos en el celular (spec 013): quién los puede activar, a quién le llegan y qué dicen (siempre con el
 // paciente a medias), la cola con sus reintentos y bajas, lo que sale del cron (citas por cerrar, el
 // resumen de las 8 y los del super admin) y que un fallo de los avisos nunca rompe una reserva (RF-011).
+// Desde la spec 017, también el resumen de las 8 en el celular de cada profesional, con su agenda.
 // El servicio de avisos es uno falso en 127.0.0.1 (tests/helpers/harness.ts) que descifra lo que recibe.
 import { businessInput, createBusinessWithOwner } from "./helpers/business.mjs";
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { BASE, agent, checks, count, fakeNtfy, fakePushService, login, runCron, sleep, sql, startApi, type ReceivedPush } from "./helpers/harness.ts";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
-import { OWNER_PUSH_KINDS, PLATFORM_PUSH_KINDS } from "../src/shared/lib/constants/push.ts";
+import { AGENDA_PUSH_KINDS, OWNER_PUSH_KINDS, PLATFORM_PUSH_KINDS } from "../src/shared/lib/constants/push.ts";
 import { getPlan } from "../src/shared/lib/constants/plans.ts";
 import { capitalize, formatShortDate } from "../src/shared/lib/format.ts";
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
@@ -152,19 +153,16 @@ r = await admin("GET", "/push/config");
 ok(r.status === 200 && JSON.stringify(r.body.kinds) === JSON.stringify(PLATFORM_PUSH_KINDS), "el super admin recibe sus cuatro tipos", r.body);
 const adminDevice = push.device();
 ok((await activate(admin, adminDevice)).status === 200, "y activa el suyo");
+// El rol Profesional con su agenda sí (spec 017): ver «El resumen de las 8 en el celular de cada profesional».
+const NOT_FOR_ROLE = "Los avisos en el celular son sólo para el propietario del negocio y los profesionales con su agenda.";
 for (const [email, label] of [
   ["elena@demo.com", "Recepción"],
   ["andrea@demo.com", "un administrador"],
-  ["valeria@demo.com", "el rol Profesional"],
 ] as const) {
   const browser = await as(email);
   const config = await browser("GET", "/push/config");
   const saved = await activate(browser, push.device());
-  ok(
-    config.status === 403 && saved.status === 403 && saved.body.error.message === "Los avisos en el celular son sólo para el propietario del negocio.",
-    `${label}: 403`,
-    { config: config.body, saved: saved.body },
-  );
+  ok(config.status === 403 && saved.status === 403 && saved.body.error.message === NOT_FOR_ROLE, `${label}: 403`, { config: config.body, saved: saved.body });
 }
 ok((await visitor()("GET", "/push/config")).status === 401 && (await visitor()("PUT", "/push/device", push.device())).status === 401, "sin sesión: 401");
 const strict = await startApi({ SUPER_ADMIN_2FA: "required" });
@@ -857,6 +855,180 @@ ok(
   queuedFor(olgaDevice, `resumen-${day6}`) === 0 && queuedFor(olgaDevice, `por-cerrar-${unclosedStillOn}`) === 1,
   "con «Resumen de las 8» apagado no llega, y «Citas por cerrar» sigue llegando",
 );
+
+/* ======================================================================================== */
+console.log("El resumen de las 8 en el celular de cada profesional (spec 017)");
+const valeria = await as("valeria@demo.com");
+r = await valeria("GET", "/push/config");
+ok(
+  r.status === 200 && r.body.available === true && JSON.stringify(r.body.kinds) === JSON.stringify(AGENDA_PUSH_KINDS) && JSON.stringify(r.body.kinds) === '["evening_summary"]',
+  "el rol Profesional con su agenda puede activarlos, sólo con «Resumen de las 8 de la noche»",
+  r.body,
+);
+const valeriaDevice = push.device();
+r = await valeria("PUT", "/push/device", valeriaDevice, chromeMac);
+ok(r.status === 200 && r.body.mutedKinds.length === 0, "activa su aparato", r.body);
+r = await valeria("PATCH", "/push/device", { endpoint: valeriaDevice.endpoint, mutedKinds: ["booking"] }, chromeMac);
+ok(r.status === 400 && r.body.error.message === "Ese tipo de aviso no es para tu cuenta.", "un tipo del propietario no es para su cuenta: 400", r.body);
+r = await valeria("PATCH", "/push/device", { endpoint: valeriaDevice.endpoint, mutedKinds: ["evening_summary"] }, chromeMac);
+const valeriaOn = await valeria("PATCH", "/push/device", { endpoint: valeriaDevice.endpoint, mutedKinds: [] }, chromeMac);
+ok(r.status === 200 && JSON.stringify(r.body.mutedKinds) === '["evening_summary"]' && valeriaOn.status === 200 && valeriaOn.body.mutedKinds.length === 0, "lo apaga y lo vuelve a encender", [r.body, valeriaOn.body]);
+r = await valeria("POST", "/push/device/test", { endpoint: valeriaDevice.endpoint }, chromeMac);
+const valeriaTest = await receive(valeriaDevice, withTag("prueba"), 1000);
+ok(
+  r.status === 200 && valeriaTest?.payload?.title === "Avisos activados" &&
+    valeriaTest.payload.body === "Listo: aquí te avisaremos de las citas que quedan sin cerrar." && valeriaTest.payload.url === "/dashboard",
+  "su aviso de prueba: «Listo: aquí te avisaremos de las citas que quedan sin cerrar.», que abre /dashboard",
+  [r.body, valeriaTest?.payload],
+);
+const valeriaSecond = push.device();
+await valeria("PUT", "/push/device", valeriaSecond, chromeMac);
+r = await valeria("POST", "/push/device/off", { endpoint: valeriaSecond.endpoint }, chromeMac);
+ok(r.status === 204 && !deviceExists(valeriaSecond), "desactiva el otro aparato", r.status);
+const valeriaAudit = pushAudit(valeria.session.userId);
+ok(
+  JSON.stringify(valeriaAudit.map((row) => row.action)) ===
+    JSON.stringify(["push.device_enabled", "push.kinds_changed", "push.kinds_changed", "push.test_sent", "push.device_enabled", "push.device_disabled"]) &&
+    valeriaAudit[0].summary === "Activó los avisos en el celular en Chrome en Mac" &&
+    valeriaAudit.every((row) => row.businessId === dental && row.actorName === "Valeria Cruz"),
+  "activar, los tipos, la prueba y desactivar quedan en la actividad de su negocio, a su nombre (RF-006)",
+  valeriaAudit,
+);
+ok(
+  JSON.stringify((JSON.parse(valeriaAudit[1].changes ?? "[]") as { label: string; before: string; after: string }[]).map(({ label, before, after }) => [label, before, after])) ===
+    JSON.stringify([["Resumen de las 8 de la noche", "Encendido", "Apagado"]]),
+  "con el interruptor que cambió («Resumen de las 8 de la noche: Encendido → Apagado»)",
+  valeriaAudit[1],
+);
+const ownerSees = await ricardo("GET", `/businesses/${dental}/audit-logs?entityType=user`);
+ok(ownerSees.status === 200 && JSON.stringify(ownerSees.body).includes("Envió un aviso de prueba a Chrome en Mac"), "el propietario lo ve en Actividad (Usuarios)", ownerSees.status);
+
+// Otra profesional de la clínica: la agenda del Dr. Andrés Vega pasa a tener usuario.
+const andresAgenda = agendas.find((agenda) => agenda.displayName === "Dr. Andrés Vega")!;
+const newProfessional = (firstName: string, lastName: string, email: string) => {
+  const id = sql(
+    `insert into users (first_name, last_name, email, password_hash)
+     select '${firstName}', '${lastName}', '${email}', password_hash from users where email = 'valeria@demo.com' returning id`,
+  ).split("\n")[0];
+  sql(`insert into business_users (business_id, user_id, role, clinical_access) values ('${dental}', '${id}', 'professional', true)`);
+  return id;
+};
+const andresId = newProfessional("Andrés", "Vega", `andres.${tag}@demo.com`);
+sql(`update professionals set user_id = '${andresId}' where id = '${andresAgenda.id}'`);
+const andres = await as(`andres.${tag}@demo.com`);
+const andresDevice = push.device();
+ok(andres.session.professionalId === andresAgenda.id && (await activate(andres, andresDevice)).status === 200, "la otra profesional activa el suyo");
+
+const dentalZone = sql(`select timezone from businesses where id = '${dental}'`);
+const summaryPatient = patientRow("Gabriela Fernanda Ortiz Paz");
+let summaryDay = addDaysISO(getZonedNow(dentalZone).date, 200);
+while (count(`select count(*) from appointments where business_id = '${dental}' and date between '${summaryDay}' and '${addDaysISO(summaryDay, 3)}'`) > 0) {
+  summaryDay = addDaysISO(summaryDay, 7);
+}
+const dentalAt = (professionalId: string, date: string, start: string, end: string, status = "confirmed") =>
+  sql(
+    `insert into appointments (business_id, client_id, service_id, professional_id, date, start_time, end_time, status, price, source)
+     values ('${dental}', '${summaryPatient}', '${dentalService}', '${professionalId}', '${date}', '${start}', '${end}', '${status}', 20, 'dashboard') returning id`,
+  ).split("\n")[0];
+/** El cron simulado a las 20:00 de ese día en la zona de la clínica (una pasada de 10 minutos). */
+const eveningRun = (date: string, shift = 0) => {
+  const eight = instant(date, "20:00", dentalZone);
+  return notices.queueEveningSummaries(plus(eight, shift - 5), plus(eight, shift + 5));
+};
+const summaryOf = (device: Device, date: string) => push.to(device.endpoint).filter((item) => item.payload?.tag === `resumen-${date}`);
+dentalAt(valeriaAgenda.id, summaryDay, "08:00", "08:30");
+dentalAt(valeriaAgenda.id, summaryDay, "09:00", "09:30", "pending");
+dentalAt(valeriaAgenda.id, summaryDay, "10:00", "10:30", "completed");
+dentalAt(valeriaAgenda.id, summaryDay, "19:45", "20:30");
+dentalAt(andresAgenda.id, summaryDay, "11:00", "11:30");
+dentalAt(ricardoAgenda.id, summaryDay, "12:00", "12:30", "pending");
+queued = await eveningRun(summaryDay);
+await delivery.processPushQueue();
+const [valeriaSummary] = summaryOf(valeriaDevice, summaryDay);
+const [andresSummary] = summaryOf(andresDevice, summaryDay);
+ok(
+  summaryOf(valeriaDevice, summaryDay).length === 1 && valeriaSummary.payload?.title === "Tienes 2 citas de hoy sin cerrar" &&
+    valeriaSummary.payload.body === "Márcalas Completada o No asistió para que la agenda y los reportes cuadren." &&
+    valeriaSummary.payload.url === `/dashboard/calendar?date=${summaryDay}` && valeriaSummary.headers.urgency === "normal",
+  "a las 20:00 la profesional recibe un solo resumen, sólo de su agenda: «Tienes 2 citas de hoy sin cerrar» (la completada y la que termina a las 20:30 no cuentan)",
+  valeriaSummary?.payload,
+);
+ok(
+  summaryOf(andresDevice, summaryDay).length === 1 && andresSummary.payload?.title === "Tienes 1 cita de hoy sin cerrar" &&
+    andresSummary.payload.body.startsWith("Márcala Completada") && andresSummary.payload.url === `/dashboard/calendar?date=${summaryDay}`,
+  "y la otra profesional, el suyo: «Tienes 1 cita de hoy sin cerrar»",
+  andresSummary?.payload,
+);
+ok(
+  queuedFor(ricardoA, `resumen-${summaryDay}`) === 1 && summaryOf(ricardoA, summaryDay)[0]?.payload?.title === "Tienes 4 citas de hoy sin cerrar",
+  "el propietario sigue recibiendo el del negocio entero (4), sin un segundo aviso por su propia agenda",
+  [queuedFor(ricardoA, `resumen-${summaryDay}`), summaryOf(ricardoA, summaryDay).map((item) => item.payload?.title)],
+);
+ok(
+  queuedFor(adminDevice, `resumen-${summaryDay}`) === 0,
+  "el super admin (también en modo soporte) no recibe los de los profesionales",
+);
+ok(
+  count(`select count(*) from push_messages where dedupe_key = 'resumen:${valeriaAgenda.id}:${summaryDay}'`) === 1 &&
+    count(`select count(*) from push_messages where dedupe_key = 'resumen:${dental}:${summaryDay}'`) >= 1,
+  "con la clave resumen:<agenda>:<fecha> (el del propietario, resumen:<negocio>:<fecha>)",
+);
+ok(
+  count(`select count(*) from panel_notices where dedupe_key in ('resumen:${valeriaAgenda.id}:${summaryDay}', 'resumen:${andresAgenda.id}:${summaryDay}', 'resumen:${dental}:${summaryDay}')`) === 3 &&
+    count(`select count(*) from panel_notices where dedupe_key = 'resumen:${ricardoAgenda.id}:${summaryDay}'`) === 0,
+  "la campana sigue igual: el del negocio y uno por agenda con usuario que no es el propietario",
+);
+const summaryTexts = sql(`select coalesce(string_agg(title || ' ' || body || ' ' || url, ' | '), '') from push_messages where tag = 'resumen-${summaryDay}'`);
+ok(
+  summaryTexts.length > 0 && !/Gabriela|Ortiz|Juan|Pérez/.test(summaryTexts) && !summaryTexts.includes(summaryPatient),
+  "sin datos de pacientes: sólo la cifra (RF-005)",
+  summaryTexts,
+);
+ok(
+  (await eveningRun(summaryDay)) === 0 && (await eveningRun(summaryDay, 10)) === 0 && queuedFor(valeriaDevice, `resumen-${summaryDay}`) === 1 && queuedFor(andresDevice, `resumen-${summaryDay}`) === 1,
+  "pasar el cron otra vez (o la pasada siguiente) no lo repite: una vez al día",
+);
+const quietDay = addDaysISO(summaryDay, 1);
+dentalAt(valeriaAgenda.id, quietDay, "08:00", "08:30", "completed");
+dentalAt(andresAgenda.id, quietDay, "09:00", "09:30");
+await eveningRun(quietDay);
+ok(
+  queuedFor(valeriaDevice, `resumen-${quietDay}`) === 0 && queuedFor(andresDevice, `resumen-${quietDay}`) === 1 && queuedFor(ricardoA, `resumen-${quietDay}`) === 1,
+  "sin citas sin cerrar en su agenda no le llega nada (a la otra sí, y al propietario el del negocio)",
+);
+
+console.log("Quién tiene la agenda ese día, y Recepción (spec 017)");
+const brunoId = newProfessional("Bruno", "Salas", `bruno.${tag}@demo.com`);
+sql(`update professionals set user_id = '${brunoId}' where id = '${andresAgenda.id}'`);
+const bruno = await as(`bruno.${tag}@demo.com`);
+const brunoDevice = push.device();
+await activate(bruno, brunoDevice);
+const movedDay = addDaysISO(summaryDay, 2);
+dentalAt(andresAgenda.id, movedDay, "09:00", "09:30");
+await eveningRun(movedDay);
+ok(
+  queuedFor(brunoDevice, `resumen-${movedDay}`) === 1 && queuedFor(andresDevice, `resumen-${movedDay}`) === 0,
+  "una agenda que pasa a otro usuario: el resumen va a quien la tiene ese día",
+);
+r = await andres("GET", "/push/config");
+const noAgendaSave = await activate(andres, push.device());
+ok(
+  r.status === 403 && noAgendaSave.status === 403 &&
+    r.body.error.message === "Tu usuario no tiene una agenda asignada: los avisos en el celular son para el resumen de tu agenda. Pide al propietario que te la asigne en Profesionales.",
+  "un profesional sin agenda activa: 403 con un mensaje claro",
+  r.body,
+);
+sql(`update business_users set role = 'staff' where user_id = '${valeria.session.userId}'`);
+const staffDay = addDaysISO(summaryDay, 3);
+dentalAt(valeriaAgenda.id, staffDay, "08:00", "08:30");
+await eveningRun(staffDay);
+r = await valeria("GET", "/push/config");
+ok(
+  queuedFor(valeriaDevice, `resumen-${staffDay}`) === 0 && r.status === 403 && r.body.error.message === NOT_FOR_ROLE,
+  "si pasa a Recepción deja de recibirlo (aunque tenga la agenda y el aparato) y no puede activarlos",
+  r.body,
+);
+sql(`update business_users set role = 'professional' where user_id = '${valeria.session.userId}'`);
 
 /* ======================================================================================== */
 console.log("Los del super admin (R14)");

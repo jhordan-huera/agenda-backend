@@ -18,6 +18,12 @@ export const OWNER_PUSH_KINDS = [
   "evening_summary",
 ] as const satisfies readonly PushKind[];
 
+/**
+ * Los del rol Profesional con una agenda activa (spec 017): sólo el resumen de las 8 de la noche, con
+ * las citas de su agenda. Ya están en los del propietario (que recibe el del negocio entero).
+ */
+export const AGENDA_PUSH_KINDS = ["evening_summary"] as const satisfies readonly PushKind[];
+
 /** Los del super admin, en el orden de la tarjeta. */
 export const PLATFORM_PUSH_KINDS = ["new_business", "plan_request", "account_security", "login_attack"] as const satisfies readonly PushKind[];
 
@@ -48,6 +54,11 @@ export const PUSH_KIND_LABELS: Record<MutablePushKind, { label: string; descript
     description: "Contraseña o verificación en dos pasos de una cuenta de super admin.",
   },
   login_attack: { label: "Intentos fallidos de inicio de sesión", description: "Posibles intentos de adivinar contraseñas." },
+};
+
+/** En la tarjeta del rol Profesional (spec 017), el resumen es sólo de su agenda: la explicación lo dice. */
+export const AGENDA_PUSH_KIND_DESCRIPTIONS: Partial<Record<MutablePushKind, string>> = {
+  evening_summary: "Cuántas citas de hoy de tu agenda quedan sin cerrar, si hay alguna.",
 };
 
 /** Minutos después del fin de una cita en que se avisa si sigue sin cerrar. */
