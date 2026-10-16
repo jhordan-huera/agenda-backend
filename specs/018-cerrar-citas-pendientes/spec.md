@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/018-cerrar-citas-pendientes` (rama de trabajo: `dev`) · **Creada**: 2026-10-15
 
-**Estado**: Implementada (2026-10-15)
+**Estado**: Publicada (2026-10-15, PR backend #35 y front #29)
 
 **Repos**:
 - **agenda-backend:** la lista y el cierre en bloque.
