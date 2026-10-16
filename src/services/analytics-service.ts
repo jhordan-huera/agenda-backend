@@ -166,12 +166,17 @@ const baseRows = (db: Db, params: unknown[]) =>
   many<BaseRow>(
     db,
     `with ${WINDOWS},
+     -- El último acceso del equipo: el inicio de sesión más reciente o el último uso de una sesión abierta
+     -- (con «Recordarme» se entra cada día sin volver a iniciar sesión: sessions.last_seen_at lo anota).
      team as (
-       select bu.business_id, count(*)::int as members, max(l.last_at) as last_at
+       select bu.business_id, count(*)::int as members, max(greatest(l.last_at, se.last_seen)) as last_at
          from business_users bu
          left join (select actor_id, max(created_at) as last_at from audit_logs
                      where entity_type = 'session' and action = 'session.login' and created_at <= $1::timestamptz
                      group by actor_id) l on l.actor_id = bu.user_id
+         left join (select user_id, max(last_seen_at) as last_seen from sessions
+                     where last_seen_at <= $1::timestamptz
+                     group by user_id) se on se.user_id = bu.user_id
         group by bu.business_id
      ),
      agendas as (select business_id, count(*)::int as active from professionals where is_active group by business_id),

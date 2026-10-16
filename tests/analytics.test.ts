@@ -413,6 +413,21 @@ ok(e.versusType.noShowRate === "above" && b.versusType.noShowRate === "below" &&
 ok(Object.values(f.versusType).every((v) => v === null), "con «pocos datos» no se compara", f.versusType);
 ok(Object.values(of(R).versusType).every((v) => v === null), "ni contra un tipo con «pocos datos»", of(R).versusType);
 
+console.log("El último acceso cuenta también el uso de una sesión abierta («Recordarme»)");
+// R inició sesión hace 10 días, pero su propietario usó ayer una sesión que sigue abierta.
+const sessionId = sql(
+  `insert into sessions (user_id, token_hash, expires_at, remember, last_seen_at, created_at)
+   values ('${R.ownerId}', md5(random()::text), now() + interval '10 days', true, '${daysAgo(1)}', '${daysAgo(12)}') returning id`,
+).split("\n")[0];
+const withSession = (await buildSnapshot(30, NOW)).businesses.find((business) => business.id === R.id)!;
+ok(
+  Math.abs(Date.parse(withSession.lastTeamLoginAt!) - Date.parse(daysAgo(1))) < 1000 &&
+    !withSession.health.reasons.some((reason) => reason.startsWith("Nadie del equipo entra")),
+  "con una sesión usada ayer, el último acceso es ayer y no resta por «nadie entra»",
+  [withSession.lastTeamLoginAt, withSession.health.reasons],
+);
+sql(`delete from sessions where id = '${sessionId}'`);
+
 console.log("La salud");
 ok(same(e.health, { score: 95, group: "healthy", reasons: ["Inasistencias 40 %, su tipo 15 %"] }), "E: −5 por inasistencias muy por encima de su tipo", e.health);
 ok(same(b.health, { score: 95, group: "healthy", reasons: ["Sin reservas online"] }), "B: −5 sin reservas online", b.health);

@@ -99,6 +99,16 @@ segundo.
   `analytics-service.ts`.
 - **Las cifras son de la mañana.** Lo que pasa durante el día sale al día siguiente.
 
+## Corrección del 2026-10-16
+
+El dueño del producto vio negocios con «Nadie del equipo entra hace 10 días» que sí habían entrado
+la víspera. El último acceso sólo contaba los inicios de sesión, pero con «Recordarme» la sesión dura
+hasta 30 días y se usa el panel cada día sin volver a iniciar sesión.
+
+**Ahora el último acceso es lo más reciente entre el último inicio de sesión y el último uso de una
+sesión abierta** (`sessions.last_seen_at`). Lo mismo para el «Último acceso» del equipo de la
+plataforma. La prueba nueva de `analytics` lo comprueba; pasan 57 de 57 suites.
+
 ## Commits
 
 | Repo | Commit | Mensaje |
