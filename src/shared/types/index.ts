@@ -558,6 +558,50 @@ export interface AppointmentSeriesCreated {
   skipped: { date: ISODate; startTime: TimeString; reason: string }[];
 }
 
+/* ------------------------------------------- Citas por cerrar (spec 018) -- */
+
+/**
+ * Una cita de la lista «Por cerrar» (GET …/appointments/to-close): ya terminó, en la hora del negocio, y
+ * sigue Pendiente o Confirmada. Trae lo que se ve en la agenda, sin tener que cargar los pacientes.
+ */
+export interface AppointmentToClose {
+  id: string;
+  date: ISODate;
+  startTime: TimeString;
+  endTime: TimeString;
+  status: Extract<AppointmentStatus, "pending" | "confirmed">;
+  professionalId: string;
+  /** Los pacientes de la cita, el principal primero (con varios pacientes se cierra la cita entera). */
+  clientNames: string[];
+  serviceName: string;
+  professionalName: string;
+  /** De un día anterior al de hoy en la zona del negocio: ésas bloquean el panel. false: de hoy. */
+  overdue: boolean;
+}
+
+/** Cuántas hay por cerrar, en el alcance de quien pregunta (el rol Profesional, sólo su agenda). */
+export interface AppointmentsToCloseCount {
+  /** De días anteriores: con alguna, el panel pide cerrarlas al entrar. */
+  overdue: number;
+  /** De hoy que ya terminaron: salen en la lista, pero no bloquean (el día aún no termina). */
+  today: number;
+}
+
+/** Una tanda de la lista «Por cerrar», de la más vieja a la más nueva, con las cifras de toda la lista. */
+export interface AppointmentsToClose extends AppointmentsToCloseCount {
+  appointments: AppointmentToClose[];
+  /** Para «Cargar más»: la fecha, la hora y el id de la última («2026-10-14|09:30|…»); null si no hay más. */
+  nextCursor: string | null;
+}
+
+/** «Marcar todas como completadas» (POST …/appointments/close-all). */
+export interface CloseAllResult {
+  /** Las que se cerraron, cada una con su entrada en la actividad. */
+  closed: number;
+  /** Las que ya no estaban por cerrar (alguien las cerró antes) o no son de su alcance: no se tocan. */
+  skipped: number;
+}
+
 export interface TimeRange {
   start: TimeString;
   end: TimeString;

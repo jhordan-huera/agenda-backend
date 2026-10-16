@@ -1,6 +1,7 @@
 // Copia de agenda-front/src/lib/validations/appointment.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
 import { SERIES_MAX, SERIES_MIN } from "../appointment-series.ts";
+import { CLOSE_ALL_MAX } from "../constants/appointment-status.ts";
 import { dateField, homeVisitSchema, optionalText, requiredMoneyField, timeField } from "./fields.ts";
 
 export const appointmentStatusSchema = z.enum([
@@ -120,3 +121,32 @@ export const cancelFollowingSchema = z.object({
 export type SeriesRepeatInput = z.infer<typeof seriesRepeatSchema>;
 export type AppointmentSeriesPreviewInput = z.infer<typeof appointmentSeriesPreviewSchema>;
 export type AppointmentSeriesInput = z.infer<typeof appointmentSeriesSchema>;
+
+/* ------------------------------------------------- Citas por cerrar (spec 018) -- */
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** El `nextCursor` de la tanda anterior: la fecha, la hora de inicio y el id de la última cita. */
+export const TO_CLOSE_CURSOR_PATTERN = /^\d{4}-\d{2}-\d{2}\|([01]\d|2[0-3]):[0-5]\d\|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Los parámetros de la lista «Por cerrar» (GET …/appointments/to-close). */
+export const toCloseQuerySchema = z.object({
+  cursor: z.string().regex(TO_CLOSE_CURSOR_PATTERN, "La página de citas por cerrar no es válida").optional(),
+});
+
+/**
+ * «Marcar todas como completadas»: las citas que se ven en la lista. La API sólo cierra las de quien llama
+ * que siguen por cerrar. `notify` es la casilla «Avisar a los pacientes», apagada por defecto: es un cierre
+ * administrativo de citas que ya pasaron (decisión del dueño del producto, 2026-10-15).
+ */
+export const closeAllSchema = z.object({
+  status: z.literal("completed", { error: "Todas juntas sólo se pueden marcar como completadas" }),
+  notify: z.boolean({ error: "Indica si se avisa a los pacientes" }).default(false),
+  ids: z
+    .array(z.string().regex(UUID_PATTERN, "Hay una cita que no es válida"), { error: "Indica qué citas se cierran" })
+    .min(1, "No hay citas por cerrar")
+    .max(CLOSE_ALL_MAX, `Se pueden cerrar como mucho ${CLOSE_ALL_MAX} citas a la vez`)
+    .refine((ids) => new Set(ids).size === ids.length, "Hay una cita repetida en la lista."),
+});
+
+export type CloseAllInput = z.infer<typeof closeAllSchema>;

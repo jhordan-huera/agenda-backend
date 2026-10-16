@@ -65,3 +65,27 @@ export const REVENUE_STATUSES: ReadonlySet<AppointmentStatus> = new Set([
   "confirmed",
   "completed",
 ]);
+
+/* ------------------------------------------- Citas por cerrar (spec 018) -- */
+
+/**
+ * Una cita que ya terminó con uno de estos estados está «por cerrar». Lo usan la API, el front y la beta.
+ */
+export const OPEN_STATUSES: ReadonlySet<AppointmentStatus> = new Set(["pending", "confirmed"]);
+
+/** Los botones de cada cita de la lista «Por cerrar», en ese orden. */
+export const CLOSING_STATUSES = ["completed", "no_show", "cancelled"] as const satisfies readonly AppointmentStatus[];
+
+export type ClosingStatus = (typeof CLOSING_STATUSES)[number];
+
+/** Citas por tanda de la lista «Por cerrar» («Cargar más» trae las siguientes). */
+export const TO_CLOSE_PAGE_SIZE = 50;
+
+/** Citas que cierra, como mucho, un «Marcar todas como completadas» (una transacción). */
+export const CLOSE_ALL_MAX = 200;
+
+/**
+ * Horas que dura un «Más tarde» de la pantalla «Antes de seguir, cierra tus citas pendientes», en ese
+ * aparato (decisión del dueño del producto, 2026-10-15).
+ */
+export const CLOSE_LATER_HOURS = 4;
