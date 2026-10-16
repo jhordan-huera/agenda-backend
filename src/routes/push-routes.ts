@@ -5,8 +5,9 @@ import { pushDeviceService } from "../services/push-device-service.ts";
 
 /**
  * /api/push: los avisos en el celular (spec 013). Con sesión y la cabecera X-Requested-With, como el
- * resto del panel. Sólo el propietario de un negocio activo y el super admin (que sin la verificación
- * en dos pasos recibe `two_factor_required`). El aparato va siempre en el cuerpo, nunca en la URL.
+ * resto del panel. Sólo el propietario de un negocio activo, el rol Profesional con su agenda (el
+ * resumen de las 8, spec 017) y el super admin (que sin la verificación en dos pasos recibe
+ * `two_factor_required`). El aparato va siempre en el cuerpo, nunca en la URL.
  */
 export const pushRoutes = Router();
 

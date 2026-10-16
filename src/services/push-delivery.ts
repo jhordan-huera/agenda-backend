@@ -19,13 +19,25 @@ import { isAllowedPushEndpoint, pushServiceName, sendWebPush, type PushResult, t
  * (fcm.googleapis.com) y el código de respuesta (los del cron son públicos).
  */
 
-/** A quién va un aviso: el propietario del negocio en este momento o los super admin (R5). */
+/**
+ * A quién va un aviso: el propietario del negocio en este momento, un profesional del negocio (spec 017)
+ * o los super admin (R5).
+ */
 export type PushAudience =
   | {
       /** Los aparatos de quien sea hoy `businesses.owner_id` (con su cuenta activa y el negocio activo). */
       ownerOf: string;
       /** Quien provocó el aviso no se avisa a sí mismo (p. ej. «Cita nueva en tu agenda» que agendó él). */
       excludeUserId?: string | null;
+    }
+  | {
+      /**
+       * Los aparatos de esta persona (el resumen de las 8 de su agenda, spec 017), si su cuenta sigue
+       * activa y sigue en el equipo de `businessId` con el rol Profesional, con el negocio activo. El
+       * super admin en modo soporte nunca lo es: no recibe los del profesional.
+       */
+      userOf: string;
+      businessId: string;
     }
   | { platform: true };
 
@@ -48,7 +60,10 @@ const MAX_TITLE = 120;
 const MAX_BODY = 240;
 const clip = (text: string, max: number) => (text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`);
 
-/** La parte de la consulta que elige los aparatos del destinatario ($1: negocio, $2: tipo, $3: quién lo provocó). */
+/**
+ * La parte de la consulta que elige los aparatos del destinatario ($1: negocio, $2: tipo, $3: quién lo
+ * provocó, o la persona con `userOf`).
+ */
 function recipientsSql(audience: PushAudience): string {
   return `from push_subscriptions s
           join users u on u.id = s.user_id and u.is_active
@@ -58,12 +73,20 @@ function recipientsSql(audience: PushAudience): string {
              "ownerOf" in audience
                ? `u.id = (select b.owner_id from businesses b where b.id = $1::uuid and b.status = 'active')
                   and ($3::uuid is null or u.id <> $3::uuid)`
-               : "u.platform_role = 'super_admin' and $1::uuid is null and $3::uuid is null"
+               : "userOf" in audience
+                 ? `u.id = $3::uuid
+                    and exists (select 1 from business_users bu join businesses b on b.id = bu.business_id and b.status = 'active'
+                                 where bu.business_id = $1::uuid and bu.user_id = u.id and bu.role = 'professional')`
+                 : "u.platform_role = 'super_admin' and $1::uuid is null and $3::uuid is null"
            }`;
 }
 
 const recipientParams = (audience: PushAudience, kind: PushKind) =>
-  "ownerOf" in audience ? [audience.ownerOf, kind, audience.excludeUserId ?? null] : [null, kind, null];
+  "ownerOf" in audience
+    ? [audience.ownerOf, kind, audience.excludeUserId ?? null]
+    : "userOf" in audience
+      ? [audience.businessId, kind, audience.userOf]
+      : [null, kind, null];
 
 /**
  * ¿Alguien recibiría este tipo de aviso? Casi ningún negocio tiene aparatos: así sólo se arma el texto

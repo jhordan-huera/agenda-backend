@@ -1,7 +1,14 @@
 import { config } from "../config.ts";
 import { one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
-import { MAX_PUSH_DEVICES, OWNER_PUSH_KINDS, PLATFORM_PUSH_KINDS, PUSH_KIND_LABELS, type MutablePushKind } from "../shared/lib/constants/push.ts";
+import {
+  AGENDA_PUSH_KINDS,
+  MAX_PUSH_DEVICES,
+  OWNER_PUSH_KINDS,
+  PLATFORM_PUSH_KINDS,
+  PUSH_KIND_LABELS,
+  type MutablePushKind,
+} from "../shared/lib/constants/push.ts";
 import { getFullName } from "../shared/lib/format.ts";
 import { describeUserAgent } from "../shared/lib/user-agent.ts";
 import { pushDeviceSchema, pushEndpointBodySchema, pushKindsSchema } from "../shared/lib/validations/push.ts";
@@ -13,31 +20,35 @@ import { isAllowedPushEndpoint, isValidPushKeys, pushServiceName, sendWebPush } 
 
 /**
  * Los aparatos con avisos en el celular (spec 013, R3): uno por navegador, del usuario y con los tipos
- * que no quiere. Sólo el propietario de un negocio activo y el super admin (con la verificación en dos
- * pasos, como el resto de /admin); Recepción, los administradores y el rol Profesional no los tienen.
- * El aparato se identifica por su dirección (`endpoint`), siempre en el cuerpo: nunca en la URL ni en
- * los registros.
+ * que no quiere. Los tienen el propietario de un negocio activo, el super admin (con la verificación en
+ * dos pasos, como el resto de /admin) y, desde la spec 017, el rol Profesional con una agenda activa en
+ * un negocio activo, sólo para el resumen de las 8 de su agenda. Recepción y los administradores no
+ * los tienen. El aparato se identifica por su dirección (`endpoint`), siempre en el cuerpo: nunca en la
+ * URL ni en los registros.
  *
  * Auditoría: activar los avisos en un aparato, cambiar sus tipos, desactivarlos y el aviso de prueba
- * quedan en la actividad del negocio (el propietario) o de la plataforma (el super admin), con el
- * navegador («Chrome en Mac»). La puesta al día silenciosa al abrir el panel, la dirección renovada y
- * la pausa al cerrar sesión no, porque no las hace la persona.
+ * quedan en la actividad del negocio (el propietario y el profesional) o de la plataforma (el super
+ * admin), con el navegador («Chrome en Mac»). La puesta al día silenciosa al abrir el panel, la
+ * dirección renovada y la pausa al cerrar sesión no, porque no las hace la persona.
  */
 
-const OWNER_ONLY = "Los avisos en el celular son sólo para el propietario del negocio.";
+const NOT_FOR_ROLE = "Los avisos en el celular son sólo para el propietario del negocio y los profesionales con su agenda.";
+const NO_AGENDA =
+  "Tu usuario no tiene una agenda asignada: los avisos en el celular son para el resumen de tu agenda. Pide al propietario que te la asigne en Profesionales.";
 const UNAVAILABLE = "Los avisos en el celular todavía no están disponibles.";
 const UNKNOWN_SERVICE = "Este navegador usa un servicio de avisos que no reconocemos. Prueba con Chrome, Safari, Edge o Firefox.";
 const NOT_ACTIVE = "Este aparato no tiene los avisos activados. Vuelve a activarlos.";
 /** Con un aparato recién activado, un 404 o 410 se reintenta una vez pasados estos milisegundos. */
 const FRESH_RETRY_MS = 3_000;
 
-type PushRole = "owner" | "platform";
+/** El propietario, el rol Profesional con su agenda (spec 017) o el super admin. */
+type PushRole = "owner" | "agenda" | "platform";
 
 interface PushUser {
   userId: string;
   role: PushRole;
   kinds: readonly PushKind[];
-  /** Dónde queda la auditoría: el negocio del propietario, o null (la plataforma) para el super admin. */
+  /** Dónde queda la auditoría: su negocio (el propietario y el profesional), o null (la plataforma) para el super admin. */
   businessId: string | null;
   actor: AuditActor;
 }
@@ -56,13 +67,37 @@ async function authorizePush(ctx: RequestContext): Promise<PushUser> {
       actor: { userId: user.id, name: `${getFullName(user)} (Super admin)` },
     };
   }
+  const actor = { userId: user.id, name: getFullName(user) };
   // El propietario de un negocio activo (el que reciba los avisos al enviarlos, ver push-delivery.ts).
   const owner = await one<{ id: string }>(pool, "select id from businesses where owner_id = $1 and status = 'active' order by created_at limit 1", [
     user.id,
   ]);
-  if (!owner) throw new AppError("forbidden", OWNER_ONLY);
-  return { userId: user.id, role: "owner", kinds: OWNER_PUSH_KINDS, businessId: owner.id, actor: { userId: user.id, name: getFullName(user) } };
+  if (owner) return { userId: user.id, role: "owner", kinds: OWNER_PUSH_KINDS, businessId: owner.id, actor };
+  // El rol Profesional de un negocio activo, con su agenda activa (spec 017): sólo el resumen de las 8
+  // de su agenda. Lo recibe quien tenga la agenda ese día y siga con este rol (`userOf`, push-delivery.ts).
+  const member = await one<{ businessId: string; professionalId: string | null }>(
+    pool,
+    `select bu.business_id as "businessId",
+            (select p.id from professionals p where p.business_id = bu.business_id and p.user_id = bu.user_id and p.is_active limit 1)
+              as "professionalId"
+       from business_users bu
+       join businesses b on b.id = bu.business_id and b.status = 'active'
+      where bu.user_id = $1 and bu.role = 'professional'
+      order by bu.created_at
+      limit 1`,
+    [user.id],
+  );
+  if (!member) throw new AppError("forbidden", NOT_FOR_ROLE);
+  if (!member.professionalId) throw new AppError("forbidden", NO_AGENDA);
+  return { userId: user.id, role: "agenda", kinds: AGENDA_PUSH_KINDS, businessId: member.businessId, actor };
 }
+
+/** Qué dice el aviso de prueba y qué abre, según quién lo pide. */
+const TEST_NOTICE: Record<PushRole, { body: string; url: string }> = {
+  owner: { body: "Listo: aquí te avisaremos de las reservas.", url: "/dashboard" },
+  agenda: { body: "Listo: aquí te avisaremos de las citas que quedan sin cerrar.", url: "/dashboard" },
+  platform: { body: "Listo: aquí te avisaremos de lo importante de la plataforma.", url: "/admin" },
+};
 
 /** «Chrome en Mac», o «un aparato» si el navegador no se reconoce. */
 function deviceLabel(userAgent: string | null): string {
@@ -236,16 +271,7 @@ export const pushDeviceService = {
     const send = () =>
       sendWebPush(
         device,
-        {
-          title: "Avisos activados",
-          body:
-            role === "owner"
-              ? "Listo: aquí te avisaremos de las reservas."
-              : "Listo: aquí te avisaremos de lo importante de la plataforma.",
-          url: role === "owner" ? "/dashboard" : "/admin",
-          tag: "prueba",
-          kind: "test",
-        },
+        { title: "Avisos activados", ...TEST_NOTICE[role], tag: "prueba", kind: "test" },
         { vapid, ttlSeconds: 600, urgency: "high" },
       ).catch(() => null);
     let result = await send();
@@ -273,7 +299,7 @@ export const pushDeviceService = {
 
 /**
  * «Cerrar sesión» pausa los aparatos activados desde esa sesión (R3): en una computadora compartida,
- * quien entra después no ve los avisos del propietario. Al volver a entrar, la app los reanuda sola
+ * quien entra después no ve los avisos del propietario (ni los de otro profesional, spec 017). Al volver a entrar, la app los reanuda sola
  * (PUT /api/push/device). Que la sesión caduque no los pausa. Nunca impide cerrar la sesión.
  */
 export async function pausePushDevices(sessionId: string): Promise<void> {
