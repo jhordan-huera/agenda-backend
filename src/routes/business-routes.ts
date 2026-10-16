@@ -5,6 +5,7 @@ import { requireSuperAdminTwoFactor } from "../http/session.ts";
 import { businessService, subscriptionService, teamService, userService } from "../services/account-service.ts";
 import { auditLogService, notificationService } from "../services/activity-service.ts";
 import { appointmentSeriesService } from "../services/appointment-series-service.ts";
+import { appointmentsToCloseService } from "../services/appointments-to-close.ts";
 import { clinicalAttachmentService } from "../services/clinical-attachment-service.ts";
 import { clinicalService } from "../services/clinical-service.ts";
 import { clinicalTemplateService } from "../services/clinical-template-service.ts";
@@ -289,6 +290,20 @@ businessRoutes.post(
   "/:businessId/appointments",
   handle((req) => appointmentService.create(req.ctx, req.params.businessId, req.body)),
 );
+// Citas por cerrar (spec 018): la lista, el contador del panel y «Marcar todas como completadas». Antes
+// de /appointments/:appointmentId, que si no tomaría «to-close» por el id de una cita.
+businessRoutes.get(
+  "/:businessId/appointments/to-close",
+  handle((req) => appointmentsToCloseService.list(req.ctx, req.params.businessId, req.query)),
+);
+businessRoutes.get(
+  "/:businessId/appointments/to-close/count",
+  handle((req) => appointmentsToCloseService.count(req.ctx, req.params.businessId)),
+);
+businessRoutes.post(
+  "/:businessId/appointments/close-all",
+  handle((req) => appointmentsToCloseService.closeAll(req.ctx, req.params.businessId, req.body)),
+);
 businessRoutes.get(
   "/:businessId/appointments/:appointmentId",
   handle((req) => appointmentService.getById(req.ctx, req.params.businessId, req.params.appointmentId)),
@@ -300,7 +315,14 @@ businessRoutes.put(
 businessRoutes.patch(
   "/:businessId/appointments/:appointmentId/status",
   handle((req) =>
-    appointmentService.updateStatus(req.ctx, req.params.businessId, req.params.appointmentId, req.body?.status, req.body?.notify),
+    appointmentService.updateStatus(
+      req.ctx,
+      req.params.businessId,
+      req.params.appointmentId,
+      req.body?.status,
+      req.body?.notify,
+      req.body?.onlyIfOpen,
+    ),
   ),
 );
 businessRoutes.patch(

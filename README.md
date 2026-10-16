@@ -181,13 +181,14 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 | Sesión | `GET /auth/session` (con `panelColors` para el super admin) · `POST /auth/login` · `register` · `logout` · `change-password` (sólo super admin) |
 | Perfil | `GET/PUT /users/:userId` |
 | Negocio | `POST /businesses` (onboarding) · `GET /businesses/slug-availability` · `GET/PATCH /businesses/:id` · `GET …/professional` |
-| Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` (+ `POST …/clients/import`, importar pacientes desde un Excel o un CSV, spec 012) · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status` con `notify`: `false` cambia el estado sin avisar al paciente; `POST …/:id/cancel-following` cancela ésa y las siguientes de su serie) · `appointment-series` (`POST …/preview` y `POST`, citas que se repiten, spec 011) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
+| Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` (+ `POST …/clients/import`, importar pacientes desde un Excel o un CSV, spec 012) · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status` con `notify`: `false` cambia el estado sin avisar al paciente, y `onlyIfOpen`: sólo si sigue Pendiente o Confirmada, si no 409; `POST …/:id/cancel-following` cancela ésa y las siguientes de su serie) · `appointment-series` (`POST …/preview` y `POST`, citas que se repiten, spec 011) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
 | Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) · `GET /public/payments/:token` (+ `receipts`) · `GET /public/appointments/:token` · `POST …/confirm` · `POST …/cancel` («Tu cita», spec 010) |
 | Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, el cupo de Gmail —`emailQuota`, spec 015—, último cron, última copia e intentos fallidos; spec 006; el reparto por plan, `businessesByPlan`, sólo cuenta los negocios activos) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
 | Avisos en el celular (spec 013) | `GET /push/config` · `PUT /push/device` · `PATCH /push/device` · `POST /push/device/off` · `POST /push/device/test` (sólo el propietario de un negocio activo, el rol Profesional con su agenda activa —sólo el resumen de las 8, spec 017— y el super admin; el aparato va en el cuerpo, nunca en la URL) |
 | Analítica (spec 016) | `GET /admin/analytics?days=30\|90` (sólo el super admin, con la verificación en dos pasos): `{ snapshot }`, la última foto de ese periodo, o `{ snapshot: null }` si aún no hay; `days` distinto de 30 o 90, 400. Lee una fila y no calcula nada. La ficha (`GET /admin/businesses/:id`) suma `analytics`: su parte de la última foto de 30 días y su tipo |
 | Centro de avisos (spec 014) | `GET /businesses/:id/notices/unread` · `GET …/notices` (`?limit&unread=1&cursor`) · `POST …/notices/:noticeId/read` · `POST …/notices/read-all` (cualquier rol del equipo; el super admin en modo soporte recibe 403) y lo mismo en `/admin/notices` (el super admin, con la verificación en dos pasos). Ninguna escribe en la actividad |
+| Citas por cerrar (spec 018) | `GET /businesses/:id/appointments/to-close` (`?cursor`, tandas de 50: `{ appointments, overdue, today, nextCursor }`) · `GET …/appointments/to-close/count` (`{ overdue, today }`) · `POST …/appointments/close-all` (`{ status: "completed", notify, ids }`: `{ closed, skipped }`). Cada uno ve lo suyo: el rol Profesional, su agenda (sin agenda, 403); el resto del equipo y el super admin en modo soporte, el negocio. Consultar no escribe en la actividad |
 | Estado | `GET /health` (con `push`: si la API tiene claves VAPID válidas) |
 
 ## Contraseñas, modo soporte e historia clínica
@@ -993,6 +994,39 @@ lo compone nodemailer igual que por SMTP; vale para la cola, el cron y las copia
    prueba envía su email; en GitHub, *Actions → Recordatorios y correos → Run workflow*.
 
 Vuelta atrás: `GMAIL_TRANSPORT` vacía y un refresh token con `https://mail.google.com/`.
+
+## Citas por cerrar
+
+Spec 018. Una cita que ya terminó (en la hora del negocio) y sigue **Pendiente** o **Confirmada** está
+«por cerrar». Las de **días anteriores** (antes de hoy en la zona del negocio) bloquean el panel de quien
+puede cerrarlas hasta que las cierre o pulse «Más tarde»; las de hoy salen en la lista, pero no
+bloquean. **Nada se cierra solo** (decisiones del dueño del producto, 2026-10-15).
+
+- **Cada uno lo suyo** (`agendaScope`): el rol Profesional, las de su agenda (sin agenda asignada, 403);
+  el propietario, los administradores, Recepción y el super admin en modo soporte, las de todo el
+  negocio (también las de una agenda sin usuario).
+- **La lista** (`GET …/appointments/to-close`, `src/services/appointments-to-close.ts`): de la más vieja
+  a la más nueva (fecha, hora e id), en tandas de 50 con cursor, con los pacientes (el principal
+  primero), el servicio, el profesional y si es de un día anterior (`overdue`). Trae también las cifras
+  de toda la lista. Usa el índice `(business_id, date)` y compara el fin de la cita como instante en la
+  zona del negocio (una cita que termina a las 24:00 termina a la medianoche).
+- **El contador** (`…/to-close/count`): sólo `{ overdue, today }`, sin nombres. El front lo pide como el
+  de la campana: al entrar, al volver a la pestaña y cada 3 minutos sólo con la pestaña visible.
+- **Cerrar una:** la ruta de siempre, `PATCH …/appointments/:id/status`, con `notify` (la casilla
+  «Avisar a los pacientes», apagada por defecto) y `onlyIfOpen: true`: si otra persona ya la cerró, se
+  respeta su estado y responde 409 («Alguien ya cerró esta cita: está «No asistió»…»).
+- **«Marcar todas como completadas»** (`POST …/appointments/close-all`): las que se ven en la lista
+  (hasta 200 por petición), en una transacción y con la fila del negocio bloqueada, como cada cambio de
+  estado. Sólo cierra las de quien llama que siguen por cerrar (y ya terminaron); las demás vuelven en
+  `skipped` sin tocarlas.
+- **Actividad y emails:** cada cierre, uno por uno o en bloque, pasa por el mismo cambio de estado que
+  la ficha (`changeAppointmentStatus`): una entrada por cita con «Estado» en los cambios (la lee también
+  el aviso de ntfy) y, sin la casilla, «(sin avisar al paciente)» y ningún email en la cola. Con la
+  casilla, los emails de la spec 008, que entran en el cupo de Gmail al enviarse (spec 015). «No
+  asistió» suma a las inasistencias del paciente, como siempre. Consultar la lista o el contador no va
+  a la actividad.
+- **Publicación:** sin migración ni variables. Primero el backend y después el front: mientras el
+  backend nuevo no está publicado, el front no bloquea ni muestra la franja (la ruta responde 404).
 
 ## Copias de seguridad
 

@@ -3,7 +3,7 @@ import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { offersService } from "../shared/lib/availability.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
-import { BLOCKING_STATUSES } from "../shared/lib/constants/appointment-status.ts";
+import { APPOINTMENT_STATUS_CONFIG, BLOCKING_STATUSES, OPEN_STATUSES } from "../shared/lib/constants/appointment-status.ts";
 import { clientRequiredFieldsOf } from "../shared/lib/constants/business.ts";
 import { formatNumericDate, formatTimeRange, joinNames } from "../shared/lib/format.ts";
 import { documentIdError } from "../shared/lib/identity.ts";
@@ -723,6 +723,39 @@ const STATUS_VERBS: Record<AppointmentStatus, string> = {
   no_show: "Marcó como “No asistió”",
 };
 
+/**
+ * El cambio de estado de una cita del panel, ya autorizado y dentro del alcance de quien lo hace (con la
+ * fila del negocio bloqueada): la ficha y la lista «Por cerrar» (una por una y «Marcar todas», spec 018)
+ * pasan por aquí. Guarda la cita, libera el acceso del profesional al paciente si toca, avisa al paciente
+ * si `notifyPatient` (spec 008: sus emails entran en el cupo de Gmail al enviarse, spec 015) y deja su
+ * entrada en la actividad, con «Estado» en los cambios.
+ */
+export async function changeAppointmentStatus(
+  db: Db,
+  actor: Actor,
+  before: Appointment,
+  nextStatus: AppointmentStatus,
+  notifyPatient: boolean,
+): Promise<Appointment> {
+  const updated: Appointment = { ...before, status: nextStatus };
+  await assertNoConflict(db, updated);
+  await assertLimitOnChange(db, before, updated);
+  const appointment = await saveAppointment(db, updated, resetsSchedule(before, updated));
+  // Confirmada (o atendida) por recepción, un administrador o el propietario: el paciente pasa a ser del profesional.
+  await releaseClientAccess(db, actor, appointment.id);
+  if (notifyPatient) await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
+  await logAudit(db, {
+    businessId: before.businessId,
+    actor,
+    action: `appointment.${nextStatus}`,
+    entityType: "appointment",
+    entityId: appointment.id,
+    summary: `${STATUS_VERBS[nextStatus]} la cita de ${await describeAppointment(db, appointment)}${notifyPatient ? "" : WITHOUT_NOTICE}`,
+    changes: diffChanges(await appointmentForAudit(db, before), await appointmentForAudit(db, appointment), APPOINTMENT_FIELDS),
+  });
+  return appointment;
+}
+
 export const appointmentService = {
   /** El rol Profesional sólo recibe las citas de su agenda (y así también sus reportes). */
   async list(ctx: RequestContext, businessId: string, filters: AppointmentFilters = {}): Promise<Appointment[]> {
@@ -890,6 +923,8 @@ export const appointmentService = {
   /**
    * Cambio de estado desde el panel. `notify: false` corrige un error sin avisar al paciente: no sale
    * ningún email ni copia, y la actividad lo dice (spec 008). Sin `notify`, se avisa.
+   * `onlyIfOpen` (la lista «Por cerrar», spec 018): sólo si la cita sigue Pendiente o Confirmada. Si otra
+   * persona ya la cerró, se respeta su estado y responde `conflict` (el panel recarga la lista).
    */
   async updateStatus(
     ctx: RequestContext,
@@ -897,9 +932,11 @@ export const appointmentService = {
     appointmentId: string,
     status: unknown,
     notify: unknown = true,
+    onlyIfOpen: unknown = false,
   ): Promise<Appointment> {
     const nextStatus = parseInput(appointmentStatusSchema, status);
     const notifyPatient = parseInput(z.boolean({ error: "Indica si se avisa al paciente" }), notify ?? true);
+    const whenOpen = parseInput(z.boolean({ error: "Indica si sólo se cambia una cita por cerrar" }), onlyIfOpen ?? false);
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "appointments.manage", { lock: true });
       const before = await findOwned<Appointment>(
@@ -911,23 +948,13 @@ export const appointmentService = {
         "Cita no encontrada.",
       );
       assertAppointmentInScope(await agendaScope(db, actor, businessId), before);
-      const updated: Appointment = { ...before, status: nextStatus };
-      await assertNoConflict(db, updated);
-      await assertLimitOnChange(db, before, updated);
-      const appointment = await saveAppointment(db, updated, resetsSchedule(before, updated));
-      // Confirmada (o atendida) por recepción, un administrador o el propietario: el paciente pasa a ser del profesional.
-      await releaseClientAccess(db, actor, appointment.id);
-      if (notifyPatient) await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
-      await logAudit(db, {
-        businessId,
-        actor,
-        action: `appointment.${nextStatus}`,
-        entityType: "appointment",
-        entityId: appointment.id,
-        summary: `${STATUS_VERBS[nextStatus]} la cita de ${await describeAppointment(db, appointment)}${notifyPatient ? "" : WITHOUT_NOTICE}`,
-        changes: diffChanges(await appointmentForAudit(db, before), await appointmentForAudit(db, appointment), APPOINTMENT_FIELDS),
-      });
-      return appointment;
+      if (whenOpen && !OPEN_STATUSES.has(before.status)) {
+        throw new AppError(
+          "conflict",
+          `Alguien ya cerró esta cita: está «${APPOINTMENT_STATUS_CONFIG[before.status].label}». La lista se actualizó.`,
+        );
+      }
+      return changeAppointmentStatus(db, actor, before, nextStatus, notifyPatient);
     });
   },
 
