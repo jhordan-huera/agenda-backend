@@ -999,8 +999,10 @@ export const adminService = {
     const rows = await many<User & { twoFactorEnabled: boolean; lastSignInAt: string | null }>(
       pool,
       `select ${userColumns("u")}, u.two_factor_enabled_at is not null as "twoFactorEnabled",
-              (select max(a.created_at) from audit_logs a
-                where a.entity_type = 'session' and a.action = 'session.login' and a.actor_id = u.id) as "lastSignInAt"
+              -- El último acceso: el inicio de sesión más reciente o el último uso de una sesión abierta.
+              greatest((select max(a.created_at) from audit_logs a
+                         where a.entity_type = 'session' and a.action = 'session.login' and a.actor_id = u.id),
+                       (select max(se.last_seen_at) from sessions se where se.user_id = u.id)) as "lastSignInAt"
          from users u
         where u.platform_role = 'super_admin'
         order by u.platform_owner desc, u.created_at`,
