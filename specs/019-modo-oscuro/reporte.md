@@ -117,6 +117,22 @@ ficticio.
   - el botón «Descargar para imprimir (PNG)» del QR se sale un poco a 1440 px;
   - con la paleta Rosa, «Enviados» y «Fallidos» del gráfico de emails tienen casi el mismo tono.
 
+## Arreglos del 2026-10-16, después de publicar
+
+El dueño pidió arreglar los cinco problemas que ya existían y que el recorrido dejó anotados:
+1. **«Ver comprobante»** cabe en la ficha de la cita a 390 px: la fecha se acorta con «…».
+2. **Un logo ancho se ve entero** (`object-contain`) en la cabecera del reporte impreso y en /admin.
+   En /admin va sobre una placa blanca, en los dos modos.
+3. **Los campos de hora de Horarios** miden 128 px (antes, 112) y no se encogen. Chromium los mide
+   en unos 121 px y por eso se cortaban.
+4. **Los botones del diálogo del QR** van uno debajo del otro.
+5. **«Fallidos» del gráfico de emails** pasa a ámbar cuando el color del panel ya es rojizo (Rosa y
+   Coral), con `similarHue` en `brand-theme.ts`. Con el resto de las paletas sigue en rojo. El
+   contraste va de 3,9 a 8,5:1.
+
+**Comprobación:** 32 de 32 en el navegador, en claro y en oscuro, a 1440 y a 390 px. El front y la
+beta pasan build, lint y `check:contrast`. La beta lleva los mismos arreglos.
+
 ## Mensaje sugerido para los negocios
 
 > Agenda360 ya tiene modo oscuro. Si tu celular o tu computadora están en modo oscuro, verás el
