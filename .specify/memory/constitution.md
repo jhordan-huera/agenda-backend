@@ -118,11 +118,15 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   de plan, y desde el cron los cambios de seguridad en cuentas de super admin y los intentos
   fallidos, además de ntfy. Si los avisos fallan, la reserva y los emails siguen igual (2026-10-14).
   El rol Profesional también puede activarlos, sólo para el resumen de las 8 de la noche de su agenda
-  (2026-10-15).
+  (2026-10-15). Además, al empezar el día (a cada profesional a la hora de inicio de su horario y al
+  propietario cuando abre el negocio, si ese día atiende) llega cuántas citas de días anteriores siguen
+  sin cerrar, y el super admin recibe por la campana, su celular y ntfy a qué negocios salió cada tanda
+  de esos recordatorios, sólo con cifras (2026-10-17).
 - Las citas de días anteriores sin cerrar bloquean el panel de quien puede cerrarlas (el rol
   Profesional, las de su agenda; el resto del equipo, las del negocio) hasta cerrarlas o pulsar «Más
   tarde», una vez cada 4 horas; nada se cierra solo, y cerrar desde esa lista no le escribe al paciente
-  salvo que se marque (2026-10-15).
+  salvo que se marque (2026-10-15). Las de un mes anterior bloquean sin «Más tarde» hasta cerrarlas,
+  para que los datos de cada mes sean reales; el modo soporte no se bloquea (2026-10-17).
 - Todo lo que cambia datos queda en la actividad, con quién, qué y cuándo: lo que hace el equipo en
   el panel, lo que hace el paciente desde su enlace, las importaciones, las series y los avisos en
   el celular (activarlos en un aparato, cambiar sus tipos, desactivarlos y el aviso de prueba). Lo
@@ -253,4 +257,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.18.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-17
+**Versión**: 1.19.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-17

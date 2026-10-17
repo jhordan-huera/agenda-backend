@@ -15,16 +15,26 @@ export const BUSINESS_NOTICE_KINDS = [
   "new_appointment",
   "unclosed",
   "evening_summary",
+  "morning_summary",
 ] as const satisfies readonly NoticeKind[];
 
 export type BusinessNoticeKind = (typeof BUSINESS_NOTICE_KINDS)[number];
 
 /** Los del super admin, en su campana de /admin. */
-export const PLATFORM_NOTICE_KINDS = ["new_business", "plan_request", "account_security", "login_attack"] as const satisfies readonly NoticeKind[];
+export const PLATFORM_NOTICE_KINDS = [
+  "new_business",
+  "plan_request",
+  "account_security",
+  "login_attack",
+  "reminders_sent",
+] as const satisfies readonly NoticeKind[];
 
 export type PlatformNoticeKind = (typeof PLATFORM_NOTICE_KINDS)[number];
 
-/** Los que hablan de una cita (llevan la cita y abren la cita). El resumen de las 8 abre la agenda del día. */
+/**
+ * Los que hablan de una cita (llevan la cita y abren la cita). El resumen de las 8 abre la agenda del día
+ * y el de la mañana (spec 021), la lista «Por cerrar».
+ */
 export const APPOINTMENT_NOTICE_KINDS = [
   "booking",
   "receipt",
@@ -37,8 +47,8 @@ export const APPOINTMENT_NOTICE_KINDS = [
 /**
  * A quién le llega un aviso del negocio, según lo que la persona es HOY en el negocio (R2):
  * - `owner`: el propietario (`businesses.owner_id`) ve todas las agendas (`"all"`), sólo el del
- *   negocio entero (`"business"`, el resumen de las 8) o, con `null`, sólo lo de su agenda (por
- *   `agenda`, como cualquiera);
+ *   negocio entero (`"business"`, los resúmenes de las 8 y de la mañana) o, con `null`, sólo lo de su
+ *   agenda (por `agenda`, como cualquiera);
  * - `team`: los administradores y Recepción ven todas las agendas (`"all"`) o sólo lo de su agenda, si
  *   tienen una (`null`);
  * - `agenda`: quien tiene la agenda de la cita (la de hoy: si se movió, la nueva) o la del resumen, sea
@@ -65,7 +75,15 @@ export const NOTICE_AUDIENCE: Record<BusinessNoticeKind, NoticeAudience> = {
   unclosed: { owner: "all", team: null, agenda: true },
   // El del negocio, al propietario; el de cada agenda, a quien la tiene (el propietario ya recibe el del negocio).
   evening_summary: { owner: "business", team: null, agenda: true },
+  // El de la mañana (spec 021), igual: el del negocio al propietario y el de cada agenda a quien la tiene.
+  morning_summary: { owner: "business", team: null, agenda: true },
 };
+
+/**
+ * `?por-cerrar=1` en una ruta del panel abre la lista «Por cerrar» (spec 021: el aviso de la mañana). Si el
+ * panel está bloqueado por citas sin cerrar, la lista ya está a la vista.
+ */
+export const TO_CLOSE_PARAM = "por-cerrar";
 
 /** Días que se guardan y se muestran los avisos (como la ventana de «Tu cita», spec 010). */
 export const NOTICE_DAYS = 30;

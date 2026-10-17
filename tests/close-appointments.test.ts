@@ -2,7 +2,8 @@
 // agenda), de la más vieja a la más nueva y sin las ya cerradas ni las que no terminaron, en tandas de 50,
 // «Marcar todas como completadas» (sólo las de su alcance que siguen sin cerrar, cada una con su entrada en
 // la actividad), que sin «Avisar a los pacientes» no se pone ningún email en la cola, una cita cerrada a la
-// vez por dos personas y la zona horaria del negocio. Datos ficticios.
+// vez por dos personas y la zona horaria del negocio. Desde la spec 021, las de un mes anterior
+// (`previousMonth`), con el mismo alcance por rol y en la zona del negocio. Datos ficticios.
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { checks, count, login, sql } from "./helpers/harness.ts";
 import { CLOSE_ALL_MAX, TO_CLOSE_PAGE_SIZE } from "../src/shared/lib/constants/appointment-status.ts";
@@ -169,7 +170,7 @@ else console.log("  · (son las 00:0x: todavía no hay ninguna cita de hoy termi
 
 let counted = await countOf(ricardo);
 ok(counted.status === 200 && counted.body.overdue === 4 && counted.body.today === (a5 ? 1 : 0), "el contador del panel da lo mismo", counted.body);
-ok(Object.keys(counted.body).sort().join() === "overdue,today", "y sólo trae las dos cifras (sin nombres)", counted.body);
+ok(Object.keys(counted.body).sort().join() === "overdue,previousMonth,today", "y sólo trae las tres cifras, sin nombres (la del mes anterior, spec 021)", counted.body);
 
 const elenaList = await listOf(elena);
 ok(same(ids(elenaList.body.appointments), expectedAll), "Recepción ve las de todo el negocio (también las de la agenda sin usuario)", ids(elenaList.body.appointments));
@@ -345,6 +346,41 @@ ok(statusOf(tomorrow) === "pending" && (!laterToday || statusOf(laterToday) === 
 ok(statusOf(otherBusiness) === "confirmed", "y la del otro negocio, también");
 
 /* ======================================================================================== */
+console.log("\nLas de un mes anterior (spec 021)");
+// El primer día del mes de hoy, en la zona del negocio. La del último día del mes pasado cuenta siempre; la del
+// día 1 de este mes, nunca (aunque hoy sea el 1: entonces es de hoy).
+const monthStart = sql(`select date_trunc('month', now() at time zone '${zone}')::date`);
+const lastOfPrevious = addDaysISO(monthStart, -1);
+const m1 = appointment({ professionalId: ricardoAgenda, clientId: ana.id, date: lastOfPrevious, start: "22:00", end: "22:30", status: "confirmed" });
+const m2 = appointment({ professionalId: valeriaAgenda, clientId: bruno.id, date: addDaysISO(monthStart, -20), start: "22:00", end: "22:30", status: "pending" });
+const m3 = appointment({ professionalId: andresAgenda, clientId: carla.id, date: monthStart, start: "00:00", end: "00:05", status: "confirmed" });
+const m3Overdue = monthStart < today;
+const m3Listed = m3Overdue || nowMinutes >= 10;
+counted = await countOf(ricardo);
+ok(
+  counted.body.previousMonth === 2 && counted.body.overdue === 2 + (m3Overdue ? 1 : 0) && counted.body.today === (m3Listed && !m3Overdue ? 1 : 0),
+  `el propietario: 2 de un mes anterior (la del ${lastOfPrevious} cuenta; la del ${monthStart}, no)`,
+  counted.body,
+);
+list = await listOf(ricardo);
+const flags = new Map(list.body.appointments.map((item) => [item.id, item.previousMonth]));
+ok(
+  flags.get(m1) === true && flags.get(m2) === true && (!m3Listed || flags.get(m3) === false) && list.body.previousMonth === 2,
+  "cada fila dice si es de un mes anterior, y las de meses anteriores van primero",
+  [...flags],
+);
+ok(list.body.appointments[0]?.id === m2 && list.body.appointments[1]?.id === m1, "de la más vieja a la más nueva", ids(list.body.appointments));
+counted = await countOf(valeria);
+ok(counted.body.previousMonth === 1 && counted.body.overdue === 1, "el rol Profesional, sólo la de su agenda", counted.body);
+counted = await countOf(elena);
+ok(counted.body.previousMonth === 2, "Recepción, las del negocio", counted.body);
+counted = await countOf(admin);
+ok(counted.body.previousMonth === 2, "el super admin en modo soporte, también (el front no lo bloquea: sólo la franja)", counted.body);
+r = await ricardo("POST", `${B}/appointments/close-all`, { status: "completed", ids: [m1, m2, m3] });
+counted = await countOf(ricardo);
+ok(r.status === 200 && counted.body.previousMonth === 0 && counted.body.overdue === 0 && counted.body.today === 0, "al cerrarlas, vuelve a 0", [r.body, counted.body]);
+
+/* ======================================================================================== */
 console.log("\nLa zona horaria del negocio");
 // El salón de Laura pasa a Kiritimati (UTC+14): «hoy» y «ayer» son los de allí, no los del servidor.
 const KIRI = "Pacific/Kiritimati";
@@ -366,7 +402,38 @@ if (k2) ok(kiriRows.get(k2)?.overdue === false && kiri.body.today === 1, `la de 
 if (k3) ok(!kiriRows.has(k3), "la de hoy a las 23:55 todavía no terminó allí: no sale");
 ok(kiri.body.overdue === 1 && kiri.body.appointments.length === 1 + (k2 ? 1 : 0), "las cifras, con el «hoy» de Kiritimati", { overdue: kiri.body.overdue, today: kiri.body.today });
 console.log(`  · hoy: ${today} en ${zone} y ${kiriToday} en ${KIRI}`);
+
+// El mes anterior, en la zona del negocio y a una hora fija (sin depender del día en que corre la prueba): el
+// último día de un mes, a las 19:00 UTC, en Kiritimati ya es el día 1 del siguiente (09:00) y en Guayaquil
+// sigue siendo ese día (14:00).
+const { countToClose } = await import("../src/services/appointments-to-close.ts");
+const { pool } = await import("../src/db/pool.ts");
+const lastDay = sql("select to_char(date_trunc('month', current_date + 400) + interval '1 month - 1 day', 'YYYY-MM-DD')");
+const firstDay = addDaysISO(lastDay, 1);
+const at = `${lastDay}T19:00:00Z`;
+sql(`update appointments set status = 'completed' where business_id = '${salon}' and status in ('pending', 'confirmed')`);
+const salonAt = (date: string, start: string, end: string) =>
+  appointment({ businessId: salon, professionalId: salonAgenda, clientId: salonClient.id, serviceId: salonService, date, start, end, status: "confirmed" });
+salonAt(addDaysISO(lastDay, -10), "10:00", "10:30");
+salonAt(lastDay, "08:00", "08:30");
+salonAt(firstDay, "00:00", "00:05");
+const inKiri = await countToClose(pool, salon, null, at);
+ok(
+  inKiri.previousMonth === 2 && inKiri.overdue === 2 && inKiri.today === 1,
+  `en Kiritimati (ya es el ${firstDay}): las del ${addDaysISO(lastDay, -10)} y del ${lastDay} son de un mes anterior; la del día 1, de hoy`,
+  inKiri,
+);
 sql(`update businesses set timezone = '${zone}' where id = '${salon}'`);
+const inGye = await countToClose(pool, salon, null, at);
+ok(
+  inGye.previousMonth === 0 && inGye.overdue === 1 && inGye.today === 1,
+  `en ${zone} (todavía es el ${lastDay}): ninguna es de un mes anterior; la del día 1 todavía no llega`,
+  inGye,
+);
+const otherAgenda = await countToClose(pool, salon, crypto.randomUUID(), at);
+ok(otherAgenda.previousMonth === 0 && otherAgenda.overdue === 0, "con el alcance de otra agenda, ninguna", otherAgenda);
+sql(`update appointments set status = 'completed' where business_id = '${salon}' and status in ('pending', 'confirmed')`);
+await pool.end();
 
 /* ======================================================================================== */
 console.log("\nConsultar no va a la actividad");

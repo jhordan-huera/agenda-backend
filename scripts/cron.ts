@@ -16,7 +16,8 @@
  * caducan) y, opcional, VAPID_SUBJECT. Las campanas del panel (spec 014) no necesitan nada más. El cupo
  * de Gmail (spec 015), opcional: EMAIL_DAILY_QUOTA, EMAIL_TEAM_RESERVE y EMAIL_PATIENT_RESERVE, los
  * mismos valores que la API. La analítica del super admin (spec 016) se prepara aquí cada mañana, sin
- * variables nuevas.
+ * variables nuevas. El aviso de la mañana y el aviso al super admin de los recordatorios enviados (spec
+ * 021), tampoco.
  *
  * Prueba local: node --env-file=.env scripts/cron.ts
  */
@@ -330,6 +331,34 @@ export function buildPushNotice(report: ScheduledTasksReport): Notice | null {
   };
 }
 
+/**
+ * Recordatorios de citas por cerrar enviados (spec 021): a qué negocios salió en esta pasada el resumen de
+ * la mañana o el de las 8, con sus cifras. Los nombres de los negocios sólo van en el mensaje (a ntfy); el
+ * título, que queda en el registro público de Actions, no nombra ninguno.
+ */
+export function buildRemindersNotice(report: ScheduledTasksReport): Notice | null {
+  const sent = report.push?.reminders ?? [];
+  if (sent.length === 0) return null;
+  return {
+    title: "Agenda360: recordatorios de citas por cerrar enviados",
+    message: sent.map((batch) => batch.body).join("\n"),
+    priority: 2,
+    tags: ["bell"],
+    click: "/admin/businesses",
+  };
+}
+
+/**
+ * "· avisos de la mañana: N · recordatorios: mañana N negocios · noche N negocios" (spec 021). Sólo cifras:
+ * el registro es público.
+ */
+export function describeRemindersLine(report: ScheduledTasksReport): string {
+  if (!report.push) return "";
+  const businesses = (batch: "morning" | "evening") =>
+    plural(report.push?.reminders?.find((sent) => sent.batch === batch)?.businesses ?? 0, "negocio", "negocios");
+  return ` · avisos de la mañana: ${report.push.morning ?? 0} · recordatorios: mañana ${businesses("morning")} · noche ${businesses("evening")}`;
+}
+
 /** "· avisos en la app: enviados N · fallidos N · aparatos dados de baja N" (sólo cifras: el registro es público). */
 export function describePushLine(report: ScheduledTasksReport, problem: string | null = null): string {
   if (!report.push) return "";
@@ -421,6 +450,7 @@ async function main(): Promise<void> {
         `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"}` +
         `${describePanelLine(report)}` +
         `${describePushLine(report, config.webPushProblem ? `sin envío: ${config.webPushProblem}` : null)}` +
+        `${describeRemindersLine(report)}` +
         `${describeAnalyticsLine(report)} · ${report.durationMs} ms`,
     );
     const notices = [
@@ -429,6 +459,7 @@ async function main(): Promise<void> {
       buildSecurityNotice(report),
       ...buildAccountNotices(report),
       buildPushNotice(report),
+      buildRemindersNotice(report),
     ].filter((notice) => notice !== null);
     for (const notice of notices) await notify(notice);
     if (notices.length === 0) console.info("Sin correos, errores ni alertas: no se envía aviso.");

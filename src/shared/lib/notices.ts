@@ -1,6 +1,6 @@
 // Copia de agenda-front/src/lib/notices.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { DEFAULT_TIMEZONE } from "./constants/app.ts";
-import { NOTICE_AUDIENCE, type BusinessNoticeKind } from "./constants/notices.ts";
+import { NOTICE_AUDIENCE, TO_CLOSE_PARAM, type BusinessNoticeKind } from "./constants/notices.ts";
 import { capitalize, formatShortDate, joinNames, plural } from "./format.ts";
 import { addDaysISO, getZonedNow } from "./time.ts";
 import type { BusinessRole, ISODate, NoticeKind, TimeString } from "../types/index.ts";
@@ -44,13 +44,27 @@ export interface NoticeDataByKind {
   new_appointment: { appointment: NoticeAppointment; count?: number };
   unclosed: { appointment: NoticeAppointment };
   evening_summary: { date: ISODate; count: number };
+  /**
+   * El aviso de la mañana (spec 021): las citas de días anteriores sin cerrar. `wholeBusiness`: el del
+   * propietario, con las de todo el negocio; si no, el de una agenda.
+   */
+  morning_summary: { count: number; wholeBusiness: boolean };
   new_business: { businessId: string; businessName: string; categoryName: string | null };
   plan_request: { businessId: string; businessName: string; currentPlanName: string; requestedPlanName: string };
   /** `account`: ya enmascarada («ma***@gmail.com»). */
   account_security: { account: string; change: string };
   /** `others`: cuántas cuentas más tienen intentos fallidos. */
   login_attack: { account: string; attempts: number; others: number };
+  /**
+   * A qué negocios salieron los recordatorios de citas por cerrar en una pasada del cron (spec 021): la
+   * tanda (el de la mañana o el de las 8 de la noche), los negocios nombrados (los de más citas) y cuántos
+   * más hubo. Sólo nombres de negocios y cifras, nunca pacientes.
+   */
+  reminders_sent: { batch: RemindersBatch; businesses: { name: string; count: number }[]; others: number };
 }
+
+/** Las dos tandas de recordatorios de citas por cerrar: la de la mañana y la de las 8 de la noche. */
+export type RemindersBatch = "morning" | "evening";
 
 export interface NoticeText {
   title: string;
@@ -92,6 +106,18 @@ export const appointmentUrl = (appointment: Pick<NoticeAppointment, "id" | "date
   `/dashboard/calendar?date=${appointment.date}&appointment=${appointment.id}`;
 
 const ACTIVITY_SECURITY_URL = "/admin/activity?ver=seguridad";
+/** La agenda con la lista «Por cerrar» abierta (spec 021). */
+export const TO_CLOSE_URL = `/dashboard/calendar?${TO_CLOSE_PARAM}=1`;
+
+/** «Márcala…» o «Márcalas Completada o No asistió para que la agenda y los reportes cuadren.» */
+const closeThem = (count: number) => `${count === 1 ? "Márcala" : "Márcalas"} Completada o No asistió para que la agenda y los reportes cuadren.`;
+
+/** «1 cita de un día anterior» o «3 citas de días anteriores». */
+const fromPreviousDays = (count: number) => (count === 1 ? "1 cita de un día anterior" : `${count} citas de días anteriores`);
+
+/** «Centro Profesional (6 citas), Dra. Nadia Sanipatín (6), Nicole Andrade (1)»: la palabra, sólo en el primero. */
+const businessCounts = (businesses: { name: string; count: number }[]) =>
+  businesses.map(({ name, count }, index) => `${name} (${index === 0 ? plural(count, "cita", "citas") : count})`).join(", ");
 
 type Builder<K extends NoticeKind> = (data: NoticeDataByKind[K], options: Required<DescribeNoticeOptions>) => NoticeText;
 
@@ -148,8 +174,13 @@ const BUILDERS: { [K in NoticeKind]: Builder<K> } = {
   }),
   evening_summary: ({ date, count }) => ({
     title: `Tienes ${plural(count, "cita", "citas")} de hoy sin cerrar`,
-    body: `${count === 1 ? "Márcala" : "Márcalas"} Completada o No asistió para que la agenda y los reportes cuadren.`,
+    body: closeThem(count),
     url: `/dashboard/calendar?date=${date}`,
+  }),
+  morning_summary: ({ count, wholeBusiness }) => ({
+    title: `${wholeBusiness ? "Tu negocio tiene" : "Tienes"} ${fromPreviousDays(count)} sin cerrar`,
+    body: closeThem(count),
+    url: TO_CLOSE_URL,
   }),
   new_business: ({ businessId, businessName, categoryName }) => ({
     title: "Negocio nuevo",
@@ -170,6 +201,14 @@ const BUILDERS: { [K in NoticeKind]: Builder<K> } = {
     title: "Posibles intentos de adivinar contraseñas",
     body: `${account}: ${attempts} intentos fallidos en la última hora${others > 0 ? ` y ${plural(others, "cuenta más", "cuentas más")}` : ""}`,
     url: ACTIVITY_SECURITY_URL,
+  }),
+  // El título no nombra negocios (spec 021): el de ntfy queda en el registro del cron, que es público.
+  reminders_sent: ({ batch, businesses, others }) => ({
+    title: "Recordatorios de citas por cerrar enviados",
+    body: `${batch === "morning" ? "Mañana" : "Noche"} · ${plural(businesses.length + others, "negocio", "negocios")}: ${businessCounts(businesses)}${
+      others > 0 ? ` y ${plural(others, "negocio más", "negocios más")}` : ""
+    }`,
+    url: "/admin/businesses",
   }),
 };
 

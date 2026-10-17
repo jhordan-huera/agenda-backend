@@ -144,13 +144,13 @@ ok(
   "el propietario recibe la clave pública (87 caracteres)",
   r.body,
 );
-ok(JSON.stringify(r.body.kinds) === JSON.stringify(OWNER_PUSH_KINDS), "con los siete tipos del propietario, en el orden de la tarjeta", r.body.kinds);
+ok(JSON.stringify(r.body.kinds) === JSON.stringify(OWNER_PUSH_KINDS), "con los ocho tipos del propietario, en el orden de la tarjeta", r.body.kinds);
 const ricardoA = push.device();
 r = await activate(ricardo, ricardoA);
 ok(r.status === 200 && Array.isArray(r.body.mutedKinds) && r.body.mutedKinds.length === 0 && r.body.createdAt, "activa su aparato con todos los tipos encendidos", r.body);
 ok(Object.keys(r.body).sort().join() === "createdAt,mutedKinds", "la respuesta nunca devuelve la dirección ni las claves", r.body);
 r = await admin("GET", "/push/config");
-ok(r.status === 200 && JSON.stringify(r.body.kinds) === JSON.stringify(PLATFORM_PUSH_KINDS), "el super admin recibe sus cuatro tipos", r.body);
+ok(r.status === 200 && JSON.stringify(r.body.kinds) === JSON.stringify(PLATFORM_PUSH_KINDS), "el super admin recibe sus cinco tipos", r.body);
 const adminDevice = push.device();
 ok((await activate(admin, adminDevice)).status === 200, "y activa el suyo");
 // El rol Profesional con su agenda sí (spec 017): ver «El resumen de las 8 en el celular de cada profesional».
@@ -861,8 +861,9 @@ console.log("El resumen de las 8 en el celular de cada profesional (spec 017)");
 const valeria = await as("valeria@demo.com");
 r = await valeria("GET", "/push/config");
 ok(
-  r.status === 200 && r.body.available === true && JSON.stringify(r.body.kinds) === JSON.stringify(AGENDA_PUSH_KINDS) && JSON.stringify(r.body.kinds) === '["evening_summary"]',
-  "el rol Profesional con su agenda puede activarlos, sólo con «Resumen de las 8 de la noche»",
+  r.status === 200 && r.body.available === true && JSON.stringify(r.body.kinds) === JSON.stringify(AGENDA_PUSH_KINDS) &&
+    JSON.stringify(r.body.kinds) === '["evening_summary","morning_summary"]',
+  "el rol Profesional con su agenda puede activarlos, sólo con «Resumen de las 8 de la noche» y «Resumen al empezar el día» (spec 021)",
   r.body,
 );
 const valeriaDevice = push.device();

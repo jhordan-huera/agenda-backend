@@ -142,13 +142,14 @@ ok(
   BUSINESS_NOTICE_KINDS.every((kind) => NOTICE_AUDIENCE[kind]) &&
     NOTICE_AUDIENCE.booking.owner === "all" && NOTICE_AUDIENCE.booking.team === "all" &&
     NOTICE_AUDIENCE.new_appointment.owner === null && NOTICE_AUDIENCE.new_appointment.team === null &&
-    NOTICE_AUDIENCE.unclosed.team === null && NOTICE_AUDIENCE.evening_summary.owner === "business",
-  "los siete tipos del negocio, como en la tabla de la spec",
+    NOTICE_AUDIENCE.unclosed.team === null && NOTICE_AUDIENCE.evening_summary.owner === "business" &&
+    NOTICE_AUDIENCE.morning_summary.owner === "business" && NOTICE_AUDIENCE.morning_summary.agenda,
+  "los ocho tipos del negocio, como en la tabla de la spec (el de la mañana, como el de las 8: spec 021)",
 );
 ok(
   panel.AUDIENCE_SQL.includes("me.role in ('admin', 'staff')") &&
     panel.AUDIENCE_SQL.includes("'booking', 'receipt', 'patient_confirm', 'patient_cancel', 'unclosed'") &&
-    panel.AUDIENCE_SQL.includes("n.kind in ('evening_summary') and n.professional_id is null"),
+    panel.AUDIENCE_SQL.includes("n.kind in ('evening_summary', 'morning_summary') and n.professional_id is null"),
   "la consulta de la API sale de la misma tabla",
   panel.AUDIENCE_SQL,
 );

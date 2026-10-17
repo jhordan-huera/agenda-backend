@@ -77,11 +77,11 @@ export async function guardedPanelNotice(
 export interface BusinessNoticeInput {
   kind: BusinessNoticeKind;
   businessId: string;
-  /** La cita del aviso (la primera, en una serie); null sólo en el resumen de las 8. */
+  /** La cita del aviso (la primera, en una serie); null sólo en los resúmenes (el de las 8 y el de la mañana). */
   appointmentId: string | null;
   /** Quien pulsó «Confirmo que voy». */
   clientId?: string | null;
-  /** El resumen de las 8 de una agenda; null en el del negocio entero. */
+  /** El resumen (de las 8 o de la mañana) de una agenda; null en el del negocio entero. */
   professionalId?: string | null;
   /** Quien lo provocó, que no lo ve. */
   actorUserId?: string | null;
@@ -260,6 +260,8 @@ interface NoticeRow {
   url: string | null;
   timezone: string | null;
   agendas: number;
+  /** La agenda del resumen; null en el del negocio entero (y en los que hablan de una cita). */
+  noticeAgendaId: string | null;
   appointmentId: string | null;
   date: ISODate | null;
   startTime: TimeString | null;
@@ -281,6 +283,10 @@ function toPanelNotice(row: NoticeRow, now: Date): PanelNotice | null {
     const date = typeof row.data.date === "string" ? row.data.date : null;
     const count = Number(row.data.count);
     if (date && count > 0) text = describeNotice("evening_summary", { date, count }, { ...FULL_NAME, now });
+  } else if (row.kind === "morning_summary") {
+    // El del negocio entero (el del propietario) no tiene agenda (spec 021).
+    const count = Number(row.data.count);
+    if (count > 0) text = describeNotice("morning_summary", { count, wholeBusiness: row.noticeAgendaId === null }, { ...FULL_NAME, now });
   } else if (row.appointmentId && row.date && row.startTime) {
     const appointment: NoticeAppointment = {
       id: row.appointmentId,
@@ -332,7 +338,7 @@ export async function listNotices(db: Db, reader: NoticeReader, query: Record<st
     `${visibleCte(reader)}
      select v.id, v.kind, v.created_at as "createdAt", v.read, v.data, v.title, v.body, v.url,
             to_char(v.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as "cursorAt",
-            me.timezone, me.agendas,
+            me.timezone, me.agendas, v.professional_id as "noticeAgendaId",
             a.id as "appointmentId", a.date, a.start_time as "startTime",
             s.name as "serviceName", p.display_name as "professionalName",
             case when a.id is null then '[]'::json else ${noticePatientsSql("a")} end as patients,
@@ -434,7 +440,7 @@ export const panelNoticeService = {
   },
 };
 
-/** /api/admin/notices (spec 014): los cuatro avisos del super admin. */
+/** /api/admin/notices (spec 014): los avisos del super admin (cinco desde la spec 021). */
 export const platformNoticeService = {
   async unread(ctx: RequestContext): Promise<{ unread: number }> {
     return { unread: await countUnread(pool, platformReader(ctx)) };
