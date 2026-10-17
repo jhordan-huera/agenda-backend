@@ -120,6 +120,32 @@ estado «Confirmada» de la agenda. Cambió esto:
 
 Sólo cambió el front; la foto no cambia. Se comprobó con el build, el lint y el navegador.
 
+## «Comparar» rediseñada (2026-10-17)
+
+El dueño pidió mejorar «Comparar» con los mismos datos. Eligió el resumen arriba y, en lugar de la
+tabla, un ranking con barras:
+- **Las 4 tarjetas** se calculan con lo que dejan ver los filtros:
+  - Citas, con su crecimiento;
+  - Sin cerrar, en cuántos negocios; al tocarla, ordena por ella;
+  - Ingresos estimados, con lo cobrado; con dos monedas dice «Varias monedas»;
+  - Salud, en riesgo o críticos; al tocarla, los pone primero.
+- **«Comparar por»** ofrece 18 cifras agrupadas en Actividad, Calidad, Dinero y Cuenta (`?cifra=`),
+  con «Mayor primero / Menor primero».
+- **El ranking** es una barra por negocio:
+  - en las tasas, la marca de la mediana de su tipo;
+  - lo que es peor cuanto más alto va en ámbar, con «Mayor es peor»;
+  - el crecimiento negativo va a la izquierda del cero;
+  - «Pocos datos» es una sola insignia junto al nombre.
+- **Al tocar un negocio** se abre su panel: la salud con sus motivos, «Listo para subir de plan», las
+  cifras por tema, las funciones que usa y «Abrir ficha».
+- **El CSV** sigue con todas las columnas, más «% cobrado» y «Equipo».
+
+**Comprobación:**
+- con los datos demo, 810 de 810 en claro y en oscuro, a 1440 y a 390 px;
+- 46 de 46 en cada tamaño con una foto simulada, para la mediana, los negativos, los críticos, las
+  dos monedas y los suspendidos;
+- build, lint y contraste, sin errores.
+
 ## Commits
 
 | Repo | Commit | Mensaje |
