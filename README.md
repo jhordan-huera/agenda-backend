@@ -593,7 +593,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 - **Página de reservas en la CDN**: `GET /public/businesses/:slug` responde con
   `Cache-Control: public, s-maxage=30, stale-while-revalidate=60`; Vercel la sirve sin llegar a la
   API en los picos de visitas. La reserva vuelve a comprobar la hora al confirmarla.
-- **Contenido de los emails**: el cron borra el texto y el HTML de los emails con más de 90 días
+- **Contenido de los emails**: el cron borra el texto y el HTML de los emails con más de 30 días
   (`EMAIL_CONTENT_DAYS`) y deja el registro (a quién, tipo, asunto, fecha y estado).
 - **Conexiones**: en Vercel, 3 por instancia por defecto (`DATABASE_POOL_MAX`); en local, 10.
 - **Aviso de espacio**: la copia de seguridad semanal informa el tamaño de la base y avisa por ntfy

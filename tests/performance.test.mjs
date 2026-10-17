@@ -110,6 +110,7 @@ const insert = (label, days, status) =>
                '${status}', now() - interval '${days} days', ${status === "sent" ? `now() - interval '${days} days'` : "null"})
        returning id`);
 const oldSent = insert("vieja", 100, "sent");
+const monthOld = insert("mes", 40, "sent");
 const oldQueued = insert("encola", 100, "queued");
 const recent = insert("reciente", 10, "sent");
 const run = await new Promise((resolve) => {
@@ -132,8 +133,9 @@ const run = await new Promise((resolve) => {
   child.on("exit", (code) => resolve({ code, output }));
 });
 const row = (id) => sql(`select subject || '|' || body || '|' || coalesce(html, 'NULL') || '|' || to_email from notifications where id = '${id}'`);
-ok(run.code === 0 && /emails sin contenido \(más de 90 días\): [1-9]/.test(run.output), "el cron lo cuenta en su registro", run.output.slice(-300));
-ok(row(oldSent) === "Asunto vieja||NULL|prueba-vieja@example.com", "a los 90 días se borra el contenido y queda el registro", row(oldSent));
+ok(run.code === 0 && /emails sin contenido \(más de 30 días\): [1-9]/.test(run.output), "el cron lo cuenta en su registro", run.output.slice(-300));
+ok(row(oldSent) === "Asunto vieja||NULL|prueba-vieja@example.com", "pasados los 30 días se borra el contenido y queda el registro", row(oldSent));
+ok(row(monthOld) === "Asunto mes||NULL|prueba-mes@example.com", "uno de 40 días también queda sin contenido", row(monthOld));
 ok(row(oldQueued).includes("Cuerpo encola"), "uno que sigue en cola no se toca", row(oldQueued));
 ok(row(recent).includes("Cuerpo reciente"), "uno reciente no se toca", row(recent));
 
