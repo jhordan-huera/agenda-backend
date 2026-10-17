@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/020-citas-completadas-fijas` (rama de trabajo: `dev`) · **Creada**: 2026-10-16
 
-**Estado**: Implementada (2026-10-17)
+**Estado**: Publicada (2026-10-17, PR backend #41 y front #32)
 
 **Repos**:
 - **agenda-backend:** la regla, que se cumple en la API.
