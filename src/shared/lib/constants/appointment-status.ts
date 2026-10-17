@@ -104,3 +104,54 @@ export const CLOSE_ALL_MAX = 200;
  * aparato (decisión del dueño del producto, 2026-10-15).
  */
 export const CLOSE_LATER_HOURS = 4;
+
+/* ------------------------------------------ Las citas completadas quedan fijas (spec 020) -- */
+
+/**
+ * Una cita «Completada» queda fija: no cambia de estado ni de datos, salvo el pago, los comprobantes y las
+ * notas. Sólo el propietario la corrige, con un motivo (decisión del dueño del producto, 2026-10-16).
+ */
+export const LOCKED_STATUS = "completed" satisfies AppointmentStatus;
+
+/** Los estados a los que el propietario puede corregir una cita completada («Corregir estado»). */
+export const CORRECTABLE_FROM_COMPLETED = ["confirmed", "no_show", "cancelled"] as const satisfies readonly AppointmentStatus[];
+
+export type CorrectableStatus = (typeof CORRECTABLE_FROM_COMPLETED)[number];
+
+/**
+ * Lo que ofrece «Corregir estado»: «Confirmada» sólo si la cita aún no terminó. Una cita que ya pasó y
+ * vuelve a «Confirmada» quedaría otra vez por cerrar y bloquearía el panel (spec 018).
+ */
+export function correctionTargets(ended: boolean): readonly CorrectableStatus[] {
+  return ended ? CORRECTABLE_FROM_COMPLETED.filter((status) => status !== "confirmed") : CORRECTABLE_FROM_COMPLETED;
+}
+
+/** Lo que responde la API si se corrige a «Confirmada» una cita que ya terminó. */
+export const ENDED_CORRECTION_MESSAGE =
+  "Esta cita ya terminó: corrígela a «No asistió» o «Cancelada». «Confirmada» sólo se usa si la cita aún no pasó.";
+
+/**
+ * Si una cita puede pasar de `from` a `to`. Lo usan la API, el front y la beta:
+ * - desde «Completada», a nada (sólo la corrección del propietario);
+ * - a «Pendiente», sólo desde «Pendiente»: ninguna cita vuelve a Pendiente una vez que salió;
+ * - lo demás, sí («No asistió» y «Cancelada» se siguen cambiando).
+ */
+export function canChangeStatus(from: AppointmentStatus, to: AppointmentStatus): boolean {
+  if (from === LOCKED_STATUS) return false;
+  if (to === "pending") return from === "pending";
+  return true;
+}
+
+/** Lo que dicen la API y la ficha de una cita completada. */
+export const LOCKED_STATUS_MESSAGE = "Esta cita está completada: ya no se puede cambiar. El propietario puede corregirla con un motivo.";
+
+/** Lo que responde la API si se intenta cambiar algo más que las notas de una cita completada. */
+export const LOCKED_FIELDS_MESSAGE = "Esta cita está completada: sólo se pueden cambiar sus notas, el pago y los comprobantes.";
+
+/** Por qué una cita no puede pasar de `from` a `to` (null: sí puede). Es el mensaje de la API y la ayuda de la ficha. */
+export function statusChangeError(from: AppointmentStatus, to: AppointmentStatus): string | null {
+  if (canChangeStatus(from, to)) return null;
+  if (from === LOCKED_STATUS) return LOCKED_STATUS_MESSAGE;
+  if (from === "confirmed") return "Una cita confirmada no vuelve a Pendiente.";
+  return "Una cita no vuelve a Pendiente: para reactivarla, márcala como Confirmada.";
+}

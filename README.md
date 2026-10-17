@@ -189,6 +189,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 | Analítica (spec 016) | `GET /admin/analytics?days=30\|90` (sólo el super admin, con la verificación en dos pasos): `{ snapshot }`, la última foto de ese periodo, o `{ snapshot: null }` si aún no hay; `days` distinto de 30 o 90, 400. Lee una fila y no calcula nada. La ficha (`GET /admin/businesses/:id`) suma `analytics`: su parte de la última foto de 30 días y su tipo |
 | Centro de avisos (spec 014) | `GET /businesses/:id/notices/unread` · `GET …/notices` (`?limit&unread=1&cursor`) · `POST …/notices/:noticeId/read` · `POST …/notices/read-all` (cualquier rol del equipo; el super admin en modo soporte recibe 403) y lo mismo en `/admin/notices` (el super admin, con la verificación en dos pasos). Ninguna escribe en la actividad |
 | Citas por cerrar (spec 018) | `GET /businesses/:id/appointments/to-close` (`?cursor`, tandas de 50: `{ appointments, overdue, today, nextCursor }`) · `GET …/appointments/to-close/count` (`{ overdue, today }`) · `POST …/appointments/close-all` (`{ status: "completed", notify, ids }`: `{ closed, skipped }`). Cada uno ve lo suyo: el rol Profesional, su agenda (sin agenda, 403); el resto del equipo y el super admin en modo soporte, el negocio. Consultar no escribe en la actividad |
+| Citas completadas (spec 020) | `POST /businesses/:id/appointments/:appointmentId/correct-status` (`{ status, reason, notify }`: `status`, `confirmed`, `no_show` o `cancelled`; `reason`, de 10 a 300 caracteres; `notify`, por defecto `false`). Sólo el propietario y el super admin en modo soporte (los demás roles, 403) y sólo desde «Completada» (si no, 409). Devuelve la cita corregida |
 | Estado | `GET /health` (con `push`: si la API tiene claves VAPID válidas) |
 
 ## Contraseñas, modo soporte e historia clínica
@@ -1035,6 +1036,41 @@ bloquean. **Nada se cierra solo** (decisiones del dueño del producto, 2026-10-1
   a la actividad.
 - **Publicación:** sin migración ni variables. Primero el backend y después el front: mientras el
   backend nuevo no está publicado, el front no bloquea ni muestra la franja (la ruta responde 404).
+
+## Citas completadas fijas
+
+Spec 020. Una cita **Completada** queda fija: no cambia de estado ni de datos, salvo el pago, los
+comprobantes, las notas y su historia clínica. **Ninguna cita vuelve a Pendiente** una vez que salió de
+ese estado; «No asistió» y «Cancelada» se siguen cambiando, y una cancelada se reactiva como Confirmada.
+Si alguien se equivoca, la corrige el propietario con un motivo (decisiones del dueño del producto,
+2026-10-16).
+
+- **La regla, en un solo lugar:** `canChangeStatus(from, to)` y `statusChangeError` de
+  `src/shared/lib/constants/appointment-status.ts` (se copia del front con `sync:shared`). Desde
+  «Completada», nada; a «Pendiente», sólo desde «Pendiente»; lo demás, sí. La usan la API, el front y la
+  beta, con los mismos mensajes.
+- **Dónde se cumple** (`business-data-service.ts`): `changeAppointmentStatus` (la ficha, «Por cerrar» una
+  por una y «Marcar todas») y `PUT …/appointments/:id` responden 409 con el mensaje de la regla. En una
+  completada, «Editar» sólo acepta otras notas: otro paciente, otros pacientes de la sesión, otro
+  servicio, otra fecha, hora o duración, otro precio, otro lugar u otro profesional, 409 («Esta cita está
+  completada: sólo se pueden cambiar sus notas…»). Sin `extraClientIds` ni `professionalId` (un panel
+  anterior) se toman los que tenía. A una completada tampoco se le quita la llegada.
+- **Lo que ya sólo tocaba citas abiertas** sigue igual: «Marcar que llegó», «Cancelar ésta y las
+  siguientes», «Tu cita» (confirmar y cancelar desde el enlace del paciente), «Marcar todas como
+  completadas» y mover una cita en la agenda. El pago (`PATCH …/payment`), los comprobantes y la
+  historia clínica no miran el estado. Unir una reserva «Por verificar» a la ficha cambia el paciente de
+  sus citas, también de las completadas: es la misma persona.
+- **La corrección** (`POST …/appointments/:id/correct-status`, `appointmentService.correctStatus`): sólo
+  `actor.role === "owner"`, que incluye al super admin en modo soporte; los administradores, Recepción y
+  el rol Profesional reciben 403 («Sólo el propietario puede corregir…»). Sólo desde «Completada» y hacia
+  Confirmada, No asistió o Cancelada (`appointmentCorrectionSchema`, compartido). Guarda como un cambio de
+  estado (`saveStatusChange`, sin la regla del bloqueo): la actividad, `appointment.status_corrected`,
+  dice «Corrigió el estado de la cita de … de «Completada» a «No asistió». Motivo: …», con «Estado» en
+  los cambios, y ntfy la avisa como cualquier cambio de estado. Sin `notify` (por defecto), ningún email
+  y la actividad termina en «(sin avisar al paciente)». Después, la cita sigue las reglas de su nuevo
+  estado.
+- **Pruebas:** `tests/completed-appointments.test.ts`.
+- **Publicación:** sin migración ni variables. Primero el backend y después el front.
 
 ## Copias de seguridad
 

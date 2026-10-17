@@ -579,23 +579,24 @@ try {
     startTime: panelSlot!.time,
     durationMinutes: service.durationMinutes,
     price: 15,
-    status: "pending",
+    // Una cancelada se reactiva como Confirmada: ninguna cita vuelve a Pendiente (spec 020).
+    status: "confirmed",
     notes: "",
     homeVisit: null,
     isVirtual: false,
   });
-  ok(r.status === 200, "desde el formulario vuelve a Pendiente", r.body);
-  r = await call("PATCH", `/businesses/${profile.business.id}/appointments/${panelAppointment.id}/status`, { status: "confirmed", notify: false });
-  ok(r.status === 200, "y se confirma sin avisar al paciente", r.body);
+  ok(r.status === 200, "desde el formulario se reactiva como Confirmada", r.body);
+  r = await call("PATCH", `/businesses/${profile.business.id}/appointments/${panelAppointment.id}/status`, { status: "completed", notify: false });
+  ok(r.status === 200, "y se completa sin avisar al paciente", r.body);
   run = await runCron();
   const [fromForm, silent] = statusNotices().slice(-2);
   ok(
-    statusNotices().length === 3 && fromForm?.title === "Agenda360: cita pendiente de confirmar" && fromForm.message.includes("\nDe Cancelada a Pendiente\n"),
+    statusNotices().length === 3 && fromForm?.title === "Agenda360: cita confirmada" && fromForm.message.includes("\nDe Cancelada a Confirmada\n"),
     "el cambio hecho desde el formulario también avisa",
     statusNotices().map((n) => n.title),
   );
   ok(
-    silent?.title === "Agenda360: cita confirmada" && silent.message.endsWith("Sin avisar al paciente (se desmarcó la casilla)."),
+    silent?.title === "Agenda360: cita completada" && silent.message.endsWith("Sin avisar al paciente (se desmarcó la casilla)."),
     "el que se hizo sin avisar al paciente lo dice",
     silent?.message,
   );
