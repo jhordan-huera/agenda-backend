@@ -99,7 +99,11 @@ let r = await setStatus(cita, "pending");
 ok(r.status === 409 && newEmails(cita).length === 0, "de Confirmada a Pendiente, ya no (spec 020): 409 y ningún email", { status: r.status, body: r.body });
 emails = await step("completed", "appointment_completed", "a Completada (cita de hoy): «gracias por tu visita»");
 ok(!copyTo || emails.includes(`appointment_copy → ${copyTo}`), "también con copia al profesional", emails);
+// «Confirmada» sólo se corrige si la cita aún no terminó (spec 020): para no depender de la hora a la que
+// corre la prueba, la cita pasa a mañana mientras se corrige y después vuelve a hoy.
+sql(`update appointments set date = date + 1 where id = '${cita}'`);
 await step("confirmed", "appointment_confirmed", "de Completada a Confirmada (corrección que avisa)", () => correct(cita, "confirmed"));
+sql(`update appointments set date = date - 1 where id = '${cita}'`);
 await step("no_show", "appointment_no_show", "a No asistió: invitación a elegir otra hora");
 await step("confirmed", "appointment_confirmed", "de No asistió a Confirmada");
 await step("cancelled", "appointment_cancelled", "a Cancelada: la cancelación");

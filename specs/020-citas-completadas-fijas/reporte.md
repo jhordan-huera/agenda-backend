@@ -66,10 +66,15 @@ se pueden cambiar, pero no a Pendiente. La API hace cumplir las reglas aunque el
 
 ## Pendientes y riesgos
 
-- **Hallazgo:** si el propietario corrige a «Confirmada» una cita completada de un día anterior, esa
-  cita vuelve a estar por cerrar. El panel muestra al instante «Antes de seguir, cierra tus citas
-  pendientes» (spec 018). Es coherente, pero brusco. Se le preguntó al dueño si «Confirmada» sólo se
-  ofrece cuando la cita aún no terminó.
+- **Hallazgo, ya resuelto (2026-10-17, aprobado por el dueño):** al corregir a «Confirmada» una
+  cita completada que ya pasó, volvía a quedar por cerrar y el panel se bloqueaba al instante (spec
+  018). Ahora «Confirmada» sólo se ofrece si la cita aún no terminó (`correctionTargets`). La API lo
+  hace cumplir: si ya pasó, responde 409 con «Esta cita ya terminó: corrígela a «No asistió» o
+  «Cancelada»…». La beta, igual.
+  - En el diálogo, la ayuda lo explica.
+  - Una prueba nueva lo comprueba. `status-notices` corrige su cita moviéndola a mañana, para no
+    depender de la hora a la que corre.
+  - En el navegador pasaron 8 de 8: en Chromium y en WebKit, una cita pasada y una futura.
 - **Sin comprobar:** el aviso de ntfy de una corrección y el WhatsApp ya escrito cuando se corrige
   con «Avisar al paciente».
 - **Algún negocio** puede tener la costumbre de reabrir citas completadas. Conviene avisarles.

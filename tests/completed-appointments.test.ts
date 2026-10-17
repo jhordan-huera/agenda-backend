@@ -4,7 +4,7 @@
 // corrige con un motivo, que queda en la actividad; los demás roles reciben 403. Datos ficticios.
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { agent, BASE, checks, count, login, sql } from "./helpers/harness.ts";
-import { LOCKED_FIELDS_MESSAGE, LOCKED_STATUS_MESSAGE } from "../src/shared/lib/constants/appointment-status.ts";
+import { ENDED_CORRECTION_MESSAGE, LOCKED_FIELDS_MESSAGE, LOCKED_STATUS_MESSAGE } from "../src/shared/lib/constants/appointment-status.ts";
 import { formatNumericDate } from "../src/shared/lib/format.ts";
 import { addDaysISO, durationInMinutes } from "../src/shared/lib/time.ts";
 import type { Appointment } from "../src/shared/types/index.ts";
@@ -261,6 +261,15 @@ r = await correct(ricardo, confirmed, { status: "cancelled", reason: REASON });
 ok(r.status === 409 && /Sólo se corrige una cita completada, y ésta está «Confirmada»/.test(r.body.error.message) && statusOf(confirmed) === "confirmed", "una cita que no está completada: 409", r.body);
 r = await correct(ricardo, crypto.randomUUID(), { status: "no_show", reason: REASON });
 ok(r.status === 404, "una que no existe: 404", r.body);
+r = await correct(ricardo, fixed, { status: "confirmed", reason: REASON });
+ok(
+  r.status === 409 && r.body.error.message === ENDED_CORRECTION_MESSAGE && statusOf(fixed) === "completed",
+  "a Confirmada, una que ya pasó: 409 (volvería a quedar por cerrar)",
+  r.body,
+);
+const early = appointment({ professionalId: ricardoAgenda, clientId: carla.id, date: day(2), status: "completed" });
+r = await correct(ricardo, early, { status: "confirmed", reason: REASON });
+ok(r.status === 200 && statusOf(early) === "confirmed", "a Confirmada, una que aún no pasó (se completó antes de tiempo): sí", r.body);
 
 console.log("\nEl propietario corrige");
 const emailsBefore = emailsOf(fixed);

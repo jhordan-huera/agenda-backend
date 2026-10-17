@@ -6,6 +6,8 @@ import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import {
   APPOINTMENT_STATUS_CONFIG,
   BLOCKING_STATUSES,
+  correctionTargets,
+  ENDED_CORRECTION_MESSAGE,
   LOCKED_FIELDS_MESSAGE,
   LOCKED_STATUS,
   LOCKED_STATUS_MESSAGE,
@@ -1070,6 +1072,16 @@ export const appointmentService = {
           `Sólo se corrige una cita completada, y ésta está «${APPOINTMENT_STATUS_CONFIG[before.status].label}»: cambia su estado desde la ficha.`,
         );
       }
+      // «Confirmada» sólo si la cita aún no terminó (en la zona del negocio): si ya pasó, volvería a quedar
+      // por cerrar y bloquearía el panel (spec 018).
+      const { ended } = (await one<{ ended: boolean }>(
+        db,
+        `select ((a.date + a.end_time) at time zone b.timezone) <= now() as ended
+           from appointments a join businesses b on b.id = a.business_id
+          where a.id = $1`,
+        [before.id],
+      ))!;
+      if (!correctionTargets(ended).includes(data.status)) throw new AppError("conflict", ENDED_CORRECTION_MESSAGE);
       const from = APPOINTMENT_STATUS_CONFIG[before.status].label;
       const to = APPOINTMENT_STATUS_CONFIG[data.status].label;
       // «Sin avisar al paciente» va al final, como en todo cambio de estado: es lo que lee el aviso de ntfy.

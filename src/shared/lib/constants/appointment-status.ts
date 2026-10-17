@@ -119,6 +119,18 @@ export const CORRECTABLE_FROM_COMPLETED = ["confirmed", "no_show", "cancelled"] 
 export type CorrectableStatus = (typeof CORRECTABLE_FROM_COMPLETED)[number];
 
 /**
+ * Lo que ofrece «Corregir estado»: «Confirmada» sólo si la cita aún no terminó. Una cita que ya pasó y
+ * vuelve a «Confirmada» quedaría otra vez por cerrar y bloquearía el panel (spec 018).
+ */
+export function correctionTargets(ended: boolean): readonly CorrectableStatus[] {
+  return ended ? CORRECTABLE_FROM_COMPLETED.filter((status) => status !== "confirmed") : CORRECTABLE_FROM_COMPLETED;
+}
+
+/** Lo que responde la API si se corrige a «Confirmada» una cita que ya terminó. */
+export const ENDED_CORRECTION_MESSAGE =
+  "Esta cita ya terminó: corrígela a «No asistió» o «Cancelada». «Confirmada» sólo se usa si la cita aún no pasó.";
+
+/**
  * Si una cita puede pasar de `from` a `to`. Lo usan la API, el front y la beta:
  * - desde «Completada», a nada (sólo la corrección del propietario);
  * - a «Pendiente», sólo desde «Pendiente»: ninguna cita vuelve a Pendiente una vez que salió;
