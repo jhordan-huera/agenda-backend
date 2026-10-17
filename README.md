@@ -185,10 +185,10 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 | Historia clínica | `GET/POST /businesses/:id/clinical-templates` (`?all=1`) · `GET/PUT …/clinical-templates/:templateId` · `PATCH …/:templateId/active` · `POST …/clients/:clientId/clinical-record/attachments` · `POST /businesses/:id/clinical-attachments/:attachmentId/complete` · `GET …/:attachmentId/url` · `GET /businesses/:id/clients/:clientId/clinical-record` · `PUT …/clinical-record/profile` · `POST …/clinical-record/notes` · `POST /businesses/:id/clinical-notes/:noteId/addenda` |
 | Público (sin sesión) | `GET /public/platform-settings` · `GET /public/categories` · `GET /public/captcha` (Site Key del registro) · `GET /public/businesses/:slug` · `POST /public/businesses/:slug/bookings` · `POST /public/businesses/:slug/clients/lookup` (sólo para versiones anteriores de la página: responde siempre `{found: false}`) · `GET /public/payments/:token` (+ `receipts`) · `GET /public/appointments/:token` · `POST …/confirm` · `POST …/cancel` («Tu cita», spec 010) |
 | Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, el cupo de Gmail —`emailQuota`, spec 015—, último cron, última copia e intentos fallidos; spec 006; el reparto por plan, `businessesByPlan`, sólo cuenta los negocios activos) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
-| Avisos en el celular (spec 013) | `GET /push/config` · `PUT /push/device` · `PATCH /push/device` · `POST /push/device/off` · `POST /push/device/test` (sólo el propietario de un negocio activo, el rol Profesional con su agenda activa —sólo el resumen de las 8, spec 017— y el super admin; el aparato va en el cuerpo, nunca en la URL) |
+| Avisos en el celular (spec 013) | `GET /push/config` · `PUT /push/device` · `PATCH /push/device` · `POST /push/device/off` · `POST /push/device/test` (sólo el propietario de un negocio activo, el rol Profesional con su agenda activa —sólo los resúmenes de su agenda: el de las 8, spec 017, y el de la mañana, spec 021— y el super admin; el aparato va en el cuerpo, nunca en la URL) |
 | Analítica (spec 016) | `GET /admin/analytics?days=30\|90` (sólo el super admin, con la verificación en dos pasos): `{ snapshot }`, la última foto de ese periodo, o `{ snapshot: null }` si aún no hay; `days` distinto de 30 o 90, 400. Lee una fila y no calcula nada. La ficha (`GET /admin/businesses/:id`) suma `analytics`: su parte de la última foto de 30 días y su tipo |
 | Centro de avisos (spec 014) | `GET /businesses/:id/notices/unread` · `GET …/notices` (`?limit&unread=1&cursor`) · `POST …/notices/:noticeId/read` · `POST …/notices/read-all` (cualquier rol del equipo; el super admin en modo soporte recibe 403) y lo mismo en `/admin/notices` (el super admin, con la verificación en dos pasos). Ninguna escribe en la actividad |
-| Citas por cerrar (spec 018) | `GET /businesses/:id/appointments/to-close` (`?cursor`, tandas de 50: `{ appointments, overdue, today, nextCursor }`) · `GET …/appointments/to-close/count` (`{ overdue, today }`) · `POST …/appointments/close-all` (`{ status: "completed", notify, ids }`: `{ closed, skipped }`). Cada uno ve lo suyo: el rol Profesional, su agenda (sin agenda, 403); el resto del equipo y el super admin en modo soporte, el negocio. Consultar no escribe en la actividad |
+| Citas por cerrar (spec 018) | `GET /businesses/:id/appointments/to-close` (`?cursor`, tandas de 50: `{ appointments, overdue, today, previousMonth, nextCursor }`) · `GET …/appointments/to-close/count` (`{ overdue, today, previousMonth }`; `previousMonth`, las de un mes anterior, spec 021) · `POST …/appointments/close-all` (`{ status: "completed", notify, ids }`: `{ closed, skipped }`). Cada uno ve lo suyo: el rol Profesional, su agenda (sin agenda, 403); el resto del equipo y el super admin en modo soporte, el negocio. Consultar no escribe en la actividad |
 | Citas completadas (spec 020) | `POST /businesses/:id/appointments/:appointmentId/correct-status` (`{ status, reason, notify }`: `status`, `confirmed`, `no_show` o `cancelled`; `reason`, de 10 a 300 caracteres; `notify`, por defecto `false`). Sólo el propietario y el super admin en modo soporte (los demás roles, 403) y sólo desde «Completada» (si no, 409). Devuelve la cita corregida |
 | Estado | `GET /health` (con `push`: si la API tiene claves VAPID válidas) |
 
@@ -841,8 +841,8 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
 Spec 013. El propietario de cada negocio y los super admin reciben avisos en el celular (o en la
 computadora) desde la app instalada, como cualquier aplicación, con los avisos estándar de los
 navegadores (Web Push): sin Play Store, App Store ni servicios de pago. Desde la spec 017, también cada
-profesional (el rol Profesional con su agenda), sólo con el resumen de las 8 de su agenda. Los emails
-no cambian: el aviso se suma.
+profesional (el rol Profesional con su agenda), sólo con los resúmenes de su agenda (el de las 8 y,
+desde la spec 021, el de la mañana). Los emails no cambian: el aviso se suma.
 
 - **Qué avisa:**
   - **al propietario, al momento:** cada reserva online (con «· Por verificar» si lo está), cada
@@ -850,18 +850,21 @@ no cambian: el aviso se suma.
     desde su email, y cada cita nueva en su agenda que agendó otra persona (Recepción, un
     administrador o el super admin en modo soporte);
   - **al propietario, desde el cron:** cada cita que terminó hace 30 minutos y sigue Pendiente o
-    Confirmada («Cita por cerrar») y, a las 8 de la noche en la hora del negocio, «Tienes 3 citas de
-    hoy sin cerrar» si queda alguna;
+    Confirmada («Cita por cerrar»), a las 8 de la noche en la hora del negocio, «Tienes 3 citas de
+    hoy sin cerrar» si queda alguna y, a la hora en que abre el negocio (spec 021), «Tu negocio tiene 5
+    citas de días anteriores sin cerrar» (ver «El aviso de la mañana»);
   - **a cada profesional, desde el cron (spec 017):** a las 8 de la noche, «Tienes 2 citas de hoy sin
     cerrar» con las de su agenda que ya terminaron y siguen Pendiente o Confirmada, si le queda alguna;
     una vez al día (clave `resumen:<agenda>:<fecha>`), sólo con la cifra, y abre la agenda de ese día.
     Va a quien tiene la agenda ese día, si sigue con el rol Profesional (audiencia `userOf` en
     `push-delivery.ts`). El propietario no recibe un segundo aviso por su propia agenda (ya tiene el del
-    negocio). Su tarjeta sólo tiene ese tipo; sin una agenda activa no los puede activar (403 con el
-    motivo). Recepción y los administradores siguen sin avisos al celular;
+    negocio). Desde la spec 021, también a la hora en que empieza su horario: «Tienes 3 citas de días
+    anteriores sin cerrar». Su tarjeta sólo tiene esos dos tipos; sin una agenda activa no los puede
+    activar (403 con el motivo). Recepción y los administradores siguen sin avisos al celular;
   - **al super admin:** al momento los negocios nuevos (el alta del registro, no los que crea él) y las
-    solicitudes de plan; desde el cron los cambios de seguridad en cuentas de super admin y los
-    intentos fallidos (además de ntfy, que no cambia).
+    solicitudes de plan; desde el cron los cambios de seguridad en cuentas de super admin, los
+    intentos fallidos y, desde la spec 021, a qué negocios salieron los recordatorios de citas por
+    cerrar (además de ntfy, que no cambia).
 - **Privacidad:** el paciente siempre a medias («Juan P.», `masking.ts`), nunca su cédula, email,
   teléfono ni nada de la historia clínica. El aviso viaja cifrado: Google, Apple, Mozilla o Microsoft
   lo transportan pero no lo pueden leer. Los registros (también los públicos del cron) sólo tienen
@@ -892,7 +895,8 @@ no cambian: el aviso se suma.
     mismos de la campana del panel) y a quién va: `src/services/push-notices.ts`. Las rutas: `src/routes/push-routes.ts`
     (`avisos-aparato`: 30 cambios y `aviso-prueba`: 5 avisos de prueba por conexión en 15 min).
   - El cron (`runPushJobs` en `scheduled-tasks.ts`) pone en cola las citas por cerrar, el resumen de
-    las 8 y los del super admin, envía la cola (60 s como mucho) y limpia: avisos de más de 7 días y
+    las 8, el de la mañana (spec 021), a qué negocios salieron esos dos y los demás del super admin,
+    envía la cola (60 s como mucho) y limpia: avisos de más de 7 días y
     aparatos en pausa hace más de 90. Su registro suma «avisos en la app: enviados N · fallidos N ·
     aparatos dados de baja N»; si fallan avisos y no sale ninguno, ntfy avisa con «Agenda360: los
     avisos en la app no salen».
@@ -920,20 +924,21 @@ Spec 014. El panel del negocio y el de /admin tienen una **campana** con el núm
 leer («9+» con más de 9): en la computadora, junto al logo del menú lateral; en el celular, a la
 derecha de la barra de arriba. Al tocarla se ven los últimos 20, y «Ver todos» abre la página
 «Avisos» con los de los últimos 30 días. No hace falta activar nada: la campana no depende de los
-avisos en el celular (los del propietario y el super admin y, desde la spec 017, el resumen de las 8
-de cada profesional).
+avisos en el celular (los del propietario y el super admin y, desde la spec 017, los resúmenes de
+cada profesional).
 
 - **Qué le llega a cada uno** (la tabla de la spec, decidida al leer con lo que la persona es hoy):
   - **el propietario:** las reservas online (también «Por verificar»), los comprobantes, las
     confirmaciones y las cancelaciones del paciente y las citas por cerrar de todas las agendas, el
-    resumen de las 8 del negocio y «Cita nueva en tu agenda» de la suya;
+    resumen de las 8 y el de la mañana (spec 021) del negocio y «Cita nueva en tu agenda» de la suya;
   - **Recepción y los administradores:** las reservas, los comprobantes, las confirmaciones y las
     cancelaciones del paciente de todas las agendas;
   - **quien tiene una agenda** (sea cual sea su rol; el rol Profesional sólo ve por aquí): todo lo de
     su agenda, también «Cita nueva en tu agenda» si la agendó otra persona, sus citas por cerrar y el
-    resumen de las 8 de su agenda;
+    resumen de las 8 y el de la mañana de su agenda;
   - **el super admin**, en /admin: los negocios nuevos, las solicitudes de plan, los cambios de
-    seguridad en cuentas de super admin y los intentos fallidos. En modo soporte no ve la campana del
+    seguridad en cuentas de super admin, los intentos fallidos y los recordatorios de citas por cerrar
+    enviados (spec 021). En modo soporte no ve la campana del
     negocio (la API responde 403 «La campana es del equipo del negocio.»).
 
   Además, quien lo provocó no lo ve, cada persona sólo ve lo de desde que entró al equipo y la cita
@@ -1011,6 +1016,14 @@ Spec 018. Una cita que ya terminó (en la hora del negocio) y sigue **Pendiente*
 puede cerrarlas hasta que las cierre o pulse «Más tarde»; las de hoy salen en la lista, pero no
 bloquean. **Nada se cierra solo** (decisiones del dueño del producto, 2026-10-15).
 
+**Las de un mes anterior bloquean sin «Más tarde»** (spec 021, 2026-10-17): el contador trae
+`previousMonth`, las que siguen sin cerrar con fecha anterior al día 1 del mes en curso (en la zona del
+negocio), con el mismo alcance por rol, y cada fila de la lista dice si lo es (`previousMonth`). Con
+alguna, el front muestra la pantalla «Empezó un nuevo mes: cierra las citas del mes anterior para
+seguir», sin «Más tarde» aunque haya uno guardado en el aparato, hasta cerrarlas; el modo soporte sigue
+con la franja. Una API que todavía no trae `previousMonth` cuenta como 0, así que el orden de los PR no
+rompe nada. `countToClose` acepta un momento fijo (`at`), sólo para las pruebas.
+
 - **Cada uno lo suyo** (`agendaScope`): el rol Profesional, las de su agenda (sin agenda asignada, 403);
   el propietario, los administradores, Recepción y el super admin en modo soporte, las de todo el
   negocio (también las de una agenda sin usuario).
@@ -1036,6 +1049,51 @@ bloquean. **Nada se cierra solo** (decisiones del dueño del producto, 2026-10-1
   a la actividad.
 - **Publicación:** sin migración ni variables. Primero el backend y después el front: mientras el
   backend nuevo no está publicado, el front no bloquea ni muestra la franja (la ruta responde 404).
+
+## El aviso de la mañana
+
+Spec 021. Además del resumen de las 8 de la noche, al **empezar el día** llega cuántas citas de **días
+anteriores** siguen Pendientes o Confirmadas, si hay alguna (decisiones del dueño del producto,
+2026-10-17). Lo prepara el cron de GitHub (`queueMorningSummaries` en `src/services/push-notices.ts`),
+sin gastar CPU de Vercel.
+
+- **A quién y cuándo** (en la hora del negocio):
+  - **cada profesional con agenda y usuario**, a la hora de inicio de su horario de ese día (el primer
+    `start` de los `intervals` de `schedules`, si el día está activo), con las de su agenda: «Tienes 3
+    citas de días anteriores sin cerrar» (clave `manana:<agenda>:<fecha>`). En el celular, a quien
+    tiene la agenda ese día si sigue con el rol Profesional (`userOf`), como el de las 8;
+  - **el propietario**, a la hora en que abre el negocio (la primera agenda que atiende ese día, tenga
+    o no usuario), con las de todo el negocio: «Tu negocio tiene 7 citas de días anteriores sin
+    cerrar» (clave `manana:<negocio>:<fecha>`). Si también tiene agenda, no recibe además el de ella.
+    Una agenda sin usuario no tiene aviso propio: sus citas cuentan en el del propietario.
+- **Quien no atiende ese día no lo recibe:** su horario está cerrado o sin horas, o lo cubre un bloqueo
+  de día completo (`blocked_times` con `all_day`, suyo o del negocio entero). Un bloqueo de unas horas
+  no cuenta.
+- **La ventana:** sale en la pasada cuya hora cae entre la de inicio y 2 horas después
+  (`MORNING_SUMMARY_GRACE_HOURS`): si el cron no corrió a esa hora, en la primera pasada de esas 2
+  horas; pasadas éstas, ese día no sale. Las claves impiden repetirlo. Una sola consulta para todos
+  los negocios y, sólo donde toca, otra con las cifras.
+- **Dónde:** en la campana siempre (como el de las 8: el del negocio al propietario y el de cada agenda
+  a quien la tiene) y en el celular con los avisos activados y «Resumen al empezar el día» encendido
+  (los aparatos guardan los tipos apagados, así que a los que ya estaban activados les llega sin hacer
+  nada). Al tocarlo se abre la lista «Por cerrar» (`/dashboard/calendar?por-cerrar=1`).
+- **El aviso al super admin** (`queueRemindersSentNotices`): en cada pasada en que salen avisos de la
+  mañana o el resumen de las 8, uno por tanda en la campana de /admin, en su celular
+  (`reminders_sent`) y por ntfy: «Recordatorios de citas por cerrar enviados · Mañana · 3 negocios:
+  Centro Profesional (6 citas), Dra. Nadia Sanipatín (6), Nicole Andrade (1)» (o «Noche · …»), con los
+  10 de más citas y «y 4 negocios más». La cifra es la del negocio entero si salió la suya; si no, la de
+  las agendas que avisaron en esa pasada. Clave `recordatorios:<tanda>:<fecha>:<inicio de la ventana>`.
+  Sólo nombres de negocios y cifras: el título no nombra ninguno (por ntfy, «Agenda360: recordatorios
+  de citas por cerrar enviados», que queda en el registro público de Actions).
+- **Privacidad:** sólo la cifra, nunca un paciente. La línea del registro del cron suma «avisos de la
+  mañana: N · recordatorios: mañana N negocios · noche N negocios», sólo con cifras.
+- **Migración 045** (`045_morning_summary.sql`): `panel_notices` acepta `morning_summary` (del negocio,
+  como `evening_summary`) y `reminders_sent` (de la plataforma, con su texto). Rehace los dos `check`
+  de `kind` de la 041, que no tenían nombre (los busca en `pg_constraint`), ya con nombre:
+  `panel_notices_kind_check` y `panel_notices_scope_check`. Sin ella, el celular y ntfy salen igual y
+  la campana anota el fallo en el registro sin datos.
+- **Publicación:** la migración 045 va antes del backend, como paso aparte (`npm run db:migrate`).
+  Después, el PR del backend y luego el del front. Sin variables nuevas.
 
 ## Citas completadas fijas
 

@@ -19,13 +19,25 @@ import { authorize, parseInput, type RequestContext } from "./context.ts";
  * puede cerrarlas hasta que las cierre o pulse «Más tarde»; las de hoy salen en la lista, pero no
  * bloquean. Cada uno ve lo suyo (agendaScope): el rol Profesional, su agenda; el propietario, los
  * administradores, Recepción y el super admin en modo soporte, todo el negocio. Nada se cierra solo.
+ *
+ * Desde la spec 021, las de un mes anterior al de hoy (también en la zona del negocio) se cuentan aparte
+ * (`previousMonth`): con alguna, el panel se bloquea sin «Más tarde» hasta cerrarlas, para que los datos de
+ * cada mes sean reales. El alcance por rol es el mismo.
  */
 
 /** 'pending', 'confirmed': los estados de una cita sin cerrar, en SQL (constantes, no datos del usuario). */
 const OPEN_SQL = [...OPEN_STATUSES].map((status) => `'${status}'`).join(", ");
 
-/** La zona del negocio ($1) y su «hoy». */
-const ZONE_CTE = `zone as (select b.timezone, (now() at time zone b.timezone)::date as today from businesses b where b.id = $1)`;
+/**
+ * La zona del negocio ($1), el momento de la consulta, su «hoy» y el primer día de su mes. `at`: el momento
+ * (por defecto, ahora; las pruebas lo fijan para no depender del día en que corren).
+ */
+const zoneCte = (at = "now()") =>
+  `zone as (
+     select b.timezone, ${at} as now, (${at} at time zone b.timezone)::date as today,
+            date_trunc('month', ${at} at time zone b.timezone)::date as month_start
+       from businesses b where b.id = $1)`;
+const ZONE_CTE = zoneCte();
 
 /**
  * La cita `a` del negocio ($1) ya terminó y sigue sin cerrar; $2: la agenda del rol Profesional o null.
@@ -35,7 +47,7 @@ const ZONE_CTE = `zone as (select b.timezone, (now() at time zone b.timezone)::d
 const TO_CLOSE_SQL = `a.business_id = $1
     and a.status in (${OPEN_SQL})
     and a.date <= zone.today
-    and ((a.date + a.end_time) at time zone zone.timezone) <= now()
+    and ((a.date + a.end_time) at time zone zone.timezone) <= zone.now
     and ($2::uuid is null or a.professional_id = $2::uuid)`;
 
 /** Los pacientes de la cita `a`: el principal primero y después los demás, en su orden (como extraClientIds). */
@@ -54,17 +66,22 @@ async function scopeOf(db: Db, ctx: RequestContext, businessId: string, lock = f
   return { actor, professionalId };
 }
 
-/** Cuántas hay por cerrar: las de días anteriores y las de hoy que ya terminaron. */
-async function countToClose(db: Db, businessId: string, professionalId: string | null): Promise<AppointmentsToCloseCount> {
-  const row = await one<AppointmentsToCloseCount>(
+/**
+ * Cuántas hay por cerrar: las de días anteriores y las de hoy que ya terminaron y, de las de días
+ * anteriores, las de un mes anterior (spec 021). `at` (ISO): el momento de la consulta, sólo para las
+ * pruebas; por defecto, ahora.
+ */
+export async function countToClose(db: Db, businessId: string, professionalId: string | null, at?: string): Promise<Required<AppointmentsToCloseCount>> {
+  const row = await one<Required<AppointmentsToCloseCount>>(
     db,
-    `with ${ZONE_CTE}
+    `with ${at ? zoneCte("$3::timestamptz") : ZONE_CTE}
      select count(*) filter (where a.date < zone.today)::int as overdue,
-            count(*) filter (where a.date = zone.today)::int as today
+            count(*) filter (where a.date = zone.today)::int as today,
+            count(*) filter (where a.date < zone.month_start)::int as "previousMonth"
        from zone join appointments a on ${TO_CLOSE_SQL}`,
-    [businessId, professionalId],
+    at ? [businessId, professionalId, at] : [businessId, professionalId],
   );
-  return { overdue: row?.overdue ?? 0, today: row?.today ?? 0 };
+  return { overdue: row?.overdue ?? 0, today: row?.today ?? 0, previousMonth: row?.previousMonth ?? 0 };
 }
 
 /** "2026-10-14|09:30|<id>" → sus tres partes; sin cursor, la primera tanda. */
@@ -78,7 +95,7 @@ export const appointmentsToCloseService = {
   /**
    * El contador del panel (GET …/appointments/to-close/count): una consulta con el índice, sin nombres.
    * Lo pide el panel al entrar, al volver a la pestaña y cada 3 minutos con la pestaña visible, junto con
-   * la campana. Consultar no va a la actividad.
+   * la campana. Consultar no va a la actividad. Desde la spec 021 trae también `previousMonth`.
    */
   async count(ctx: RequestContext, businessId: string): Promise<AppointmentsToCloseCount> {
     const { professionalId } = await scopeOf(pool, ctx, businessId);
@@ -87,8 +104,9 @@ export const appointmentsToCloseService = {
 
   /**
    * La lista «Por cerrar» (GET …/appointments/to-close?cursor=): de la más vieja a la más nueva (las de
-   * días anteriores primero, después las de hoy), en tandas de TO_CLOSE_PAGE_SIZE, con las cifras de toda
-   * la lista y lo que se ve en la agenda (pacientes, servicio y profesional).
+   * meses anteriores primero, después las de días anteriores y las de hoy), en tandas de
+   * TO_CLOSE_PAGE_SIZE, con las cifras de toda la lista y lo que se ve en la agenda (pacientes, servicio y
+   * profesional). Cada fila dice si es de un día anterior (`overdue`) y de un mes anterior (`previousMonth`).
    */
   async list(ctx: RequestContext, businessId: string, query: Record<string, unknown>): Promise<AppointmentsToClose> {
     const clean = Object.fromEntries(Object.entries(query).filter(([, value]) => typeof value === "string" && value !== ""));
@@ -100,7 +118,8 @@ export const appointmentsToCloseService = {
       `with ${ZONE_CTE}
        select a.id, a.date, a.start_time as "startTime", a.end_time as "endTime", a.status,
               a.professional_id as "professionalId", ${CLIENT_NAMES_SQL} as "clientNames",
-              s.name as "serviceName", p.display_name as "professionalName", a.date < zone.today as overdue
+              s.name as "serviceName", p.display_name as "professionalName", a.date < zone.today as overdue,
+              a.date < zone.month_start as "previousMonth"
          from zone
          join appointments a on ${TO_CLOSE_SQL}
          join services s on s.id = a.service_id

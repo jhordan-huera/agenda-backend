@@ -1,6 +1,11 @@
 import { many, one, pool, type Db } from "../db/pool.ts";
-import { EVENING_SUMMARY_HOUR, UNCLOSED_AFTER_MINUTES } from "../shared/lib/constants/push.ts";
-import { describeNotice, type NoticeAppointment, type NoticeDataByKind, type NoticeText } from "../shared/lib/notices.ts";
+import {
+  EVENING_SUMMARY_HOUR,
+  MORNING_SUMMARY_GRACE_HOURS,
+  REMINDERS_SENT_MAX_BUSINESSES,
+  UNCLOSED_AFTER_MINUTES,
+} from "../shared/lib/constants/push.ts";
+import { describeNotice, type NoticeAppointment, type NoticeDataByKind, type NoticeText, type RemindersBatch } from "../shared/lib/notices.ts";
 import type { Appointment, AppointmentStatus, Business, ISODate, NoticeKind, TimeString } from "../shared/types/index.ts";
 import { shortName } from "./masking.ts";
 import { addAppointmentNotice, addPlatformNotice, noticePatientsSql } from "./panel-notices.ts";
@@ -29,7 +34,8 @@ import {
  * - **El día**, en la zona del negocio: «Hoy 16:00», «Mañana 16:00» o «Mar 20 oct 16:00».
  * - **La campana no depende del celular** (RF-003): su aviso se guarda siempre, haya o no aparatos, y
  *   antes de mirar los del celular. El celular sigue como en la spec 013: el propietario y los super
- *   admin con aparatos y, desde la spec 017, cada profesional con el resumen de las 8 de su agenda.
+ *   admin con aparatos y, desde la spec 017, cada profesional con el resumen de las 8 de su agenda (y,
+ *   desde la spec 021, el de la mañana).
  * - **Nunca rompen lo que los provoca:** el aviso del panel y el del celular van cada uno en su punto de
  *   guardado (`aviso_panel` y `aviso_celular`): si fallan, la reserva y los emails siguen igual (RF-011).
  */
@@ -281,6 +287,26 @@ export interface PanelTally {
   panel: number;
 }
 
+/**
+ * A qué negocios salieron en esta pasada los recordatorios de citas por cerrar (spec 021), para el aviso al
+ * super admin: por tanda, el id del negocio y con cuántas citas (la cifra del negocio entero si salió la
+ * suya; si no, la suma de las agendas que avisaron). Y cuántos avisos de la mañana salieron, para el
+ * registro del cron.
+ */
+export interface RemindersTally {
+  batches: Record<RemindersBatch, Map<string, number>>;
+  morningNotices: number;
+}
+
+export const emptyRemindersTally = (): RemindersTally => ({ batches: { morning: new Map(), evening: new Map() }, morningNotices: 0 });
+
+/** Lo que salió a un negocio en una tanda: la cifra del negocio entero, o la de cada agenda que avisó. */
+function noteReminders(reminders: RemindersTally | undefined, batch: RemindersBatch, businessId: string, sent: { business: number | null; agendas: number }) {
+  if (!reminders) return;
+  const count = sent.business ?? sent.agendas;
+  if (count > 0) reminders.batches[batch].set(businessId, count);
+}
+
 /** Negocios activos (los suspendidos no generan avisos), con su zona y su propietario. */
 async function activeBusinesses(): Promise<{ id: string; timezone: string; ownerId: string | null }[]> {
   return many<{ id: string; timezone: string; ownerId: string | null }>(
@@ -369,9 +395,10 @@ export async function queueUnclosedNotices(since: string | null, until: string, 
  * propietario con aparatos y, desde la spec 017, el de su agenda a cada profesional con aparatos
  * (`userOf`: quien tiene la agenda ese día y sigue con el rol Profesional), con la misma clave. El
  * propietario no recibe un segundo aviso por su propia agenda, y el aviso sólo lleva la cifra, nunca un
- * paciente. Devuelve los del celular; los de la campana se suman a `tally`.
+ * paciente. Devuelve los del celular; los de la campana se suman a `tally` y, desde la spec 021, a qué
+ * negocios salió, a `reminders` (para el aviso al super admin).
  */
-export async function queueEveningSummaries(since: string | null, until: string, tally?: PanelTally): Promise<number> {
+export async function queueEveningSummaries(since: string | null, until: string, tally?: PanelTally, reminders?: RemindersTally): Promise<number> {
   const window = cronWindow(since, until);
   let queued = 0;
   for (const business of await activeBusinesses()) {
@@ -405,6 +432,7 @@ export async function queueEveningSummaries(since: string | null, until: string,
           { inTransaction: false },
         );
         if (tally) tally.panel += saved;
+        return saved;
       };
       /** El aviso del celular: «Tienes N citas de hoy sin cerrar», que abre la agenda de ese día. */
       const toPhone = (audience: PushAudience, count: number, key: string) =>
@@ -421,22 +449,223 @@ export async function queueEveningSummaries(since: string | null, until: string,
             }),
           { inTransaction: false },
         );
-      await save(null, open, `resumen:${business.id}:${day.date}`);
+      // Salió (para el aviso al super admin, spec 021) si se guardó en la campana o se puso en cola algo nuevo.
+      let businessSent = (await save(null, open, `resumen:${business.id}:${day.date}`)) > 0;
       if (await ownerHasPhone(business.id, "evening_summary")) {
-        queued += await toPhone({ ownerOf: business.id }, open, `resumen:${business.id}:${day.date}`);
+        const phoned = await toPhone({ ownerOf: business.id }, open, `resumen:${business.id}:${day.date}`);
+        queued += phoned;
+        businessSent ||= phoned > 0;
       }
+      let agendasSent = 0;
       for (const agenda of agendas) {
         if (!agenda.userId || !agenda.isActive || agenda.userId === business.ownerId) continue;
         const key = `resumen:${agenda.professionalId}:${day.date}`;
-        await save(agenda.professionalId, agenda.open, key);
+        const saved = await save(agenda.professionalId, agenda.open, key);
         // Una consulta por agenda: si esa persona no tiene aparatos (o no es del rol Profesional), no pone nada.
-        queued += await toPhone({ userOf: agenda.userId, businessId: business.id }, agenda.open, key);
+        const phoned = await toPhone({ userOf: agenda.userId, businessId: business.id }, agenda.open, key);
+        queued += phoned;
+        if (saved + phoned > 0) agendasSent += agenda.open;
       }
+      noteReminders(reminders, "evening", business.id, { business: businessSent ? open : null, agendas: agendasSent });
     } catch (error) {
       console.error(`[avisos] Resumen de las 8: falló el negocio ${business.id} (${(error as { code?: string })?.code ?? "error"}).`);
     }
   }
   return queued;
+}
+
+/** Una agenda que empezó a atender hace poco (ver queueMorningSummaries). */
+interface MorningAgenda {
+  businessId: string;
+  ownerId: string | null;
+  /** El día, en la zona del negocio. */
+  date: ISODate;
+  professionalId: string;
+  userId: string | null;
+  /** Su agenda es la primera que abre el negocio ese día: toca también el aviso del propietario. */
+  opensBusiness: boolean;
+}
+
+/**
+ * Aviso de la mañana (spec 021): a la hora en que empieza a atender, cuántas citas de días anteriores
+ * siguen Pendientes o Confirmadas, si hay alguna. «Hoy», la hora y los días son los del negocio.
+ *
+ * - **Cada agenda activa con usuario** lo recibe a la hora de inicio de su horario de ese día (el primer
+ *   `start` de sus `intervals`, si el día está activo), con las citas de su agenda: «Tienes 3 citas de
+ *   días anteriores sin cerrar» (clave `manana:<agenda>:<fecha>`). En el celular, como el de las 8
+ *   (`userOf`: quien la tiene ese día y sigue con el rol Profesional).
+ * - **El propietario**, a la hora en que abre el negocio (la primera agenda que atiende ese día, tenga o no
+ *   usuario), con las de todo el negocio: «Tu negocio tiene N citas de días anteriores sin cerrar» (clave
+ *   `manana:<negocio>:<fecha>`). Si también tiene agenda, no recibe además el de su agenda.
+ * - **No atiende ese día** (no le llega) si su horario está cerrado o sin horas, o si lo cubre un bloqueo
+ *   de día completo, suyo o del negocio entero.
+ * - **Toca** si la hora de inicio cayó en la ventana de esta pasada o en las horas anteriores, hasta
+ *   MORNING_SUMMARY_GRACE_HOURS (2): así, si el cron no corrió a esa hora, sale en la primera pasada de
+ *   las 2 horas siguientes, y pasadas éstas ese día no sale. Las claves impiden repetirlo.
+ *
+ * Una sola consulta para todos los negocios (con las zonas que ya validó la API) y, sólo en los que toca,
+ * una más con sus cifras; un negocio que falla no frena a los demás. Sin datos de pacientes: sólo la cifra.
+ * Devuelve los del celular; los de la campana se suman a `tally` y a qué negocios salió, a `reminders`
+ * (para el aviso al super admin).
+ */
+export async function queueMorningSummaries(since: string | null, until: string, tally?: PanelTally, reminders?: RemindersTally): Promise<number> {
+  const window = cronWindow(since, until);
+  const due = await many<MorningAgenda>(
+    pool,
+    `with days as (
+       select b.id as business_id, b.timezone, b.owner_id, d.day
+         from businesses b
+         cross join lateral (
+           select distinct x as day
+             from (values ((($1::timestamptz - make_interval(hours => $2)) at time zone b.timezone)::date),
+                          (($1::timestamptz at time zone b.timezone)::date)) v (x)) d
+        where b.status = 'active'),
+     starts as (
+       select d.business_id, d.owner_id, d.day, p.id as professional_id, p.user_id,
+              (d.day + min((i ->> 'start')::time)) at time zone d.timezone as starts_at
+         from days d
+         join professionals p on p.business_id = d.business_id and p.is_active
+         join schedules s on s.professional_id = p.id and s.day_of_week = extract(dow from d.day)::int and s.is_active
+         cross join lateral jsonb_array_elements(s.intervals) i
+        where not exists (
+                select 1 from blocked_times t
+                 where t.business_id = d.business_id and t.all_day and d.day between t.start_date and t.end_date
+                   and (t.professional_id is null or t.professional_id = p.id))
+        group by d.business_id, d.owner_id, d.day, d.timezone, p.id, p.user_id),
+     ranked as (select starts.*, min(starts_at) over (partition by business_id, day) as opens_at from starts)
+     select business_id as "businessId", owner_id as "ownerId", to_char(day, 'YYYY-MM-DD') as date,
+            professional_id as "professionalId", user_id as "userId", starts_at = opens_at as "opensBusiness"
+       from ranked
+      where starts_at > $1::timestamptz - make_interval(hours => $2) and starts_at <= $1::timestamptz
+      order by business_id, day, starts_at`,
+    [window.until, MORNING_SUMMARY_GRACE_HOURS],
+  );
+  /** Las agendas que tocan, por negocio y día. */
+  const groups = new Map<string, MorningAgenda[]>();
+  for (const agenda of due) {
+    const key = `${agenda.businessId}|${agenda.date}`;
+    groups.set(key, [...(groups.get(key) ?? []), agenda]);
+  }
+  let queued = 0;
+  for (const agendas of groups.values()) {
+    const [{ businessId, ownerId, date }] = agendas;
+    try {
+      const open = await many<{ professionalId: string | null; open: number }>(
+        pool,
+        `select a.professional_id as "professionalId", count(*)::int as open
+           from appointments a
+          where a.business_id = $1 and a.date < $2 and a.status in ('pending', 'confirmed')
+          group by a.professional_id`,
+        [businessId, date],
+      );
+      const total = open.reduce((sum, row) => sum + row.open, 0);
+      if (total === 0) continue;
+      /** Guarda el aviso en la campana y lo pone en cola en el celular: 1 si salió algo nuevo. */
+      const send = async (target: { professionalId: string | null; audience: PushAudience | null }, count: number, key: string) => {
+        const saved = await addAppointmentNotice(
+          pool,
+          { kind: "morning_summary", businessId, appointmentId: null, professionalId: target.professionalId, data: { date, count }, dedupeKey: key },
+          { inTransaction: false },
+        );
+        if (tally) tally.panel += saved;
+        const audience = target.audience;
+        const phoned = audience
+          ? await guardedPush(
+              pool,
+              "morning_summary",
+              () =>
+                insertPush(pool, audience, {
+                  kind: "morning_summary",
+                  ...phoneText("morning_summary", { count, wholeBusiness: target.professionalId === null }),
+                  tag: `manana-${date}`,
+                  urgency: "normal",
+                  dedupeKey: key,
+                }),
+              { inTransaction: false },
+            )
+          : 0;
+        queued += phoned;
+        return saved + phoned > 0 ? 1 : 0;
+      };
+      let businessSent = false;
+      if (agendas.some((agenda) => agenda.opensBusiness)) {
+        const toPhone = await ownerHasPhone(businessId, "morning_summary");
+        businessSent = (await send({ professionalId: null, audience: toPhone ? { ownerOf: businessId } : null }, total, `manana:${businessId}:${date}`)) > 0;
+        if (businessSent && reminders) reminders.morningNotices++;
+      }
+      let agendasSent = 0;
+      for (const agenda of agendas) {
+        const count = open.find((row) => row.professionalId === agenda.professionalId)?.open ?? 0;
+        if (!agenda.userId || agenda.userId === ownerId || count === 0) continue;
+        // Una consulta por agenda: si esa persona no tiene aparatos (o no es del rol Profesional), no pone nada.
+        const sent = await send(
+          { professionalId: agenda.professionalId, audience: { userOf: agenda.userId, businessId } },
+          count,
+          `manana:${agenda.professionalId}:${date}`,
+        );
+        if (sent > 0) {
+          agendasSent += count;
+          if (reminders) reminders.morningNotices++;
+        }
+      }
+      noteReminders(reminders, "morning", businessId, { business: businessSent ? total : null, agendas: agendasSent });
+    } catch (error) {
+      console.error(`[avisos] Aviso de la mañana: falló el negocio ${businessId} (${(error as { code?: string })?.code ?? "error"}).`);
+    }
+  }
+  return queued;
+}
+
+/**
+ * El aviso al super admin de los recordatorios de citas por cerrar que salieron en esta pasada (spec 021):
+ * uno por tanda (la de la mañana y la de las 8), sólo si a algún negocio le salió alguno. «Recordatorios de
+ * citas por cerrar enviados · Mañana · 3 negocios: Centro Profesional (6 citas), Dra. Nadia Sanipatín (6),
+ * Nicole Andrade (1)», con los REMINDERS_SENT_MAX_BUSINESSES de más citas y «y N negocios más». En la
+ * campana de /admin (siempre) y en el celular de cada super admin con ese tipo encendido, con la clave
+ * `recordatorios:<tanda>:<fecha>:<inicio de la ventana>`: si el cron reintenta la pasada, no se repite.
+ * Sólo nombres de negocios y cifras, nunca pacientes; el título no nombra negocios. Devuelve los del
+ * celular y, para ntfy (scripts/cron.ts), lo que dice cada uno.
+ */
+export async function queueRemindersSentNotices(
+  reminders: RemindersTally,
+  since: string | null,
+  until: string,
+  tally?: PanelTally,
+): Promise<{ queued: number; sent: RemindersSent[] }> {
+  const window = cronWindow(since, until);
+  const result: { queued: number; sent: RemindersSent[] } = { queued: 0, sent: [] };
+  for (const batch of ["morning", "evening"] as const) {
+    const counts = reminders.batches[batch];
+    if (counts.size === 0) continue;
+    const names = await many<{ id: string; name: string }>(pool, "select id, name from businesses where id = any($1::uuid[])", [[...counts.keys()]]);
+    const businesses = names
+      .map(({ id, name }) => ({ name, count: counts.get(id) ?? 0 }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "es"));
+    const named = businesses.slice(0, REMINDERS_SENT_MAX_BUSINESSES);
+    const text = phoneText("reminders_sent", { batch, businesses: named, others: businesses.length - named.length });
+    const dedupeKey = `recordatorios:${batch}:${window.from.slice(0, 10)}:${window.from}`;
+    const saved = await addPlatformNotice(pool, { kind: "reminders_sent", text, dedupeKey }, { inTransaction: false });
+    if (tally) tally.panel += saved;
+    // Uno por pasada: el tag de cada uno es distinto, así el de las 9:00 no tapa en el celular el de las 8:00.
+    result.queued += await guardedPush(
+      pool,
+      "reminders_sent",
+      () => insertPush(pool, { platform: true }, { kind: "reminders_sent", ...text, tag: `recordatorios-${batch}-${window.from}`, urgency: "normal", dedupeKey }),
+      { inTransaction: false },
+    );
+    // ntfy, aunque la campana o el celular fallen: cada negocio entra en una sola pasada (sus claves no se repiten).
+    result.sent.push({ batch, businesses: businesses.length, body: text.body });
+  }
+  return result;
+}
+
+/** Una tanda de recordatorios que salió en esta pasada, para ntfy y el registro del cron (spec 021). */
+export interface RemindersSent {
+  batch: RemindersBatch;
+  /** A cuántos negocios salió (en el registro, sólo esta cifra). */
+  businesses: number;
+  /** «Mañana · 3 negocios: Centro Profesional (6 citas), …»: sólo para ntfy, nunca en el registro. */
+  body: string;
 }
 
 /** Un cambio de seguridad de una cuenta de super admin, como lo devuelve findAccountChanges (spec 009). */
@@ -497,20 +726,29 @@ export async function queueLoginAttackNotice(alerts: { account: string; attempts
 
 /** Lo que hizo el cron con los avisos en el celular (va en cron_runs.report: sólo cifras). */
 export interface PushReport extends PushQueueReport {
-  /** Avisos puestos en cola por el cron en esta pasada (citas por cerrar, resumen, super admin). */
+  /** Avisos puestos en cola por el cron en esta pasada (citas por cerrar, resúmenes, super admin). */
   queued: number;
   /** Avisos guardados en las campanas del panel en esta pasada (spec 014). */
   panel?: number;
+  /** Avisos de la mañana que salieron en esta pasada: el del negocio y el de cada agenda (spec 021). */
+  morning?: number;
+  /**
+   * Las tandas de recordatorios de citas por cerrar que salieron en esta pasada (spec 021): a cuántos
+   * negocios y el texto del aviso al super admin, con los nombres de los negocios, que sólo va por ntfy
+   * (el registro del cron, que es público, sólo lleva las cifras).
+   */
+  reminders?: RemindersSent[];
 }
 
 /** Tiempo del cron para enviar avisos (el job de GitHub tiene 10 minutos). */
 const CRON_PUSH_BUDGET_MS = 60_000;
 
 /**
- * Los avisos del cron (R15), después de los de ntfy: citas por cerrar, el resumen de las 8 y los del
- * super admin, en el celular y en las campanas del panel (spec 014); después, el envío de todo lo
- * pendiente (también lo que la API no llegó a enviar) y la limpieza. Nada de esto corre en Vercel. Si
- * algo falla (p. ej. falta la migración 040 o la 041), el cron sigue.
+ * Los avisos del cron (R15), después de los de ntfy: citas por cerrar, el resumen de las 8, el de la
+ * mañana (spec 021), a qué negocios salieron esos dos (al super admin) y los demás del super admin, en el
+ * celular y en las campanas del panel (spec 014); después, el envío de todo lo pendiente (también lo que
+ * la API no llegó a enviar) y la limpieza. Nada de esto corre en Vercel. Si algo falla (p. ej. falta la
+ * migración 040, la 041 o la 045), el cron sigue.
  */
 export async function runPushJobs(input: {
   since: string | null;
@@ -520,9 +758,20 @@ export async function runPushJobs(input: {
 }): Promise<PushReport> {
   const report: PushReport = { queued: 0, ...emptyPushReport() };
   const tally: PanelTally = { panel: 0 };
+  const reminders = emptyRemindersTally();
+  let remindersSent: RemindersSent[] = [];
   const steps: [string, () => Promise<number>][] = [
     ["citas por cerrar", () => queueUnclosedNotices(input.since, input.until, tally)],
-    ["resumen de las 8", () => queueEveningSummaries(input.since, input.until, tally)],
+    ["resumen de las 8", () => queueEveningSummaries(input.since, input.until, tally, reminders)],
+    ["resumen de la mañana", () => queueMorningSummaries(input.since, input.until, tally, reminders)],
+    [
+      "recordatorios enviados",
+      async () => {
+        const { queued, sent } = await queueRemindersSentNotices(reminders, input.since, input.until, tally);
+        remindersSent = sent;
+        return queued;
+      },
+    ],
     ["cambios de cuenta", () => queueAccountSecurityNotices(input.accountChanges, tally)],
     ["intentos fallidos", () => queueLoginAttackNotice(input.loginAttacks, input.until, tally)],
   ];
@@ -534,7 +783,7 @@ export async function runPushJobs(input: {
     }
   }
   const sent = await processPushQueue({ deadline: Date.now() + CRON_PUSH_BUDGET_MS });
-  Object.assign(report, { ...sent, queued: report.queued, panel: tally.panel });
+  Object.assign(report, { ...sent, queued: report.queued, panel: tally.panel, morning: reminders.morningNotices, reminders: remindersSent });
   await cleanupPush().catch((error: unknown) =>
     console.error(`[avisos] No se pudo limpiar la cola (${(error as { code?: string })?.code ?? "error"}).`),
   );

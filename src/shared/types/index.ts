@@ -583,6 +583,11 @@ export interface AppointmentToClose {
   professionalName: string;
   /** De un día anterior al de hoy en la zona del negocio: ésas bloquean el panel. false: de hoy. */
   overdue: boolean;
+  /**
+   * De un mes anterior al de hoy en la zona del negocio (spec 021): ésas bloquean sin «Más tarde». Una API
+   * antigua no lo trae: cuenta como false.
+   */
+  previousMonth?: boolean;
 }
 
 /** Cuántas hay por cerrar, en el alcance de quien pregunta (el rol Profesional, sólo su agenda). */
@@ -591,6 +596,11 @@ export interface AppointmentsToCloseCount {
   overdue: number;
   /** De hoy que ya terminaron: salen en la lista, pero no bloquean (el día aún no termina). */
   today: number;
+  /**
+   * De ellas, las de un mes anterior al de hoy en la zona del negocio (spec 021): con alguna, el panel se
+   * bloquea sin «Más tarde» hasta cerrarlas. Una API antigua no lo trae: cuenta como 0.
+   */
+  previousMonth?: number;
 }
 
 /** Una tanda de la lista «Por cerrar», de la más vieja a la más nueva, con las cifras de toda la lista. */
@@ -1495,9 +1505,9 @@ export interface PublicAppointmentResult {
 /* ------------------------------------------- Avisos en el celular (spec 013) -- */
 
 /**
- * Tipos de aviso en el celular (Web Push). Los siete primeros son del propietario del negocio y los
- * cuatro siguientes, del super admin (ver src/lib/constants/push.ts). `test` es el aviso de prueba:
- * siempre sale y no se puede apagar.
+ * Tipos de aviso en el celular (Web Push). Los ocho primeros son del propietario del negocio y los
+ * cinco siguientes, del super admin (ver src/lib/constants/push.ts). `test` es el aviso de prueba:
+ * siempre sale y no se puede apagar. `morning_summary` y `reminders_sent` son de la spec 021.
  */
 export type PushKind =
   | "booking"
@@ -1507,10 +1517,12 @@ export type PushKind =
   | "new_appointment"
   | "unclosed"
   | "evening_summary"
+  | "morning_summary"
   | "new_business"
   | "plan_request"
   | "account_security"
   | "login_attack"
+  | "reminders_sent"
   | "test";
 
 /** Lo que necesita el front antes de activar los avisos (GET /api/push/config). */
@@ -1534,7 +1546,7 @@ export interface PushDevice {
 
 /**
  * Los avisos de la campana del panel: los mismos tipos que en el celular, sin el aviso de prueba (R13).
- * Los siete del negocio y los cuatro del super admin (ver src/lib/constants/notices.ts).
+ * Los ocho del negocio y los cinco del super admin (ver src/lib/constants/notices.ts).
  */
 export type NoticeKind = Exclude<PushKind, "test">;
 

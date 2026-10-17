@@ -99,11 +99,16 @@ ok(
   "el registro (público en GitHub) sólo lleva cifras, ningún email",
   run.output.slice(-300),
 );
-// Además del de Gmail, los avisos de las reservas y los pacientes nuevos de los datos demo (recién creados).
+// Además del de Gmail, los avisos de las reservas y los pacientes nuevos de los datos demo (recién creados) y,
+// según la hora a la que corra la prueba, a qué negocios salió el resumen de las 8 o el de la mañana (spec 021).
 const gmailNotice = received.find((n) => /no tiene acceso a Gmail/.test(n.title));
 ok(
   gmailNotice?.priority === 4 &&
-    received.every((n) => n === gmailNotice || /^Agenda360: (nueva reserva|más reservas|nueva cita|más citas|nuevo paciente|más pacientes nuevos)$/.test(n.title)),
+    received.every(
+      (n) =>
+        n === gmailNotice ||
+        /^Agenda360: (nueva reserva|más reservas|nueva cita|más citas|nuevo paciente|más pacientes nuevos|recordatorios de citas por cerrar enviados)$/.test(n.title),
+    ),
   "avisa que faltan las credenciales de Gmail",
   received.map((n) => n.title),
 );
