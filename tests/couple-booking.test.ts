@@ -404,7 +404,8 @@ r = await valeria("GET", `${B}/clients/${attackerId}`);
 ok(r.status === 200, "al nuevo, creado con la reserva, sí lo ve (no tenía historia)", r.status);
 r = await valeria("PATCH", `${B}/appointments/${attack}/status`, { status: "confirmed" });
 ok(r.status === 200 && hidden(await valeria("GET", `${B}/clients/${hilda.id}`)), "si la confirma ella misma, sigue sin abrirla", r.body);
-r = await elena("PATCH", `${B}/appointments/${attack}/status`, { status: "pending" });
+// Recepción la gestiona confirmándola otra vez (una confirmada ya no vuelve a Pendiente, spec 020).
+r = await elena("PATCH", `${B}/appointments/${attack}/status`, { status: "confirmed" });
 ok(r.status === 200, "recepción la gestiona", r.body);
 r = await valeria("GET", `${B}/clients/${hilda.id}`);
 ok(r.status === 200 && r.body?.id === hilda.id, "ahora sí la ve: el negocio gestionó la cita", r.status);

@@ -325,6 +325,11 @@ businessRoutes.patch(
     ),
   ),
 );
+// Corregir una cita completada (spec 020): sólo el propietario, con un motivo que queda en la actividad.
+businessRoutes.post(
+  "/:businessId/appointments/:appointmentId/correct-status",
+  handle((req) => appointmentService.correctStatus(req.ctx, req.params.businessId, req.params.appointmentId, req.body)),
+);
 businessRoutes.patch(
   "/:businessId/appointments/:appointmentId/arrival",
   handle((req) => setAppointmentArrival(req.ctx, req.params.businessId, req.params.appointmentId, req.body?.arrived)),

@@ -3,12 +3,25 @@ import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { offersService } from "../shared/lib/availability.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
-import { APPOINTMENT_STATUS_CONFIG, BLOCKING_STATUSES, OPEN_STATUSES } from "../shared/lib/constants/appointment-status.ts";
+import {
+  APPOINTMENT_STATUS_CONFIG,
+  BLOCKING_STATUSES,
+  LOCKED_FIELDS_MESSAGE,
+  LOCKED_STATUS,
+  LOCKED_STATUS_MESSAGE,
+  OPEN_STATUSES,
+  statusChangeError,
+} from "../shared/lib/constants/appointment-status.ts";
 import { clientRequiredFieldsOf } from "../shared/lib/constants/business.ts";
 import { formatNumericDate, formatTimeRange, joinNames } from "../shared/lib/format.ts";
 import { documentIdError } from "../shared/lib/identity.ts";
 import { addMinutesToTime, getZonedNow, minutesToTime } from "../shared/lib/time.ts";
-import { appointmentSchema, appointmentStatusSchema, whatsAppNoticeSchema } from "../shared/lib/validations/appointment.ts";
+import {
+  appointmentCorrectionSchema,
+  appointmentSchema,
+  appointmentStatusSchema,
+  whatsAppNoticeSchema,
+} from "../shared/lib/validations/appointment.ts";
 import { clientSchemaFor, confirmClaimSchema } from "../shared/lib/validations/client.ts";
 import { dateField } from "../shared/lib/validations/fields.ts";
 import { blockedTimeSchema, weeklyScheduleSchema } from "../shared/lib/validations/schedule.ts";
@@ -724,18 +737,27 @@ const STATUS_VERBS: Record<AppointmentStatus, string> = {
 };
 
 /**
- * El cambio de estado de una cita del panel, ya autorizado y dentro del alcance de quien lo hace (con la
- * fila del negocio bloqueada): la ficha y la lista «Por cerrar» (una por una y «Marcar todas», spec 018)
- * pasan por aquí. Guarda la cita, libera el acceso del profesional al paciente si toca, avisa al paciente
- * si `notifyPatient` (spec 008: sus emails entran en el cupo de Gmail al enviarse, spec 015) y deja su
- * entrada en la actividad, con «Estado» en los cambios.
+ * Un cambio de estado que no se puede hacer responde `conflict` (spec 020, ver canChangeStatus): una cita
+ * completada queda fija y ninguna vuelve a Pendiente. Lo comprueban la ficha, «Por cerrar» y «Editar».
  */
-export async function changeAppointmentStatus(
+export function assertStatusChange(from: AppointmentStatus, to: AppointmentStatus): void {
+  const error = statusChangeError(from, to);
+  if (error) throw new AppError("conflict", error);
+}
+
+/**
+ * Guarda un cambio de estado ya comprobado: que no choque con otra cita ni pase del plan, el acceso del
+ * profesional al paciente, el aviso al paciente si `notifyPatient` (spec 008: sus emails entran en el cupo de
+ * Gmail al enviarse, spec 015) y la entrada en la actividad que da `entry`, con «Estado» en los cambios (lo
+ * que leen ntfy y la actividad). Lo usan el cambio de estado del panel y la corrección del propietario.
+ */
+async function saveStatusChange(
   db: Db,
   actor: Actor,
   before: Appointment,
   nextStatus: AppointmentStatus,
   notifyPatient: boolean,
+  entry: (appointment: Appointment) => Promise<{ action: string; summary: string }>,
 ): Promise<Appointment> {
   const updated: Appointment = { ...before, status: nextStatus };
   await assertNoConflict(db, updated);
@@ -747,13 +769,66 @@ export async function changeAppointmentStatus(
   await logAudit(db, {
     businessId: before.businessId,
     actor,
-    action: `appointment.${nextStatus}`,
+    ...(await entry(appointment)),
     entityType: "appointment",
     entityId: appointment.id,
-    summary: `${STATUS_VERBS[nextStatus]} la cita de ${await describeAppointment(db, appointment)}${notifyPatient ? "" : WITHOUT_NOTICE}`,
     changes: diffChanges(await appointmentForAudit(db, before), await appointmentForAudit(db, appointment), APPOINTMENT_FIELDS),
   });
   return appointment;
+}
+
+/**
+ * El cambio de estado de una cita del panel, ya autorizado y dentro del alcance de quien lo hace (con la
+ * fila del negocio bloqueada): la ficha y la lista «Por cerrar» (una por una y «Marcar todas», spec 018)
+ * pasan por aquí. Antes, la regla de la spec 020 (assertStatusChange). Guarda la cita, libera el acceso del
+ * profesional al paciente si toca, avisa al paciente si `notifyPatient` y deja su entrada en la actividad,
+ * con «Estado» en los cambios (ver saveStatusChange).
+ */
+export async function changeAppointmentStatus(
+  db: Db,
+  actor: Actor,
+  before: Appointment,
+  nextStatus: AppointmentStatus,
+  notifyPatient: boolean,
+): Promise<Appointment> {
+  assertStatusChange(before.status, nextStatus);
+  return saveStatusChange(db, actor, before, nextStatus, notifyPatient, async (appointment) => ({
+    action: `appointment.${nextStatus}`,
+    summary: `${STATUS_VERBS[nextStatus]} la cita de ${await describeAppointment(db, appointment)}${notifyPatient ? "" : WITHOUT_NOTICE}`,
+  }));
+}
+
+/** El mismo lugar de una visita a domicilio (o los dos en el local). */
+const sameHomeVisit = (a: HomeVisitAddress | null, b: HomeVisitAddress | null) =>
+  a === null || b === null
+    ? a === b
+    : a.address === b.address && (a.reference ?? "") === (b.reference ?? "") && a.lat === b.lat && a.lng === b.lng;
+
+/**
+ * El formulario «Editar» trae algo distinto de las notas (spec 020): otro paciente, otros pacientes de la
+ * sesión, otro servicio, otra fecha u hora, otro precio, otro lugar u otro profesional. Sin `extraClientIds`
+ * (un front anterior) se conservan los que tenía; sin profesional, el mismo.
+ */
+function changesMoreThanNotes(
+  before: Appointment,
+  fields: Omit<Awaited<ReturnType<typeof buildAppointmentFields>>, "requestedProfessionalId" | "requestedExtraClientIds">,
+  requested: { professionalId: string; extraClientIds: string[] | undefined },
+): boolean {
+  const sameExtra =
+    requested.extraClientIds === undefined ||
+    [...requested.extraClientIds].sort().join() === [...before.extraClientIds].sort().join();
+  return (
+    fields.clientId !== before.clientId ||
+    !sameExtra ||
+    fields.serviceId !== before.serviceId ||
+    fields.date !== before.date ||
+    fields.startTime !== before.startTime ||
+    fields.endTime !== before.endTime ||
+    Number(fields.price) !== Number(before.price) ||
+    fields.isVirtual !== before.isVirtual ||
+    !sameHomeVisit(fields.homeVisit, before.homeVisit) ||
+    (requested.professionalId !== "" && requested.professionalId !== before.professionalId)
+  );
 }
 
 export const appointmentService = {
@@ -879,6 +954,15 @@ export const appointmentService = {
       const scope = await agendaScope(db, actor, businessId);
       assertAppointmentInScope(scope, before);
       const { requestedProfessionalId, requestedExtraClientIds, ...fields } = await buildAppointmentFields(db, businessId, input);
+      // Una cita completada queda fija: de «Editar» sólo cambian sus notas (el pago y los comprobantes van por
+      // sus rutas). Y ninguna cita vuelve a Pendiente (spec 020).
+      if (fields.status !== before.status) assertStatusChange(before.status, fields.status);
+      if (
+        before.status === LOCKED_STATUS &&
+        changesMoreThanNotes(before, fields, { professionalId: requestedProfessionalId, extraClientIds: requestedExtraClientIds })
+      ) {
+        throw new AppError("conflict", LOCKED_FIELDS_MESSAGE);
+      }
       if (fields.clientId !== before.clientId) await assertClientInScope(db, scope, fields.clientId);
       const extraClientIds = await resolveExtraClients(db, {
         businessId,
@@ -959,6 +1043,46 @@ export const appointmentService = {
   },
 
   /**
+   * «Corregir estado» de una cita completada (spec 020): sólo el propietario, también el super admin en modo
+   * soporte (que entra con sus permisos, ver authorize). Pasa a Confirmada, No asistió o Cancelada con un
+   * motivo de 10 a 300 caracteres, que queda en la actividad con el estado anterior y el nuevo. Sin `notify`
+   * no se avisa al paciente: es un arreglo interno. Después, la cita sigue las reglas de su nuevo estado.
+   */
+  async correctStatus(ctx: RequestContext, businessId: string, appointmentId: string, input: unknown): Promise<Appointment> {
+    const data = parseInput(appointmentCorrectionSchema, input ?? {});
+    return transaction(async (db) => {
+      const actor = await authorize(db, ctx, businessId, "appointments.manage", { lock: true });
+      if (actor.role !== "owner") {
+        throw new AppError("forbidden", "Sólo el propietario puede corregir el estado de una cita completada.");
+      }
+      const before = await findOwned<Appointment>(
+        db,
+        "appointments",
+        appointmentColumns(),
+        businessId,
+        appointmentId,
+        "Cita no encontrada.",
+      );
+      assertAppointmentInScope(await agendaScope(db, actor, businessId), before);
+      if (before.status !== LOCKED_STATUS) {
+        throw new AppError(
+          "conflict",
+          `Sólo se corrige una cita completada, y ésta está «${APPOINTMENT_STATUS_CONFIG[before.status].label}»: cambia su estado desde la ficha.`,
+        );
+      }
+      const from = APPOINTMENT_STATUS_CONFIG[before.status].label;
+      const to = APPOINTMENT_STATUS_CONFIG[data.status].label;
+      // «Sin avisar al paciente» va al final, como en todo cambio de estado: es lo que lee el aviso de ntfy.
+      return saveStatusChange(db, actor, before, data.status, data.notify, async (appointment) => ({
+        action: "appointment.status_corrected",
+        summary:
+          `Corrigió el estado de la cita de ${await describeAppointment(db, appointment)} de «${from}» a «${to}». ` +
+          `Motivo: ${data.reason}${data.notify ? "" : WITHOUT_NOTICE}`,
+      }));
+    });
+  },
+
+  /**
    * El profesional abrió WhatsApp con el aviso ya escrito de un cambio de la cita (enlace wa.me).
    * Sólo se sabe que lo abrió, no si lo envió: así lo dice la actividad. `clientId`: a cuál de los
    * pacientes de la cita (con varios pacientes, uno por cada botón); sin él, a la cita entera.
@@ -1030,7 +1154,8 @@ export async function cancelFromPatientLink(db: Db, before: Appointment): Promis
 
 /**
  * Llegada del paciente (control de asistencia): recepción la marca al verlo en la sala de espera y
- * puede quitarla si se equivocó. Sólo en citas pendientes o confirmadas.
+ * puede quitarla si se equivocó. Sólo se marca en citas pendientes o confirmadas, y en una completada
+ * tampoco se quita: queda fija (spec 020).
  */
 export async function setAppointmentArrival(
   ctx: RequestContext,
@@ -1046,6 +1171,7 @@ export async function setAppointmentArrival(
     if (value && !["pending", "confirmed"].includes(before.status)) {
       throw new AppError("conflict", "Sólo se marca la llegada en citas pendientes o confirmadas.");
     }
+    if (before.status === LOCKED_STATUS) throw new AppError("conflict", LOCKED_STATUS_MESSAGE);
     const appointment = (await one<Appointment>(
       db,
       `update appointments set arrived_at = ${value ? "now()" : "null"}, updated_at = now()

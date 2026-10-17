@@ -1,6 +1,7 @@
 // Aviso al paciente en cada cambio de estado de su cita (spec 008): el email que le toca en cada
 // cambio, la copia al profesional, la casilla «Avisar al paciente» (notify: false), el interruptor
-// «Seguimiento» y el límite de 7 días para Completada y No asistió.
+// «Seguimiento» y el límite de 7 días para Completada y No asistió. Desde la spec 020, ninguna cita vuelve a
+// Pendiente y una completada sólo cambia con la corrección del propietario: los recorridos van por ahí.
 import { execFileSync } from "node:child_process";
 import { cedulaFor } from "./helpers/cedula.mjs";
 
@@ -77,9 +78,12 @@ settings({ confirmations: true, cancellations: true, followUps: true });
 
 console.log("Cada cambio de estado avisa al paciente");
 const ana = patient("Ana Estado");
-const cita = appointment(ana.id);
-const step = async (status: string, type: string | null, label: string) => {
-  const r = await setStatus(cita, status);
+const cita = appointment(ana.id, "pending");
+/** «Corregir estado» de una cita completada (spec 020), con «Avisar al paciente» marcada. */
+const correct = (id: string, status: string) =>
+  call("POST", `${B}/appointments/${id}/correct-status`, { status, reason: "Se marcó como completada por error.", notify: true });
+const step = async (status: string, type: string | null, label: string, change = () => setStatus(cita, status)) => {
+  const r = await change();
   const emails = newEmails(cita);
   const toPatient = emails.filter((e) => e.endsWith(` → ${ana.email}`));
   ok(
@@ -89,19 +93,20 @@ const step = async (status: string, type: string | null, label: string) => {
   );
   return emails;
 };
-let emails = await step("pending", "appointment_pending", "de Confirmada a Pendiente: «queda pendiente de confirmar»");
+let emails = await step("confirmed", "appointment_confirmed", "de Pendiente a Confirmada: «está confirmada»");
 ok(!copyTo || emails.includes(`appointment_copy → ${copyTo}`), "con su copia al profesional", emails);
-await step("confirmed", "appointment_confirmed", "de Pendiente a Confirmada: «está confirmada»");
+let r = await setStatus(cita, "pending");
+ok(r.status === 409 && newEmails(cita).length === 0, "de Confirmada a Pendiente, ya no (spec 020): 409 y ningún email", { status: r.status, body: r.body });
 emails = await step("completed", "appointment_completed", "a Completada (cita de hoy): «gracias por tu visita»");
 ok(!copyTo || emails.includes(`appointment_copy → ${copyTo}`), "también con copia al profesional", emails);
-await step("confirmed", "appointment_confirmed", "de Completada a Confirmada (corrección que avisa)");
+await step("confirmed", "appointment_confirmed", "de Completada a Confirmada (corrección que avisa)", () => correct(cita, "confirmed"));
 await step("no_show", "appointment_no_show", "a No asistió: invitación a elegir otra hora");
-await step("pending", "appointment_pending", "de No asistió a Pendiente");
+await step("confirmed", "appointment_confirmed", "de No asistió a Confirmada");
 await step("cancelled", "appointment_cancelled", "a Cancelada: la cancelación");
-await step("pending", "appointment_updated", "de Cancelada a Pendiente: «vuelve a estar agendada»");
+await step("confirmed", "appointment_updated", "de Cancelada a Confirmada: «vuelve a estar agendada»");
 
 console.log("La casilla «Avisar al paciente»");
-let r = await setStatus(cita, "confirmed", false);
+r = await setStatus(cita, "no_show", false);
 ok(r.status === 200 && newEmails(cita).length === 0, "con notify: false no sale ningún email ni copia", r.body);
 ok(
   sql(`select summary from audit_logs where entity_id = '${cita}' order by created_at desc limit 1`).endsWith("(sin avisar al paciente)"),
@@ -109,38 +114,39 @@ ok(
 );
 r = await setStatus(cita, "cancelled", false);
 ok(r.status === 200 && newEmails(cita).length === 0, "también al cancelar", r.body);
-r = await setStatus(cita, "pending", "sí" as never);
+r = await setStatus(cita, "confirmed", "sí" as never);
 ok(r.status === 400, "notify que no es sí o no → 400", r.body);
-r = await call("PATCH", `${B}/appointments/${cita}/status`, { status: "pending" });
+r = await call("PATCH", `${B}/appointments/${cita}/status`, { status: "confirmed" });
 emails = newEmails(cita);
 ok(r.status === 200 && emails.some((e) => e.endsWith(` → ${ana.email}`)), "sin notify, avisa (versiones anteriores del panel)", emails);
 
 console.log("Los interruptores");
 settings({ followUps: false });
 const luis = patient("Luis Estado");
-const cita2 = appointment(luis.id);
+const cita2 = appointment(luis.id, "pending");
 newEmails(cita2);
-await setStatus(cita2, "completed");
-ok(newEmails(cita2).length === 0, "«Seguimiento» apagado: Completada no avisa");
-await setStatus(cita2, "pending");
-ok(newEmails(cita2).some((e) => e.startsWith("appointment_pending")), "pero volver a Pendiente sí (va con Confirmaciones)");
 await setStatus(cita2, "no_show");
-ok(newEmails(cita2).length === 0, "ni No asistió");
-settings({ confirmations: false });
+ok(newEmails(cita2).length === 0, "«Seguimiento» apagado: No asistió no avisa");
 await setStatus(cita2, "confirmed");
-await setStatus(cita2, "pending");
-ok(newEmails(cita2).length === 0, "«Confirmaciones» apagado: ni Confirmada ni Pendiente avisan");
-sql(`update businesses set notification_settings = (notification_settings - 'followUps') || '{"confirmations": true}'::jsonb where id = '${businessId}'`);
+ok(newEmails(cita2).some((e) => e.startsWith("appointment_confirmed")), "pero Confirmada sí (va con Confirmaciones)");
 await setStatus(cita2, "completed");
-ok(newEmails(cita2).some((e) => e.startsWith("appointment_completed")), "un negocio guardado sin «Seguimiento» lo tiene encendido");
+ok(newEmails(cita2).length === 0, "ni Completada");
+settings({ confirmations: false });
+const cita3 = appointment(patient("Lucía Estado").id, "pending");
+newEmails(cita3);
+await setStatus(cita3, "confirmed");
+ok(newEmails(cita3).length === 0, "«Confirmaciones» apagado: Confirmada no avisa");
+sql(`update businesses set notification_settings = (notification_settings - 'followUps') || '{"confirmations": true}'::jsonb where id = '${businessId}'`);
+await setStatus(cita3, "completed");
+ok(newEmails(cita3).some((e) => e.startsWith("appointment_completed")), "un negocio guardado sin «Seguimiento» lo tiene encendido");
 
 console.log("El límite de 7 días");
 const vieja = appointment(patient("Vera Estado").id, "confirmed", daysAgo(10));
 newEmails(vieja);
-await setStatus(vieja, "completed");
-ok(newEmails(vieja).length === 0, "una cita de hace 10 días marcada Completada: sin email");
 await setStatus(vieja, "no_show");
-ok(newEmails(vieja).length === 0, "ni No asistió");
+ok(newEmails(vieja).length === 0, "una cita de hace 10 días marcada No asistió: sin email");
+await setStatus(vieja, "completed");
+ok(newEmails(vieja).length === 0, "ni Completada");
 const reciente = appointment(patient("Rita Estado").id, "confirmed", daysAgo(7));
 newEmails(reciente);
 await setStatus(reciente, "completed");
@@ -152,13 +158,13 @@ ok(newEmails(futura).length === 0, "una futura marcada Completada por error: sin
 
 console.log("Varios pacientes");
 const pareja = [patient("Pía Pareja"), patient("Pablo Pareja")];
-const sesion = appointment(pareja[0].id);
+const sesion = appointment(pareja[0].id, "pending");
 sql(`insert into appointment_clients (appointment_id, client_id, business_id) values ('${sesion}', '${pareja[1].id}', '${businessId}')`);
 newEmails(sesion);
-await setStatus(sesion, "pending");
+await setStatus(sesion, "confirmed");
 emails = newEmails(sesion);
 ok(
-  pareja.every((p) => emails.includes(`appointment_pending → ${p.email}`)) && emails.filter((e) => e.startsWith("appointment_copy")).length <= 1,
+  pareja.every((p) => emails.includes(`appointment_confirmed → ${p.email}`)) && emails.filter((e) => e.startsWith("appointment_copy")).length <= 1,
   "cada paciente recibe el suyo y la copia sale una sola vez",
   emails,
 );
@@ -169,7 +175,7 @@ const bodyOf = (id: string, type: string, to: string) =>
     `select replace(body, chr(10), ' ') from notifications where appointment_id = '${id}' and type = '${type}' and to_email = '${to}' order by created_at desc limit 1`,
   );
 const token = sql(`select payment_token from appointments where id = '${cita}'`);
-ok(bodyOf(cita, "appointment_pending", ana.email).includes(`/cita/${token}`), "el aviso de una cita activa lleva el enlace a «Tu cita» del paciente");
+ok(bodyOf(cita, "appointment_confirmed", ana.email).includes(`/cita/${token}`), "el aviso de una cita activa lleva el enlace a «Tu cita» del paciente");
 ok(bodyOf(cita, "appointment_cancelled", ana.email) !== "" && !bodyOf(cita, "appointment_cancelled", ana.email).includes("/cita/"), "la cancelación, no");
 const copyBodies = sql(`select replace(body, chr(10), ' ') from notifications where appointment_id = '${cita}' and type = 'appointment_copy'`)
   .split("\n")

@@ -1,8 +1,8 @@
 // Copia de agenda-front/src/lib/validations/appointment.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
 import { SERIES_MAX, SERIES_MIN } from "../appointment-series.ts";
-import { CLOSE_ALL_MAX } from "../constants/appointment-status.ts";
-import { dateField, homeVisitSchema, optionalText, requiredMoneyField, timeField } from "./fields.ts";
+import { CLOSE_ALL_MAX, CORRECTABLE_FROM_COMPLETED } from "../constants/appointment-status.ts";
+import { dateField, homeVisitSchema, optionalText, requiredMoneyField, stripControlChars, timeField } from "./fields.ts";
 
 export const appointmentStatusSchema = z.enum([
   "pending",
@@ -150,3 +150,32 @@ export const closeAllSchema = z.object({
 });
 
 export type CloseAllInput = z.infer<typeof closeAllSchema>;
+
+/* ------------------------------------------ Las citas completadas quedan fijas (spec 020) -- */
+
+/** El motivo de «Corregir estado»: de 10 a 300 caracteres. */
+export const CORRECTION_REASON_MIN = 10;
+export const CORRECTION_REASON_MAX = 300;
+
+/**
+ * «Corregir estado» de una cita completada, sólo del propietario (y del super admin en modo soporte): el
+ * estado correcto, el motivo, que queda en la actividad, y `notify`, la casilla «Avisar al paciente», apagada
+ * por defecto: es un arreglo interno (decisión del dueño del producto, 2026-10-16).
+ */
+export const appointmentCorrectionSchema = z.object({
+  status: z.enum(CORRECTABLE_FROM_COMPLETED, { error: "Elige el estado correcto: Confirmada, No asistió o Cancelada" }),
+  reason: z
+    .string({ error: "Escribe el motivo de la corrección" })
+    .transform(stripControlChars)
+    .pipe(
+      z
+        .string()
+        .trim()
+        .min(1, "Escribe el motivo de la corrección")
+        .min(CORRECTION_REASON_MIN, `El motivo debe tener al menos ${CORRECTION_REASON_MIN} caracteres`)
+        .max(CORRECTION_REASON_MAX, `El motivo puede tener hasta ${CORRECTION_REASON_MAX} caracteres`),
+    ),
+  notify: z.boolean({ error: "Indica si se avisa al paciente" }).default(false),
+});
+
+export type AppointmentCorrectionInput = z.infer<typeof appointmentCorrectionSchema>;
