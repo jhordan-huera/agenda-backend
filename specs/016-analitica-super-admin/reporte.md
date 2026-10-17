@@ -109,6 +109,17 @@ hasta 30 días y se usa el panel cada día sin volver a iniciar sesión.
 sesión abierta** (`sessions.last_seen_at`). Lo mismo para el «Último acceso» del equipo de la
 plataforma. La prueba nueva de `analytics` lo comprueba; pasan 57 de 57 suites.
 
+**Segundo ajuste del mismo día, en la tabla «Comparar».** El dueño confundió «% confirmadas» con el
+estado «Confirmada» de la agenda. Cambió esto:
+- **La columna** se llama «% confirmó el paciente».
+- **Cada tasa explica qué mide** al pasar el mouse por su título. La de confirmaciones aclara que es
+  el botón «Confirmo que voy» y no el estado «Confirmada».
+- **Columna nueva «Sin cerrar»:** las citas pasadas que siguen Pendientes o Confirmadas. Ya venía en
+  la foto (`unclosed`); va en ámbar si hay alguna.
+- **La ayuda de «Último acceso»** dice ahora «inició sesión o usó el panel».
+
+Sólo cambió el front; la foto no cambia. Se comprobó con el build, el lint y el navegador.
+
 ## Commits
 
 | Repo | Commit | Mensaje |
