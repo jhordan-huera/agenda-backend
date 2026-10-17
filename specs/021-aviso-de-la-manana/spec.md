@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/021-aviso-de-la-manana` (rama de trabajo: `dev`) · **Creada**: 2026-10-17
 
-**Estado**: Implementada (2026-10-17)
+**Estado**: Publicada (2026-10-17, PR backend #45 y front #34)
 
 **Repos**:
 - **agenda-backend:** el aviso en el cron, la campana y el celular.
