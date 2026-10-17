@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/019-modo-oscuro` (rama de trabajo: `dev`) · **Creada**: 2026-10-16
 
-**Estado**: Implementada (2026-10-16)
+**Estado**: Publicada (2026-10-16, PR backend #39 y front #31)
 
 **Repos**:
 - **agenda-backend:** el modo elegido, guardado en la cuenta de cada usuario, y su registro en la
