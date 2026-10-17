@@ -112,6 +112,8 @@ Reporte: https://github.com/jhordan-huera/agenda-backend/blob/main/specs/020-cit
 
 ## Ajuste del 2026-10-17: las citas del panel nacen confirmadas
 
+**Publicado** el 2026-10-17, con el PR backend #43 y el front #33.
+
 El dueño pidió que las citas creadas desde el panel nazcan confirmadas, y que sólo las reservas online
 aparezcan como pendientes. Antes el formulario proponía «Confirmada» pero dejaba elegir «Pendiente». En
 producción había 24 citas, todas del panel, y 1 seguía pendiente.
