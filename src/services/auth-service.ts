@@ -3,11 +3,13 @@ import { config } from "../config.ts";
 import { userColumns } from "../db/columns.ts";
 import { one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
+import { THEME_MODE_LABELS } from "../shared/lib/constants/app.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
-import { formatSupportContact } from "../shared/lib/format.ts";
-import { changePasswordSchema, loginSchema, registerSchema, twoFactorLoginSchema } from "../shared/lib/validations/auth.ts";
-import type { BrandColors, BusinessRole, BusinessStatus, PlatformRole, TwoFactorChallenge, User } from "../shared/types/index.ts";
+import { formatSupportContact, getFullName } from "../shared/lib/format.ts";
+import { changePasswordSchema, loginSchema, registerSchema, themeModeSchema, twoFactorLoginSchema } from "../shared/lib/validations/auth.ts";
+import type { BrandColors, BusinessRole, BusinessStatus, PlatformRole, ThemeMode, TwoFactorChallenge, User } from "../shared/types/index.ts";
 import { hashPassword, verifyPassword } from "./accounts.ts";
+import { logAudit } from "./audit.ts";
 import { parseInput, requireUser, type RequestContext } from "./context.ts";
 import { queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
@@ -51,6 +53,8 @@ export interface Session {
   twoFactorSetupRequired: boolean;
   /** Colores del panel de plataforma del super admin (spec 007). null: los de Agenda360; siempre null si no es super admin. */
   panelColors: BrandColors | null;
+  /** Modo de pantalla de la cuenta (spec 019), de cualquier rol. "auto": sigue al modo del aparato. */
+  themeMode: ThemeMode;
 }
 
 /** Token de sesión recién emitido: la ruta lo guarda en una cookie httpOnly. */
@@ -85,11 +89,15 @@ const sha256 = (value: string) => createHash("sha256").update(value).digest("hex
  */
 const DUMMY_PASSWORD_HASH = "$2b$10$xLkJUyZsnCD8ukHE6RxWguQec45gX8EGopr0e0EODO/I9dNPtdc1a";
 
+/** La cuenta como la lee el inicio de sesión: con la contraseña, la verificación y el modo de pantalla (spec 019). */
+type LoginRow = User & { passwordHash: string; twoFactor: boolean; themeMode: ThemeMode };
+
 const withoutSecrets = ({
   passwordHash: _password,
   twoFactor: _twoFactor,
+  themeMode: _themeMode,
   ...user
-}: User & { passwordHash: string; twoFactor: boolean }): User => user;
+}: LoginRow): User => user;
 
 /** Resultado del inicio de sesión: la sesión, o el paso del código si tiene la verificación en dos pasos. */
 export type SignInResult = { session: Session; issued: IssuedSession } | { twoFactor: TwoFactorChallenge };
@@ -125,16 +133,24 @@ export interface FoundSession extends RequestContext {
 /**
  * Busca la sesión de la cookie (null si no existe, caducó o pasó demasiado tiempo sin usarse) y
  * anota su uso: la caducidad se corre IDLE_HOURS (o REMEMBER_DAYS con «Recordarme») desde ahora.
- * Una sola consulta: se lee y, si hace falta, se renueva.
+ * Una sola consulta: se lee y, si hace falta, se renueva. Trae también el modo de pantalla de la cuenta
+ * (spec 019), que llega con la sesión sin otra consulta.
  */
 export async function findSessionByToken(token: string): Promise<FoundSession | null> {
   const row = await one<
-    User & { sessionId: string; remember: boolean; stale: boolean; twoFactorEnabled: boolean; renewedUntil: string | null }
+    User & {
+      sessionId: string;
+      remember: boolean;
+      stale: boolean;
+      twoFactorEnabled: boolean;
+      themeMode: ThemeMode;
+      renewedUntil: string | null;
+    }
   >(
     pool,
     `with found as (
        select s.id as "sessionId", s.remember, s.last_seen_at < now() - make_interval(mins => $2) as stale,
-              u.two_factor_secret is not null as "twoFactorEnabled", ${userColumns("u")}
+              u.two_factor_secret is not null as "twoFactorEnabled", u.theme_mode as "themeMode", ${userColumns("u")}
          from sessions s
          join users u on u.id = s.user_id
         where s.token_hash = $1 and s.expires_at > now()
@@ -158,11 +174,12 @@ export async function findSessionByToken(token: string): Promise<FoundSession | 
     [sha256(token), RENEW_EVERY_MINUTES, REMEMBER_DAYS, MAX_SESSION_HOURS, IDLE_HOURS, SUPER_ADMIN_REMEMBER_DAYS, REMEMBER_MAX_DAYS],
   );
   if (!row) return null;
-  const { sessionId, remember, twoFactorEnabled, renewedUntil, stale: _stale, ...user } = row;
-  return { user, sessionId, twoFactorEnabled, renewedUntil: remember && renewedUntil ? new Date(renewedUntil) : null };
+  const { sessionId, remember, twoFactorEnabled, themeMode, renewedUntil, stale: _stale, ...user } = row;
+  return { user, sessionId, twoFactorEnabled, themeMode, renewedUntil: remember && renewedUntil ? new Date(renewedUntil) : null };
 }
 
-async function resolveSession(db: Db, user: User, twoFactorEnabled: boolean): Promise<Session | null> {
+/** `themeMode`: el de la cuenta, leído en la misma consulta que el usuario (spec 019). */
+async function resolveSession(db: Db, user: User, twoFactorEnabled: boolean, themeMode: ThemeMode): Promise<Session | null> {
   if (!user.isActive) return null;
   const membership = await one<{
     businessId: string;
@@ -198,19 +215,21 @@ async function resolveSession(db: Db, user: User, twoFactorEnabled: boolean): Pr
     professionalId: membership?.professionalId ?? null,
     twoFactorSetupRequired: user.platformRole === "super_admin" && config.superAdminTwoFactorRequired && !twoFactorEnabled,
     panelColors: panel?.colors ?? null,
+    themeMode,
   };
 }
 
 export const authService = {
   async getSession(ctx: RequestContext): Promise<Session | null> {
-    return ctx.user ? resolveSession(pool, ctx.user, Boolean(ctx.twoFactorEnabled)) : null;
+    return ctx.user ? resolveSession(pool, ctx.user, Boolean(ctx.twoFactorEnabled), ctx.themeMode ?? "auto") : null;
   },
 
   async signIn(input: unknown, connection: ClientConnection): Promise<SignInResult> {
     const { email, password, remember } = parseInput(loginSchema, input);
-    const row = await one<User & { passwordHash: string; twoFactor: boolean }>(
+    const row = await one<LoginRow>(
       pool,
-      `select ${userColumns()}, password_hash as "passwordHash", two_factor_secret is not null as "twoFactor"
+      `select ${userColumns()}, password_hash as "passwordHash", two_factor_secret is not null as "twoFactor",
+              theme_mode as "themeMode"
          from users where email = $1`,
       [email],
     );
@@ -250,7 +269,7 @@ export const authService = {
     const issued = await createSession(pool, user.id, remember);
     await logSessionEvent(user, { action: "session.login", summary: "Inició sesión" }, connection);
     await attempt.succeeded();
-    return { session: (await resolveSession(pool, user, false))!, issued };
+    return { session: (await resolveSession(pool, user, false, row!.themeMode))!, issued };
   },
 
   /**
@@ -261,7 +280,11 @@ export const authService = {
     const { challenge: token, code } = parseInput(twoFactorLoginSchema, input);
     const challenge = await findLoginChallenge(pool, token);
     if (!challenge) throw new AppError("unauthorized", "Pasó demasiado tiempo. Vuelve a escribir tu contraseña.");
-    const user = (await one<User>(pool, `select ${userColumns()} from users where id = $1`, [challenge.userId]))!;
+    const { themeMode, ...user } = (await one<User & { themeMode: ThemeMode }>(
+      pool,
+      `select ${userColumns()}, theme_mode as "themeMode" from users where id = $1`,
+      [challenge.userId],
+    ))!;
     if (!user.isActive) {
       await pool.query("delete from login_challenges where user_id = $1", [user.id]);
       return blockInactive(user, connection);
@@ -321,7 +344,7 @@ export const authService = {
       },
       connection,
     );
-    return { session: (await resolveSession(pool, user, true))!, issued };
+    return { session: (await resolveSession(pool, user, true, themeMode))!, issued };
   },
 
   /**
@@ -342,16 +365,17 @@ export const authService = {
       if (await one(db, "select 1 from users where email = $1", [email])) {
         throw new AppError("conflict", "Ya existe una cuenta con ese email. Inicia sesión.");
       }
-      const user = (await one<User>(
+      // Las cuentas nuevas empiezan en «Automático» (el default de la columna, spec 019).
+      const { themeMode, ...user } = (await one<User & { themeMode: ThemeMode }>(
         db,
         `insert into users (first_name, last_name, email, password_hash)
          values ($1, $2, $3, $4)
-         returning ${userColumns()}`,
+         returning ${userColumns()}, theme_mode as "themeMode"`,
         [firstName, lastName, email, await hashPassword(password)],
       ))!;
       await queueEmail(db, { businessId: null, type: "welcome", to: email, ...emailTemplates.welcome(firstName) });
       const issued = await createSession(db, user.id, true);
-      return { session: (await resolveSession(db, user, false))!, issued };
+      return { session: (await resolveSession(db, user, false, themeMode))!, issued };
     });
   },
 
@@ -384,6 +408,46 @@ export const authService = {
       await db.query("delete from sessions where user_id = $1 and id <> $2", [user.id, ctx.sessionId]);
       await logSessionEvent(user, { action: "session.password_changed", summary: "Cambió su contraseña" }, connection, db);
       await queueAccountSecurityEmail(db, user, "Cambió su contraseña", connection);
+    });
+  },
+
+  /**
+   * PUT /auth/theme-mode: el modo de pantalla de la propia cuenta (spec 019). Lo usan todos los roles y
+   * el super admin, sin la barrera de la verificación en dos pasos: es una preferencia de su pantalla.
+   * El mismo modo no escribe nada. El cambio queda en la actividad de su negocio o, la del super admin,
+   * en la de la plataforma: también en modo soporte, que no es de la cuenta sino de cada petición a
+   * /businesses/:id (`authorize`), así que nunca va al negocio que está viendo.
+   */
+  async setThemeMode(ctx: RequestContext, input: unknown): Promise<{ mode: ThemeMode }> {
+    const user = requireUser(ctx);
+    const { mode } = parseInput(themeModeSchema, input);
+    return transaction(async (db) => {
+      // El de antes, con la fila bloqueada: dos cambios a la vez (desde dos equipos) van uno detrás de
+      // otro y cada uno registra el modo que de verdad tenía. Su negocio, como el de la sesión.
+      const current = (await one<{ mode: ThemeMode; businessId: string | null }>(
+        db,
+        `select u.theme_mode as mode,
+                (select bu.business_id from business_users bu where bu.user_id = u.id order by bu.created_at limit 1)
+                  as "businessId"
+           from users u
+          where u.id = $1
+            for update`,
+        [user.id],
+      ))!;
+      if (current.mode === mode) return { mode };
+      await db.query("update users set theme_mode = $2 where id = $1", [user.id, mode]);
+      const superAdmin = user.platformRole === "super_admin";
+      const [from, to] = [THEME_MODE_LABELS[current.mode], THEME_MODE_LABELS[mode]];
+      await logAudit(db, {
+        businessId: superAdmin ? null : current.businessId,
+        actor: { userId: user.id, name: superAdmin ? `${getFullName(user)} (Super admin)` : getFullName(user) },
+        action: "user.theme_mode_changed",
+        entityType: "user",
+        entityId: user.id,
+        summary: `Cambió el modo de pantalla de «${from}» a «${to}»`,
+        changes: [{ label: "Modo de pantalla", before: from, after: to }],
+      });
+      return { mode };
     });
   },
 };

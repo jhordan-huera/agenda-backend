@@ -66,6 +66,13 @@ authRoutes.post(
   handle((req) => authService.changePassword(req.ctx, req.body, connectionOf(req))),
 );
 
+// Modo de pantalla de la propia cuenta (spec 019): cualquier rol y el super admin, también sin la
+// verificación en dos pasos (es una preferencia de su pantalla).
+authRoutes.put(
+  "/theme-mode",
+  handle((req) => authService.setThemeMode(req.ctx, req.body)),
+);
+
 /* Verificación en dos pasos de la propia cuenta (hoy, sólo el super admin). */
 authRoutes.get(
   "/two-factor",

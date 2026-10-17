@@ -216,7 +216,7 @@ const MAX_EMAIL_BATCHES = 30;
 const EMAIL_BUDGET_MS = 6 * 60_000;
 
 /** Días que se guarda el contenido de cada email (para revisarlo en Actividad → Emails). */
-export const EMAIL_CONTENT_DAYS = 90;
+export const EMAIL_CONTENT_DAYS = 30;
 
 /**
  * El contenido de un email (texto y HTML, unos 6 KB) es lo que más ocupa en la base. Pasados

@@ -384,7 +384,7 @@ async function main(): Promise<void> {
   const { pool } = await import("../src/db/pool.ts");
   const { disableImmediateDelivery, scrubEmails } = await import("../src/services/mailer.ts");
   const { disableImmediatePushDelivery } = await import("../src/services/push-delivery.ts");
-  const { runScheduledTasks } = await import("../src/jobs/scheduled-tasks.ts");
+  const { runScheduledTasks, EMAIL_CONTENT_DAYS } = await import("../src/jobs/scheduled-tasks.ts");
   // Este proceso envía él mismo, al final, lo que pone en cola (emails y avisos en el celular).
   disableImmediateDelivery();
   disableImmediatePushDelivery();
@@ -417,7 +417,7 @@ async function main(): Promise<void> {
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +
         `esperan el cupo de Gmail: ${report.emails.waiting ?? 0} · ` +
         `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ` +
-        `emails sin contenido (más de 90 días): ${report.emailContentPurged} · ` +
+        `emails sin contenido (más de ${EMAIL_CONTENT_DAYS} días): ${report.emailContentPurged} · ` +
         `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"}` +
         `${describePanelLine(report)}` +
         `${describePushLine(report, config.webPushProblem ? `sin envío: ${config.webPushProblem}` : null)}` +

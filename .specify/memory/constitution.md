@@ -170,11 +170,14 @@ Tipos, validaciones, constantes y plantillas de email se editan sólo en agenda-
 
 ### VII. Diseño coherente, accesible y para el celular
 
-- Letra Sora. Estilo SaaS claro: lienzo `--canvas`, tarjetas blancas, degradado azul → lila de la
-  marca.
+- Letra Sora. Estilo SaaS: lienzo `--canvas`, tarjetas, degradado azul → lila de la marca.
+- Dos modos, claro y oscuro: cada persona elige el suyo en su cuenta (Claro, Oscuro o Automático,
+  por defecto Automático) y las páginas de los pacientes siguen a su aparato. Los dos salen de los
+  mismos colores del negocio o del super admin, con contraste AA. Los emails, lo impreso, el QR y
+  los archivos siguen claros (2026-10-16).
 - Los colores salen de los tokens del tema (`--ink`, `--primary`, `--accent`…): cada negocio, y
   cada super admin para su panel, personaliza los suyos, así que no se fijan colores que ignoren la
-  marca.
+  marca ni el modo.
 - Primero el celular: las cuadrículas llevan `grid-cols-1` de base y nada se sale de la pantalla.
 - Accesible: cada campo con su etiqueta, foco visible, contraste suficiente, `prefers-reduced-motion`
   respetado y textos que tengan sentido con lector de pantalla.
@@ -245,4 +248,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.15.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-15
+**Versión**: 1.16.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-16

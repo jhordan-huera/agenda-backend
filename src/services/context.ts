@@ -4,7 +4,7 @@ import { isUuid, one, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { getFullName } from "../shared/lib/format.ts";
 import { hasPermission, type Permission } from "../shared/lib/permissions.ts";
-import type { BusinessRole, BusinessStatus, User } from "../shared/types/index.ts";
+import type { BusinessRole, BusinessStatus, ThemeMode, User } from "../shared/types/index.ts";
 
 /** Quién hace la petición. Lo rellena el middleware de sesión a partir de la cookie. */
 export interface RequestContext {
@@ -13,6 +13,8 @@ export interface RequestContext {
   sessionId: string | null;
   /** La cuenta tiene activada la verificación en dos pasos (obligatoria para el super admin). */
   twoFactorEnabled?: boolean;
+  /** Modo de pantalla de la cuenta (spec 019), leído con la sesión: lo devuelve GET /auth/session. */
+  themeMode?: ThemeMode;
 }
 
 /** Código del error que reciben las peticiones del super admin mientras no active la verificación en dos pasos. */
