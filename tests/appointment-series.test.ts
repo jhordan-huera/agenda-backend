@@ -6,6 +6,7 @@
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { agent, checks, count, fakeNtfy, login, runCron, sql, startApi } from "./helpers/harness.ts";
 import { applyPlanLimit, seriesDates } from "../src/shared/lib/appointment-series.ts";
+import { PANEL_PENDING_MESSAGE } from "../src/shared/lib/constants/appointment-status.ts";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
 import { addDaysISO, addMonthsISO, getDayOfWeek, getZonedNow } from "../src/shared/lib/time.ts";
 import type {
@@ -494,7 +495,8 @@ r = await createSeries(owner, appointmentInput({ clientId: fer.id, extraClientId
 ]);
 ok(emailsOf(r.body.created.map((a: Appointment) => a.id)).filter((email) => email.startsWith("appointment_series|")).length === 1, "uno solo si comparten el email", emailsOf(r.body.created.map((a: Appointment) => a.id)));
 
-console.log("Crear: pendiente, «Confirmaciones» y el aviso al profesional");
+console.log("Crear: las citas del panel nacen confirmadas, «Confirmaciones» y el aviso al profesional");
+// Desde el 2026-10-17, «Pendiente» es sólo para las reservas online: ni una serie ni una cita del panel nacen así.
 const p7 = agenda();
 const hugo = patient("Hugo Pendiente");
 r = await createSeries(owner, appointmentInput({ clientId: hugo.id, professionalId: p7, status: "pending" }), repeat(3), [
@@ -502,9 +504,24 @@ r = await createSeries(owner, appointmentInput({ clientId: hugo.id, professional
   { date: week(1), startTime: "10:00" },
   { date: week(2), startTime: "10:00" },
 ]);
+ok(
+  r.status === 400 && r.body.error.message === PANEL_PENDING_MESSAGE && count(`select count(*) from appointments where client_id = '${hugo.id}'`) === 0,
+  "una serie «Pendiente» desde el panel: 400 y ninguna cita",
+  r.body,
+);
+r = await owner("POST", `${B}/appointments`, appointmentInput({ clientId: hugo.id, professionalId: p7, date: week(0), startTime: "16:00", status: "pending" }));
+ok(r.status === 400 && r.body.error.message === PANEL_PENDING_MESSAGE, "ni una cita suelta «Pendiente» desde el panel: 400", r.body);
+r = await owner("POST", `${B}/appointments`, appointmentInput({ clientId: hugo.id, professionalId: p7, date: week(0), startTime: "16:00" }));
+ok(r.status === 200 && r.body.status === "confirmed", "confirmada, sí", r.body);
+// Las series «Pendientes» de antes del 2026-10-17 siguen funcionando (más abajo se confirma una y se cancela
+// otra): se crea confirmada y se deja pendiente en la base, como quedaron aquéllas.
+r = await createSeries(owner, appointmentInput({ clientId: hugo.id, professionalId: p7 }), repeat(3), [
+  { date: week(0), startTime: "10:00" },
+  { date: week(1), startTime: "10:00" },
+  { date: week(2), startTime: "10:00" },
+]);
 const pending = r.body as AppointmentSeriesCreated;
-const pendingBody = sql(`select body from notifications where appointment_id = '${pending.created[0].id}' and type = 'appointment_series'`);
-ok(/quedaron agendadas y pendientes de confirmar/.test(pendingBody), "con la serie en Pendiente, el texto dice «pendientes de confirmar»", pendingBody.slice(0, 300));
+sql(`update appointments set status = 'pending' where series_id = '${pending.series.id}'`);
 sql(`update businesses set notification_settings = notification_settings || '{"confirmations": false}' where id = '${businessId}'`);
 const PRO_EMAIL = "avisos.serie011@correo.ec";
 const p8 = agenda({ email: PRO_EMAIL, notify: true });

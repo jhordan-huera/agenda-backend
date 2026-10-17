@@ -1,6 +1,7 @@
 import { appointmentColumns, blockedTimeColumns } from "../db/columns.ts";
 import { many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
+import { PANEL_PENDING_MESSAGE } from "../shared/lib/constants/appointment-status.ts";
 import {
   applyPlanLimit,
   classifySeriesDate,
@@ -198,6 +199,8 @@ export const appointmentSeriesService = {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "appointments.manage", { lock: true });
       const { fields, extraClientIds, professionalId, durationMinutes, dates } = await prepareSeries(db, actor, businessId, data);
+      // Una serie desde el panel nace confirmada, como toda cita del panel (2026-10-17).
+      if (fields.status === "pending") throw new AppError("validation", PANEL_PENDING_MESSAGE);
       // Sólo las fechas de la serie (la primera, la frecuencia y el número): se cambia la hora o se quitan.
       const position = new Map(dates.map((date, index) => [date, index]));
       if (data.dates.some((item) => !position.has(item.date))) {

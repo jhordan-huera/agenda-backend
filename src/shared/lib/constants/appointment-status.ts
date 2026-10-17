@@ -142,6 +142,13 @@ export function canChangeStatus(from: AppointmentStatus, to: AppointmentStatus):
   return true;
 }
 
+/**
+ * Las citas del panel nacen confirmadas: «Pendiente» es sólo para las reservas online, que el negocio
+ * todavía tiene que confirmar (decisión del dueño del producto, 2026-10-17). Desde el panel se puede
+ * crear también como Completada, No asistió o Cancelada, para registrar una sesión que ya pasó.
+ */
+export const PANEL_PENDING_MESSAGE = "Las citas del panel se crean confirmadas: «Pendiente» es sólo para las reservas online.";
+
 /** Lo que dicen la API y la ficha de una cita completada. */
 export const LOCKED_STATUS_MESSAGE = "Esta cita está completada: ya no se puede cambiar. El propietario puede corregirla con un motivo.";
 

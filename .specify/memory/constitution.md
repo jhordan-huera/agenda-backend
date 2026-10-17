@@ -143,6 +143,8 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - Una cita Completada queda fija: no cambia de estado ni de datos (salvo el pago, los comprobantes y
   las notas), y sólo el propietario la corrige, con un motivo que queda en la actividad. Ninguna cita
   vuelve a Pendiente; No asistió y Cancelada se pueden cambiar (2026-10-16).
+- Las citas del panel (y sus series) nacen Confirmadas; sólo las reservas online nacen Pendientes,
+  porque el negocio todavía las tiene que confirmar (2026-10-17).
 - En la portada no hay testimonios, cifras ni precios inventados.
 
 ### IV. Se comprueba en local, nunca en producción
@@ -251,4 +253,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.17.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-16
+**Versión**: 1.18.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-17

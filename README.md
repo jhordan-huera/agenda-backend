@@ -1045,6 +1045,13 @@ ese estado; «No asistió» y «Cancelada» se siguen cambiando, y una cancelada
 Si alguien se equivoca, la corrige el propietario con un motivo (decisiones del dueño del producto,
 2026-10-16).
 
+**Las citas del panel nacen Confirmadas** (2026-10-17): `POST /businesses/:id/appointments` y
+`POST /businesses/:id/appointment-series` responden 400 con `PANEL_PENDING_MESSAGE` si llegan
+«Pendiente». Sólo las reservas online (`source = 'booking_page'`) nacen Pendientes. Desde el panel se
+puede crear también como Completada, No asistió o Cancelada, para registrar una sesión que ya pasó. Al
+corregir una completada que ya terminó, «Confirmada» no se ofrece (`correctionTargets`): volvería a
+quedar por cerrar.
+
 - **La regla, en un solo lugar:** `canChangeStatus(from, to)` y `statusChangeError` de
   `src/shared/lib/constants/appointment-status.ts` (se copia del front con `sync:shared`). Desde
   «Completada», nada; a «Pendiente», sólo desde «Pendiente»; lo demás, sí. La usan la API, el front y la
