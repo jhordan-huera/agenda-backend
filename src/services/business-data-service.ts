@@ -12,6 +12,7 @@ import {
   LOCKED_STATUS,
   LOCKED_STATUS_MESSAGE,
   OPEN_STATUSES,
+  PANEL_PENDING_MESSAGE,
   statusChangeError,
 } from "../shared/lib/constants/appointment-status.ts";
 import { clientRequiredFieldsOf } from "../shared/lib/constants/business.ts";
@@ -874,6 +875,8 @@ export const appointmentService = {
       const actor = await authorize(db, ctx, businessId, "appointments.manage", { lock: true });
       const scope = await agendaScope(db, actor, businessId);
       const { requestedProfessionalId, requestedExtraClientIds, ...fields } = await buildAppointmentFields(db, businessId, input);
+      // Las citas del panel nacen confirmadas: «Pendiente» es sólo para las reservas online (2026-10-17).
+      if (fields.status === "pending") throw new AppError("validation", PANEL_PENDING_MESSAGE);
       await assertClientInScope(db, scope, fields.clientId);
       const extraClientIds = await resolveExtraClients(db, {
         businessId,

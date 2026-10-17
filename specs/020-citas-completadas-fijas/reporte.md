@@ -109,3 +109,23 @@ sólo el propietario la corrige, con motivo, en la actividad: `POST
 …/appointments/:id/correct-status`. Ninguna cita vuelve a «Pendiente». Sin migración.
 
 Reporte: https://github.com/jhordan-huera/agenda-backend/blob/main/specs/020-citas-completadas-fijas/reporte.md
+
+## Ajuste del 2026-10-17: las citas del panel nacen confirmadas
+
+El dueño pidió que las citas creadas desde el panel nazcan confirmadas, y que sólo las reservas online
+aparezcan como pendientes. Antes el formulario proponía «Confirmada» pero dejaba elegir «Pendiente». En
+producción había 24 citas, todas del panel, y 1 seguía pendiente.
+
+**Qué cambió:**
+- **«Nueva cita»** no ofrece «Pendiente». Una serie sólo se crea «Confirmada». Para registrar una sesión
+  que ya pasó, se puede crear también como Completada, No asistió o Cancelada.
+- **La API rechaza** una cita o una serie «Pendiente» desde el panel, con 400 y el mensaje «Las citas
+  del panel se crean confirmadas: «Pendiente» es sólo para las reservas online.»
+- **Las reservas online** siguen naciendo «Pendientes».
+- **La beta,** igual.
+- **Constitución 1.18.0:** una línea en el principio III.
+
+**Pruebas:**
+- `appointment-series` comprueba los dos rechazos y que confirmada sí se crea. La serie «Pendiente» que
+  usaban sus pasos siguientes se deja pendiente en la base, como las que ya existían.
+- Pasan todas las suites. Front y beta: build y lint sin errores.
