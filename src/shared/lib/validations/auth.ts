@@ -69,8 +69,14 @@ export const currentPasswordSchema = z.object({
   currentPassword: z.string({ error: "Escribe tu contraseña actual" }).min(1, "Escribe tu contraseña actual").max(200),
 });
 
+/** Modo de pantalla de la propia cuenta (spec 019). */
+export const themeModeSchema = z.object({
+  mode: z.enum(["light", "dark", "auto"], { error: "Elige Claro, Oscuro o Automático" }),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type TwoFactorLoginInput = z.infer<typeof twoFactorLoginSchema>;
 export type TwoFactorDisableInput = z.infer<typeof twoFactorDisableSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+export type ThemeModeInput = z.infer<typeof themeModeSchema>;

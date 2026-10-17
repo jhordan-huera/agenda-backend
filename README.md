@@ -178,7 +178,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 
 | Grupo | Rutas |
 | --- | --- |
-| Sesión | `GET /auth/session` (con `panelColors` para el super admin) · `POST /auth/login` · `register` · `logout` · `change-password` (sólo super admin) |
+| Sesión | `GET /auth/session` (con `panelColors` para el super admin y `themeMode`, el modo de pantalla de la cuenta) · `POST /auth/login` · `register` · `logout` · `change-password` (sólo super admin) · `PUT /auth/theme-mode` (`{ mode }`: `light`, `dark` o `auto`; la propia cuenta, cualquier rol y el super admin sin la verificación en dos pasos; spec 019) |
 | Perfil | `GET/PUT /users/:userId` |
 | Negocio | `POST /businesses` (onboarding) · `GET /businesses/slug-availability` · `GET/PATCH /businesses/:id` · `GET …/professional` |
 | Datos del negocio (`/businesses/:id/…`) | `team` (+ `PATCH …/:userId/clinical-access`) · `subscription` · `subscription/usage` · `subscription/request` (GET/POST/DELETE) · `clients` (+ `POST …/clients/import`, importar pacientes desde un Excel o un CSV, spec 012) · `services` · `appointments` (`?from&to&clientId`, `PATCH …/:id/status` con `notify`: `false` cambia el estado sin avisar al paciente, y `onlyIfOpen`: sólo si sigue Pendiente o Confirmada, si no 409; `POST …/:id/cancel-following` cancela ésa y las siguientes de su serie) · `appointment-series` (`POST …/preview` y `POST`, citas que se repiten, spec 011) · `schedules` · `blocked-times` · `notifications` · `notifications/reminders` · `audit-logs` |
@@ -541,6 +541,14 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   formato y check que `brand_colors`). Cada super admin los guarda en su cuenta con `PUT
   /admin/panel-colors` (`{ colors }`; sólo la suya, sin auditoría) y llegan en la sesión como
   `panelColors`. No se aplican a los negocios ni a otros super admins.
+- **Modo de pantalla** (migración 044, spec 019): `users.theme_mode` (`light`, `dark` o `auto`, con
+  un check; por defecto `auto`, también en las cuentas que ya existían). Es de cada persona, de
+  cualquier rol: lo guarda con `PUT /auth/theme-mode` (`{ mode }`, sólo el suyo) y le llega en la
+  sesión como `themeMode`, leído en la misma consulta de la sesión (ninguna consulta nueva). Elegir el
+  mismo modo no escribe nada; cada cambio queda en la actividad (`user.theme_mode_changed`, «Cambió el
+  modo de pantalla de «Automático» a «Oscuro»»): la de su negocio o, la del super admin (también en
+  modo soporte), la de la plataforma. Las páginas de los pacientes siguen al modo de su aparato. Al
+  publicar, la migración 044 va antes del backend (`npm run db:migrate`, como paso aparte).
 - **Formato de tu negocio** (migración 017): `businesses.clinical_default_template_id` guarda el
   formato que se propone en cada evolución nueva, en todas las citas. Lo elige el propietario con `PUT /businesses/:id/clinical-default-template` (cualquier
   plan, de la plataforma o propio y activo); si no eligió ninguno, o desactiva el elegido, se usa el

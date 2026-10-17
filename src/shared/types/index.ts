@@ -20,6 +20,12 @@ export type ISODateTime = string;
 /** Rol a nivel de plataforma (quien opera el SaaS), independiente de los negocios. */
 export type PlatformRole = "super_admin";
 
+/**
+ * Modo de pantalla de cada persona (spec 019), guardado en su cuenta. "auto": sigue al modo del
+ * celular o la computadora. Las páginas de los pacientes siempre siguen a su aparato.
+ */
+export type ThemeMode = "light" | "dark" | "auto";
+
 export interface User {
   id: string;
   firstName: string;
