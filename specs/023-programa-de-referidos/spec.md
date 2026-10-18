@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/023-programa-de-referidos` (rama de trabajo: `dev`) · **Creada**: 2026-10-18
 
-**Estado**: Borrador (por aprobar, con el plan)
+**Estado**: Aprobada (2026-10-18, con el plan)
 
 **Repos**:
 - **agenda-backend:** el código de cada negocio, quién recomendó a quién y los descuentos.
