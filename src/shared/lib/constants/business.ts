@@ -197,6 +197,19 @@ export function clientRequiredFieldsOf(business: { clientRequiredFields?: Client
   return { ...DEFAULT_CLIENT_REQUIRED_FIELDS, ...business?.clientRequiredFields };
 }
 
+/**
+ * El programa de referidos (spec 023): por cada negocio recomendado que sigue activo a los 30 días de
+ * crearse, quien lo recomendó paga $1,50 (USD) menos en su siguiente mensualidad, una sola vez. Todavía
+ * no hay cobro automático: el sistema lleva la cuenta y el dueño aplica el descuento al cobrar. Es la
+ * única cifra de dinero que ve un negocio, en la tarjeta del propietario (constitución, principio III).
+ */
+export const REFERRAL_DISCOUNT = 1.5;
+/** Días que el negocio recomendado tiene que seguir activo para que su recomendación «se quede». */
+export const REFERRAL_QUALIFY_DAYS = 30;
+
+/** «$1,50», «$3,00»: el descuento como lo dicen la tarjeta del propietario y /admin. */
+export const formatReferralAmount = (amount: number) => `$${amount.toFixed(2).replace(".", ",")}`;
+
 /** Horario sugerido en el onboarding: lunes a viernes 08:00–17:00, sábado 09:00–13:00, domingo cerrado. */
 export const DEFAULT_WEEKLY_SCHEDULE: { dayOfWeek: DayOfWeek; isActive: boolean; intervals: TimeRange[] }[] =
   WEEK_DAYS.map(({ value }) => ({

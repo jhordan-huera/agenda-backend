@@ -30,7 +30,8 @@ export async function uniqueSlug(db: Db, base: string): Promise<string> {
  * Alta completa de un negocio (dentro de la transacción de quien llama): negocio,
  * membresía owner, profesional, suscripción, horario semanal y servicios.
  * La usan el onboarding (el propio dueño) y el panel del super admin, que lo crea sin
- * propietario (owner null): la agenda lleva entonces el nombre del negocio.
+ * propietario (owner null): la agenda lleva entonces el nombre del negocio. Su código del programa de
+ * referidos (spec 023) lo pone la base al insertarlo (default de la columna, migración 046).
  */
 export async function insertBusiness(
   db: Db,

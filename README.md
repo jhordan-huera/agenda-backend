@@ -190,6 +190,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 | Centro de avisos (spec 014) | `GET /businesses/:id/notices/unread` · `GET …/notices` (`?limit&unread=1&cursor`) · `POST …/notices/:noticeId/read` · `POST …/notices/read-all` (cualquier rol del equipo; el super admin en modo soporte recibe 403) y lo mismo en `/admin/notices` (el super admin, con la verificación en dos pasos). Ninguna escribe en la actividad |
 | Citas por cerrar (spec 018) | `GET /businesses/:id/appointments/to-close` (`?cursor`, tandas de 50: `{ appointments, overdue, today, previousMonth, nextCursor }`) · `GET …/appointments/to-close/count` (`{ overdue, today, previousMonth }`; `previousMonth`, las de un mes anterior, spec 021) · `POST …/appointments/close-all` (`{ status: "completed", notify, ids }`: `{ closed, skipped }`). Cada uno ve lo suyo: el rol Profesional, su agenda (sin agenda, 403); el resto del equipo y el super admin en modo soporte, el negocio. Consultar no escribe en la actividad |
 | Citas completadas (spec 020) | `POST /businesses/:id/appointments/:appointmentId/correct-status` (`{ status, reason, notify }`: `status`, `confirmed`, `no_show` o `cancelled`; `reason`, de 10 a 300 caracteres; `notify`, por defecto `false`). Sólo el propietario y el super admin en modo soporte (los demás roles, 403) y sólo desde «Completada» (si no, 409). Devuelve la cita corregida |
+| Referidos (spec 023) | `GET /businesses/:id/referrals` (`{ code, link, referred, qualified }`; sólo el propietario y el super admin en modo soporte, los demás roles 403) · `GET /public/referrals/:code` (`{ name }` de un negocio activo, con caché en la CDN; 404 si no) · `POST /admin/businesses` acepta `referredBy` · `PUT /admin/businesses/:id/referred-by` (`{ referredBy }`, otro negocio o `null`; devuelve los referidos de la ficha) · `GET /admin/referral-rewards` (los descuentos ganados y pendientes) · `POST /admin/referral-rewards/:businessId/apply` (204; 409 si no se ganó o ya se aplicó). La ficha y la lista de `/admin/businesses` suman `referralCode` y `referredBy`, y la ficha, `referrals` |
 | Estado | `GET /health` (con `push`: si la API tiene claves VAPID válidas) |
 
 ## Contraseñas, modo soporte e historia clínica
@@ -1136,6 +1137,39 @@ quedar por cerrar.
   estado.
 - **Pruebas:** `tests/completed-appointments.test.ts`.
 - **Publicación:** sin migración ni variables. Primero el backend y después el front.
+
+## El programa de referidos
+
+Spec 023 (decisiones del dueño del producto, 2026-10-18). Cada negocio tiene un **código** de 6
+caracteres (letras mayúsculas sin I ni O y números del 2 al 9) y su enlace, `<portada>/?ref=<código>`,
+que no cambia aunque cambie el de reservas. Por cada negocio recomendado que **sigue activo a los 30
+días** de crearse, quien lo recomendó paga **$1,50 menos** en su siguiente mensualidad, una sola vez.
+No hay cobro automático: el sistema lleva la cuenta y el dueño aplica el descuento al cobrar.
+
+- **El código** (`businesses.referral_code`): lo da la base al insertar el negocio (default
+  `new_referral_code()`, que reintenta hasta encontrar uno libre); los que ya existían lo reciben en la
+  migración, uno por uno.
+- **La tarjeta del propietario** (`referralService.getForBusiness`): su código, su enlace, cuántos
+  recomendó y cuántos se quedaron (activos con 30 días o más, o con el descuento ya aplicado).
+- **La portada** pide `GET /public/referrals/:code`, que sólo da el nombre de un negocio activo, para
+  armar «Me recomendó <negocio> (código ABC234)» en el WhatsApp de «Quiero mi agenda» (spec 022).
+- **«Recomendado por»** (`businesses.referred_by`): lo anota el super admin en el alta o en la ficha.
+  Uno por negocio, nunca él mismo (`check` en la base y 400 en la API). Cada cambio va a la actividad
+  del negocio recomendado (`platform.referred_by_changed`: «Anotó que A fue recomendado por B», con el
+  de antes y el de después).
+- **El descuento** no se guarda: se calcula al leer (recomendado activo, con 30 días o más y sin
+  `referral_reward_applied_at`). Suspendido no cuenta; si se reactiva con el mes cumplido, vuelve a
+  estar. «Marcar como aplicado» llena `referral_reward_applied_at` y queda en la actividad de la
+  plataforma **sin negocio** (`platform.referral_reward_applied`: «Aplicó el descuento de $1,50 a B por
+  recomendar a A»), porque la actividad del negocio la ven también sus administradores y el descuento
+  sólo lo ve el propietario. Cada negocio recomendado da un solo descuento: cambiar quién lo recomendó
+  no lo repite.
+- **Migración 046** (`046_referrals.sql`): `referral_code` (único, con su `check`), `referred_by`
+  (`on delete set null`, `check (referred_by is null or referred_by <> id)`, con índice) y
+  `referral_reward_applied_at`. Pruebas: `tests/referrals.test.ts`, que también corre la 046 sobre los
+  negocios que ya existían (en una transacción que se deshace).
+- **Publicación:** la migración 046 va antes del backend, como paso aparte (`npm run db:migrate`).
+  Después, el PR del backend y luego el del front. Sin variables nuevas.
 
 ## Copias de seguridad
 
