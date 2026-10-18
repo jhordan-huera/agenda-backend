@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/022-hecho-con-agenda360` (rama de trabajo: `dev`) · **Creada**: 2026-10-18
 
-**Estado**: Implementada (2026-10-18)
+**Estado**: Publicada (2026-10-18, PR backend #47 y front #35)
 
 **Repos**:
 - **agenda-front:** casi todo.
