@@ -65,6 +65,7 @@ import { authorizeSuperAdmin, parseInput, requireUser, type RequestContext } fro
 import { fileStorage, imageStorage, receiptStorage, removeFolder } from "./file-storage.ts";
 import { releaseImages } from "./image-service.ts";
 import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
+import { adminReferralsOf, setReferredByOnCreate } from "./referral-service.ts";
 import { appOrigin, PASSWORD_MASK, queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
 import { assertRoleAllowed, assertUserLimit, countsForPlanSql } from "./plan-limits.ts";
@@ -137,11 +138,14 @@ async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBu
       lastActivityAt: string | null;
       growthCurrent: number;
       growthPrevious: number;
+      referralCode: string;
+      referredBy: string | null;
     }
   >(
     db,
     `with ${growthPeriodsSql("$2")}
      select ${businessColumns("b")},
+            b.referral_code as "referralCode", b.referred_by as "referredBy",
             (select count(*) from appointments a
               where a.business_id = b.id and a.status <> 'cancelled'
                 and a.date >= date_trunc('month', now() at time zone b.timezone)::date
@@ -167,7 +171,9 @@ async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBu
     many<Subscription>(db, `select ${subscriptionColumns()} from subscriptions where business_id = any($1::uuid[])`, [ids]),
   ]);
 
-  return rows.map(({ appointmentsThisMonth, clients, users, professionals, lastActivityAt, growthCurrent, growthPrevious, ...business }) => {
+  return rows.map((row) => {
+    const { appointmentsThisMonth, clients, users, professionals, lastActivityAt, growthCurrent, growthPrevious, referralCode, referredBy, ...business } =
+      row;
     const owner = owners.find((user) => user.id === business.ownerId);
     const subscription = subscriptions.find((s) => s.businessId === business.id) ?? null;
     const plan = getPlan(subscription?.plan ?? "free");
@@ -185,6 +191,9 @@ async function summarizeBusinesses(db: Db, businessId?: string): Promise<AdminBu
       },
       lastActivityAt,
       growth: { current: growthCurrent, previous: growthPrevious },
+      // El programa de referidos (spec 023): el buscador de «Recomendado por» también encuentra el código.
+      referralCode,
+      referredBy,
     };
   });
 }
@@ -445,8 +454,8 @@ export const adminService = {
   async getBusiness(ctx: RequestContext, businessId: string): Promise<AdminBusinessDetail | null> {
     authorizeSuperAdmin(ctx);
     if (!isUuid(businessId)) return null;
-    // El resumen, el equipo, la actividad y su parte de la analítica a la vez (no dependen entre sí).
-    const [[summary], members, recentActivity, analytics] = await Promise.all([
+    // El resumen, el equipo, la actividad, su parte de la analítica y sus referidos a la vez (no dependen entre sí).
+    const [[summary], members, recentActivity, analytics, referrals] = await Promise.all([
       summarizeBusinesses(pool, businessId),
       listTeamMembers(pool, businessId),
       many<AuditLog>(
@@ -459,14 +468,17 @@ export const adminService = {
       ),
       // «Frente a su tipo» (spec 016): de la última foto de 30 días, sin calcular nada.
       businessAnalytics(businessId),
+      // Quién lo recomendó y a quién recomendó (spec 023).
+      adminReferralsOf(pool, businessId),
     ]);
     if (!summary) return null;
-    return { ...summary, members, recentActivity, analytics };
+    return { ...summary, members, recentActivity, analytics, referrals };
   },
 
   /**
    * Crea el negocio con sus datos, servicios, horario y plan, todavía sin propietario: su cuenta se
-   * agrega después (assignBusinessOwner). Su página de reservas funciona desde el primer día.
+   * agrega después (assignBusinessOwner). Su página de reservas funciona desde el primer día. Con
+   * «Recomendado por» (spec 023), lo anota con su propia entrada en la actividad.
    */
   async createBusiness(ctx: RequestContext, input: unknown) {
     const actor = authorizeSuperAdmin(ctx);
@@ -510,6 +522,7 @@ export const adminService = {
           "servicios",
         )}`,
       });
+      await setReferredByOnCreate(db, actor, business, data.referredBy);
       return { business };
     });
   },

@@ -23,6 +23,7 @@ import { imageService } from "../services/image-service.ts";
 import { panelNoticeService } from "../services/panel-notices.ts";
 import { paymentService } from "../services/payment-service.ts";
 import { professionalService } from "../services/professional-service.ts";
+import { referralService } from "../services/referral-service.ts";
 
 /* ------------------------------------------------------------ /api/users ---- */
 
@@ -130,6 +131,12 @@ businessRoutes.patch(
 businessRoutes.delete(
   "/:businessId/team/:userId",
   handle((req) => teamService.remove(req.ctx, req.params.businessId, req.params.userId)),
+);
+
+// El programa de referidos (spec 023): la tarjeta «Recomienda Agenda360», sólo del propietario.
+businessRoutes.get(
+  "/:businessId/referrals",
+  handle((req) => referralService.getForBusiness(req.ctx, req.params.businessId)),
 );
 
 // Suscripción

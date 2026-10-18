@@ -1121,6 +1121,10 @@ export interface AdminBusinessSummary {
   lastActivityAt: ISODateTime | null;
   /** Citas agendadas en lo que va del mes y en los mismos días del mes pasado (spec 006). */
   growth: GrowthPair;
+  /** Su código del programa de referidos (spec 023): el buscador de «Recomendado por» también lo encuentra. */
+  referralCode: string;
+  /** Quién lo recomendó (el id de otro negocio), o null. */
+  referredBy: string | null;
 }
 
 export interface AdminBusinessDetail extends AdminBusinessSummary {
@@ -1128,6 +1132,54 @@ export interface AdminBusinessDetail extends AdminBusinessSummary {
   recentActivity: AuditLog[];
   /** Su parte de la última foto de 30 días de la analítica (spec 016), para «Frente a su tipo»; null: aún no hay foto. */
   analytics: AdminBusinessAnalytics | null;
+  /** El programa de referidos (spec 023): quién lo recomendó y a quién recomendó. Una API anterior no lo trae. */
+  referrals?: AdminBusinessReferrals;
+}
+
+/* ------------------------------------------------ Programa de referidos (spec 023) -- */
+
+/** La tarjeta «Recomienda Agenda360» de Configuración → Negocio: sólo la ve el propietario. */
+export interface BusinessReferrals {
+  /** Su código (6 caracteres): no cambia aunque cambie el enlace de reservas. */
+  code: string;
+  /** `<portada>/?ref=<código>`. */
+  link: string;
+  /** Negocios que recomendó. */
+  referred: number;
+  /** De ellos, los que se quedaron: activos a los 30 días de crearse (o con el descuento ya aplicado). */
+  qualified: number;
+}
+
+/** Un negocio que otro recomendó, en la ficha de /admin («Recomendó a»). */
+export interface ReferredBusiness {
+  id: string;
+  name: string;
+  status: BusinessStatus;
+  createdAt: ISODateTime;
+  /** Activo y con 30 días o más: su recomendación se quedó y ganó el descuento. */
+  qualified: boolean;
+  /** Cuándo se aplicó su descuento; null: todavía no. */
+  rewardAppliedAt: ISODateTime | null;
+}
+
+/** Los referidos de un negocio en su ficha de /admin. */
+export interface AdminBusinessReferrals {
+  /** Quién lo recomendó (null: nadie). */
+  referredBy: { id: string; name: string } | null;
+  /** A quién recomendó, el más nuevo primero. */
+  referred: ReferredBusiness[];
+}
+
+/** Un descuento ganado y pendiente de aplicar, en «Descuentos por referidos» del Inicio de /admin. */
+export interface ReferralReward {
+  /** El negocio recomendado: cada uno da un solo descuento. */
+  business: { id: string; name: string };
+  /** Quién lo recomendó: paga menos en su siguiente mensualidad. */
+  referrer: { id: string; name: string };
+  /** Cuándo se ganó: 30 días después del alta del recomendado. */
+  earnedAt: ISODateTime;
+  /** En USD (REFERRAL_DISCOUNT). */
+  amount: number;
 }
 
 /* ------------------------------------------ Analítica del super admin (spec 016) -- */

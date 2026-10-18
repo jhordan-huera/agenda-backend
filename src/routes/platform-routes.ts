@@ -10,6 +10,7 @@ import { categoryService } from "../services/category-service.ts";
 import { platformNoticeService } from "../services/panel-notices.ts";
 import { paymentService } from "../services/payment-service.ts";
 import { publicBookingService } from "../services/public-booking-service.ts";
+import { adminReferralService, publicReferralService } from "../services/referral-service.ts";
 
 /* -------------------------------------- /api/public (sin sesión) ------------ */
 
@@ -59,6 +60,16 @@ publicRoutes.get(
     // comprobar la hora al confirmarla, así que nunca se reserva una hora ocupada.
     if (profile) res.set("Cache-Control", "public, max-age=0, s-maxage=30, stale-while-revalidate=60");
     return profile;
+  }),
+);
+// La portada con `?ref=<código>` (spec 023): sólo el nombre de un negocio activo, para «Me recomendó
+// <negocio>»; 404 si el código no existe o el negocio está suspendido. En la CDN como el perfil.
+publicRoutes.get(
+  "/referrals/:code",
+  handle(async (req, res) => {
+    const referrer = await publicReferralService.getReferrer(req.params.code);
+    res.set("Cache-Control", "public, max-age=0, s-maxage=30, stale-while-revalidate=60");
+    return referrer;
   }),
 );
 // Búsqueda por cédula de las versiones anteriores de la página: ya no dice si es cliente (ver lookupClient).
@@ -212,6 +223,20 @@ adminRoutes.put(
 adminRoutes.put(
   "/businesses/:businessId/multi-client-appointments",
   handle((req) => adminService.setMultiClientAppointments(req.ctx, req.params.businessId, req.body?.enabled)),
+);
+// «Recomendado por» (spec 023): { referredBy: id de otro negocio | null }. Devuelve los referidos de la ficha.
+adminRoutes.put(
+  "/businesses/:businessId/referred-by",
+  handle((req) => adminReferralService.setReferredBy(req.ctx, req.params.businessId, req.body)),
+);
+// «Descuentos por referidos» del Inicio (spec 023): los ganados y pendientes, y «Marcar como aplicado».
+adminRoutes.get(
+  "/referral-rewards",
+  handle((req) => adminReferralService.listRewards(req.ctx)),
+);
+adminRoutes.post(
+  "/referral-rewards/:businessId/apply",
+  handle((req) => adminReferralService.applyReward(req.ctx, req.params.businessId)),
 );
 adminRoutes.get(
   "/categories",

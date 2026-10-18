@@ -46,7 +46,8 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - En modo soporte el super admin tiene permisos de propietario y ve la historia clínica; no se
   avisa al negocio de la entrada ni se registran sus consultas, sólo lo que crea o cambia.
 - La verificación en dos pasos es obligatoria para el super admin.
-- Los negocios no ven planes ni precios (ni en el panel ni en la portada).
+- Los negocios no ven planes ni precios (ni en el panel ni en la portada). La única excepción es el
+  descuento del programa de referidos en la tarjeta del propietario (2026-10-18).
 - Los pacientes se identifican por cédula (sólo números) dentro de cada negocio. La reserva
   online no reconoce al paciente por la cédula ni muestra sus datos: siempre pide nombre, email y
   teléfono.
@@ -150,6 +151,14 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - Las citas del panel (y sus series) nacen Confirmadas; sólo las reservas online nacen Pendientes,
   porque el negocio todavía las tiene que confirmar (2026-10-17).
 - En la portada no hay testimonios, cifras ni precios inventados.
+- Las páginas de los pacientes (reservas, pago y cita) llevan siempre «Agenda online con Agenda360 ·
+  ¿Eres profesional? Crea tu agenda»; ningún negocio lo oculta. Con el registro público cerrado, la
+  portada lleva al WhatsApp del dueño (o a su email de soporte), con el negocio de origen en el
+  mensaje (2026-10-18).
+- Programa de referidos: cada negocio tiene su enlace. Por cada negocio recomendado que sigue activo
+  a los 30 días, quien lo recomendó paga $1,50 menos en su siguiente mensualidad, una sola vez. El
+  super admin anota «Recomendado por» y marca el descuento como aplicado al cobrar; todo queda en la
+  actividad (2026-10-18).
 
 ### IV. Se comprueba en local, nunca en producción
 
@@ -257,4 +266,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.19.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-17
+**Versión**: 1.20.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-18

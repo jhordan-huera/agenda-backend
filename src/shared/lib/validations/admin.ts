@@ -38,7 +38,12 @@ export const adminBusinessSchema = z.object({
     .max(7)
     .refine((days) => new Set(days.map((day) => day.dayOfWeek)).size === days.length, "Hay días repetidos en el horario")
     .refine((days) => days.some((day) => day.isActive), "Activa al menos un día de atención"),
+  /** «Recomendado por» (spec 023): el negocio que lo recomendó, o null. Queda en la actividad. */
+  referredBy: z.string().nullable().default(null),
 });
+
+/** «Recomendado por» en la ficha del negocio (spec 023): otro negocio, o null para quitarlo. */
+export const referredBySchema = z.object({ referredBy: z.string().nullable() });
 
 /** Propietario de un negocio que aún no lo tiene, con la contraseña que elige el super admin. */
 export const businessOwnerSchema = z.object({
@@ -100,6 +105,7 @@ export type BusinessCategoryInput = z.infer<typeof businessCategoryInputSchema>;
 export type AdminMemberInput = z.infer<typeof adminMemberSchema>;
 export type PlatformAdminInput = z.infer<typeof platformAdminSchema>;
 export type BusinessDeletionInput = z.infer<typeof businessDeletionSchema>;
+export type ReferredByInput = z.infer<typeof referredBySchema>;
 
 /** Colores del panel de plataforma del super admin (spec 007); null vuelve a los de Agenda360. */
 export const panelColorsSchema = z.object({ colors: brandColorsSchema });
