@@ -1,6 +1,7 @@
-// Envío por la API de Gmail (GMAIL_TRANSPORT=api), sin red: el mensaje RFC 822 que se sube, la
-// renovación del token con el refresh token y que los errores no muestren las credenciales.
-import { buildRawMessage, createGmailSender, gmailTransportKind } from "../src/services/gmail-transport.ts";
+// Envío por la API de Gmail (GMAIL_TRANSPORT=api), sin red: el mensaje RFC 822 que se sube (también con
+// una invitación de calendario, spec 027), la renovación del token con el refresh token y que los errores
+// no muestren las credenciales.
+import { buildRawMessage, calendarEventOf, createGmailSender, gmailTransportKind } from "../src/services/gmail-transport.ts";
 
 let failures = 0;
 const ok = (cond: unknown, label: string, extra?: unknown) => {
@@ -41,6 +42,43 @@ const withAttachment = (
   await buildRawMessage({ ...mail, html: undefined, attachments: [{ filename: "agenda360-2026-10-09.sql.gz.enc", content: Buffer.from("cifrado"), contentType: "application/octet-stream" }] })
 ).toString("utf8");
 ok(/multipart\/mixed/.test(withAttachment) && /filename=agenda360-2026-10-09\.sql\.gz\.enc/.test(withAttachment), "con adjunto (la copia de seguridad)");
+
+// Invitación de calendario (spec 027): la parte text/calendar con su método, que es la que Gmail, Apple Mail
+// y Outlook muestran como invitación, y el mismo iCalendar como adjunto .ics.
+const ics = [
+  "BEGIN:VCALENDAR",
+  "PRODID:-//Agenda360//ES",
+  "VERSION:2.0",
+  "METHOD:REQUEST",
+  "BEGIN:VEVENT",
+  "UID:cita-de-prueba@agenda360",
+  "SEQUENCE:0",
+  "DTSTAMP:20261019T150000Z",
+  "DTSTART:20261020T200000Z",
+  "DTEND:20261020T203000Z",
+  "SUMMARY:Juan P. · Terapia individual",
+  "END:VEVENT",
+  "END:VCALENDAR",
+  "",
+].join("\r\n");
+const invite = calendarEventOf(ics);
+ok(invite.method === "REQUEST" && invite.content === ics && invite.filename === "invitacion.ics", "el método sale de la línea METHOD del iCalendar", invite);
+ok(calendarEventOf(ics.replace("METHOD:REQUEST", "METHOD:CANCEL")).method === "CANCEL", "y la cancelación, METHOD:CANCEL");
+const withInvite = (await buildRawMessage({ ...mail, icalEvent: invite })).toString("utf8");
+ok(
+  /Content-Type: text\/calendar; charset=utf-8; method=REQUEST/.test(withInvite) && /multipart\/alternative/.test(withInvite),
+  "con invitación: la alternativa text/calendar; method=REQUEST, junto al texto y el HTML",
+  withInvite.slice(0, 1200),
+);
+ok(
+  /multipart\/mixed/.test(withInvite) && /Content-Type: application\/ics; name=invitacion\.ics/.test(withInvite) && /Content-Disposition: attachment;\s+filename=invitacion\.ics/.test(withInvite),
+  "y el adjunto invitacion.ics",
+  withInvite.match(/Content-(Type|Disposition): [^\r\n]*/g),
+);
+const calendarPart = withInvite.split(/Content-Type: text\/calendar[^\r\n]*\r\n/)[1] ?? "";
+const encoded = /Content-Transfer-Encoding: base64\r\n\r\n([A-Za-z0-9+/=\r\n]+)/.exec(calendarPart)?.[1] ?? "";
+const decoded = encoded ? Buffer.from(encoded.replace(/\r\n/g, ""), "base64").toString("utf8") : calendarPart;
+ok(decoded.includes("UID:cita-de-prueba@agenda360") && decoded.includes("SUMMARY:Juan P. · Terapia individual"), "con el iCalendar tal cual, en UTF-8", decoded.slice(0, 300));
 
 console.log("Forma de envío");
 ok(gmailTransportKind(undefined) === "smtp" && gmailTransportKind("") === "smtp", "por defecto, SMTP (como hasta ahora)");

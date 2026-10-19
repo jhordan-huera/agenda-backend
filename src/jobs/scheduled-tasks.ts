@@ -20,6 +20,7 @@ import {
   statusChangeNotice,
   type BookingNotice,
 } from "../services/booking-alerts.ts";
+import { businessesWithCalendarInvites, syncCalendarInvites, upcomingInviteIds } from "../services/calendar-invites.ts";
 import { deleteStalePendingAttachments } from "../services/clinical-attachment-service.ts";
 import { saveDailyDatabaseStats, type DatabaseStatsRefresh } from "../services/database-stats-service.ts";
 import { deleteUnusedImageUploads } from "../services/image-service.ts";
@@ -87,12 +88,32 @@ export async function queueAllReminders(): Promise<QueuedReminders> {
   return { queued: reminders.queued + agendas.queued, failures: reminders.failures + agendas.failures };
 }
 
+/**
+ * Las invitaciones de calendario (spec 027): en cada pasada, las citas de la ventana de las agendas con el
+ * interruptor, negocio por negocio. Las que entran en la ventana reciben la suya y las que cambiaron por
+ * otro lado (el nombre del servicio, la dirección del negocio, el email de la agenda) su versión nueva; con
+ * la huella, lo demás no se repite. Devuelve cuántas quedaron en cola y en cuántos negocios falló.
+ */
+export async function queueCalendarInvites(): Promise<QueuedReminders> {
+  return forEachBusiness(await businessesWithCalendarInvites(pool), "invitaciones de calendario", async (db, id) =>
+    syncCalendarInvites(db, await upcomingInviteIds(db, { businessId: id })),
+  );
+}
+
 /** Resumen de una ejecución del cron (scripts/cron.ts). */
 export interface ScheduledTasksReport {
   /** Recordatorios puestos en cola en esta ejecución. */
   reminders: number;
-  /** Negocios en los que falló preparar los recordatorios o la agenda del día (detalle en el registro). */
+  /**
+   * Negocios en los que falló preparar los recordatorios, la agenda del día o las invitaciones de calendario
+   * (detalle en el registro).
+   */
   reminderFailures: number;
+  /**
+   * Invitaciones de calendario (spec 027) puestas en cola en esta pasada: las citas que entraron en la
+   * ventana o cambiaron por otro lado. Sólo la cifra (el registro es público).
+   */
+  calendarInvites?: number;
   /** Lo que hizo esta ejecución con la cola de emails. */
   emails: EmailQueueReport;
   /** Emails enviados desde la ejecución anterior: también los que salieron al momento (reservas, avisos). */
@@ -232,9 +253,9 @@ export const EMAIL_CONTENT_DAYS = 30;
  */
 async function purgeOldEmailContent(): Promise<number> {
   const result = await pool.query(
-    `update notifications set body = '', html = null
+    `update notifications set body = '', html = null, calendar = null
       where status <> 'queued' and created_at < now() - make_interval(days => $1)
-        and (body <> '' or html is not null)`,
+        and (body <> '' or html is not null or calendar is not null)`,
     [EMAIL_CONTENT_DAYS],
   );
   return result.rowCount ?? 0;
@@ -249,6 +270,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const started = Date.now();
   const previous = await one<{ ranAt: string }>(pool, 'select ran_at as "ranAt" from cron_runs order by ran_at desc limit 1');
   const reminders = await queueAllReminders();
+  // Antes del envío: así las invitaciones de la ventana salen en esta misma pasada.
+  const calendarInvites = await queueCalendarInvites();
   const emails = await processEmailQueue({ maxBatches: MAX_EMAIL_BATCHES, deadline: started + EMAIL_BUDGET_MS });
   await deleteExpiredSessions();
   await deleteStalePendingAttachments();
@@ -323,7 +346,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   });
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
-    reminderFailures: reminders.failures,
+    reminderFailures: reminders.failures + calendarInvites.failures,
+    calendarInvites: calendarInvites.queued,
     emails,
     sentSinceLastRun: totals?.sent ?? 0,
     sentEmails: sent.map((email) => ({

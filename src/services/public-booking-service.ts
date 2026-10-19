@@ -28,6 +28,7 @@ import type {
 import { saveExtraClients } from "./appointment-clients.ts";
 import { describeAppointment, logAudit } from "./audit.ts";
 import { withLegacyBankAccount } from "./bank-accounts.ts";
+import { syncCalendarInvites } from "./calendar-invites.ts";
 import { lockBusiness, parseInput } from "./context.ts";
 import { listSchedules, peopleFor } from "./business-data-service.ts";
 import { receiptStorage } from "./file-storage.ts";
@@ -655,6 +656,8 @@ export const publicBookingService = {
       // Las otras personas, antes de los avisos (cada una recibe el suyo).
       const appointment = extraClientIds.length ? await saveExtraClients(db, created, extraClientIds, []) : created;
       const emailSent = await notifyAppointmentChange(db, null, appointment, "booking_page");
+      // Por confirmar: el evento sale como provisional (spec 027).
+      await syncCalendarInvites(db, [appointment.id]);
       await logAudit(db, {
         businessId: business.id,
         actor: null,

@@ -552,7 +552,7 @@ function seedTenant(
     multiClientAppointments: false,
     createdAt,
   });
-  const professionalBase = { businessId, avatarUrl: null, email: "", meetingUrl: "", bankAccounts: [], allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, isActive: true, createdAt };
+  const professionalBase = { businessId, avatarUrl: null, email: "", meetingUrl: "", bankAccounts: [], allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, calendarInvites: false, calendarEmail: "", isActive: true, createdAt };
   db.professionals.push({
     ...professionalBase,
     id: professionalId,

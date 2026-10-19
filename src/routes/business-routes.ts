@@ -110,6 +110,11 @@ businessRoutes.delete(
   "/:businessId/professionals/:professionalId",
   handle((req) => professionalService.remove(req.ctx, req.params.businessId, req.params.professionalId)),
 );
+// Las invitaciones de calendario de una agenda (spec 027): el profesional, la suya; quien gestiona los profesionales, cualquiera.
+businessRoutes.patch(
+  "/:businessId/professionals/:professionalId/calendar-invites",
+  handle((req) => professionalService.setCalendarInvites(req.ctx, req.params.businessId, req.params.professionalId, req.body)),
+);
 businessRoutes.put(
   "/:businessId/professionals/:professionalId/schedule",
   handle((req) => scheduleService.saveWeek(req.ctx, req.params.businessId, req.body, req.params.professionalId)),

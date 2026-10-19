@@ -68,15 +68,25 @@ const professionalOwnColumns = columns({
   allServices: "all_services",
   notifyNewAppointments: "notify_new_appointments",
   dailyAgenda: "daily_agenda",
+  calendarInvites: "calendar_invites",
   isActive: "is_active",
   sortOrder: "sort_order",
   createdAt: "created_at",
 });
 
-/** Con los servicios que atiende (`serviceIds`, de professional_services). */
+/**
+ * A dónde le llegan las invitaciones de calendario (spec 027) y la copia de los emails al paciente: su
+ * email de avisos o, si está vacío, el de su usuario ("" = sin email). Como `professionalCopyEmail` en
+ * notifications.ts. `alias`: el de la tabla professionals en la consulta.
+ */
+export const agendaEmailSql = (alias = "professionals") =>
+  `coalesce(nullif(${alias}.email, ''), (select u.email from users u where u.id = ${alias}.user_id), '')`;
+
+/** Con los servicios que atiende (`serviceIds`, de professional_services) y su `calendarEmail`. */
 export const professionalColumns = (alias?: string) =>
   `${professionalOwnColumns(alias)}, coalesce((select array_agg(ps.service_id::text order by ps.service_id)
-     from professional_services ps where ps.professional_id = ${alias ?? "professionals"}.id), '{}') as "serviceIds"`;
+     from professional_services ps where ps.professional_id = ${alias ?? "professionals"}.id), '{}') as "serviceIds",
+   ${agendaEmailSql(alias)} as "calendarEmail"`;
 
 /** Orden de las agendas en el calendario, la página de reservas y los reportes. */
 export const PROFESSIONAL_ORDER = "sort_order, display_name";

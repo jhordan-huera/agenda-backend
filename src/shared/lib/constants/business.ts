@@ -174,6 +174,13 @@ export const canCancelOnline = (
 export const APPOINTMENT_PAGE_DAYS = 30;
 
 /**
+ * Las invitaciones de calendario (spec 027) sólo salen para las citas de hoy a los próximos 14 días: las
+ * de más lejos reciben la suya cuando entran en esa ventana (el cron). Así una serie de 24 citas no llena
+ * el correo. Lo usan la API y la explicación del interruptor: si cambia, cambia aquí.
+ */
+export const CALENDAR_INVITE_DAYS = 14;
+
+/**
  * Datos obligatorios del paciente en el panel, si el super admin no eligió otros para el negocio (como
  * hasta ahora: cédula y email). Igual que el valor por defecto de la migración 031.
  */

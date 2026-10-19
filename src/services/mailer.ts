@@ -13,7 +13,8 @@ import {
   sentLast24h,
   type EmailPriority,
 } from "./email-limits.ts";
-import { createGmailSender } from "./gmail-transport.ts";
+import { readdressInvite } from "./calendar-invites.ts";
+import { calendarEventOf, createGmailSender } from "./gmail-transport.ts";
 import { isQuietTime, isReminderEmail, isReminderSql, minutesUntilQuietEnds, minutesUntilStart, reminderCurrentSql } from "./reminder-rules.ts";
 
 /**
@@ -85,6 +86,8 @@ interface QueuedEmail {
   html: string | null;
   /** Contraseña de los emails con datos de acceso: se guarda oculta (PASSWORD_MASK) y va aquí. */
   secret: string | null;
+  /** El iCalendar de una invitación de calendario (spec 027); null en los demás. */
+  calendar: string | null;
   /** Intentos, contando éste. */
   attempts: number;
   /** Clave única (recordatorios y su copia al profesional, agenda del día); null en los demás. */
@@ -110,12 +113,16 @@ export function outgoingContent(email: Pick<QueuedEmail, "body" | "html" | "secr
   };
 }
 
-/** Lo que recibe quien envía: destinatario, asunto y contenido ya con la contraseña. */
+/**
+ * Lo que recibe quien envía: destinatario, asunto y contenido ya con la contraseña, y la invitación de
+ * calendario si la hay (spec 027).
+ */
 export interface OutgoingEmail {
   to: string;
   subject: string;
   text: string;
   html: string | null;
+  calendar?: string | null;
 }
 
 async function sendWithGmail(email: OutgoingEmail): Promise<void> {
@@ -125,6 +132,8 @@ async function sendWithGmail(email: OutgoingEmail): Promise<void> {
     subject: email.subject,
     text: email.text,
     ...(email.html ? { html: email.html } : {}),
+    // La invitación: la parte text/calendar y el adjunto .ics (ver calendarEventOf).
+    ...(email.calendar ? { icalEvent: calendarEventOf(email.calendar) } : {}),
   });
 }
 
@@ -265,9 +274,9 @@ async function claimBatch(skipReminders: boolean): Promise<Claim> {
               last_error = case when n.last_error = $3 then null else n.last_error end
          from fitting f
         where n.id = f.id
-    returning n.id, n.type, n.to_email, n.subject, n.body, n.html, n.secret, n.attempts, n.appointment_id, n.dedupe_key, n.created_at
+    returning n.id, n.type, n.to_email, n.subject, n.body, n.html, n.secret, n.calendar, n.attempts, n.appointment_id, n.dedupe_key, n.created_at
      )
-     select c.id, c.type, c.to_email as "to", c.subject, c.body, c.html, c.secret, c.attempts, c.dedupe_key as "dedupeKey",
+     select c.id, c.type, c.to_email as "to", c.subject, c.body, c.html, c.secret, c.calendar, c.attempts, c.dedupe_key as "dedupeKey",
             a.status as "appointmentStatus", a.date as "appointmentDate", a.start_time as "appointmentTime",
             b.timezone, ${reminderCurrentSql("c", "a")} as "reminderCurrent", ${reminderSentSql("c")} as "reminderSent"
        from claimed c
@@ -366,6 +375,8 @@ async function deliver(email: QueuedEmail, send: (email: OutgoingEmail) => Promi
       subject: redirectTo ? `[Para ${email.to}] ${email.subject}` : email.subject,
       text,
       html,
+      // Desviada a la cuenta de pruebas: la invitación, a su nombre (ver readdressInvite).
+      calendar: email.calendar && redirectTo ? readdressInvite(email.calendar, email.to, redirectTo) : email.calendar,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

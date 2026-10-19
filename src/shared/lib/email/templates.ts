@@ -1,7 +1,7 @@
 // Copia de agenda-front/src/lib/email/templates.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { APP_NAME } from "../constants/app.ts";
 import { BANK_ACCOUNT_TYPE_LABELS, describeTimezone } from "../constants/business.ts";
-import { capitalize, formatDate, formatLongDate, formatPrice, formatTimeRange } from "../format.ts";
+import { capitalize, formatDate, formatLongDate, formatPrice, formatShortDate, formatTimeRange, joinNames } from "../format.ts";
 import { describeHomeVisit, getDirectionsUrl, getPlaceMapsUrl, hasMapPoint } from "../maps.ts";
 import type { BankAccount, HomeVisitAddress, ISODate } from "../../types/index.ts";
 import { composeEmail, type EmailBlock, type EmailContent, type EmailMessage } from "./layout.ts";
@@ -83,6 +83,30 @@ export interface SeriesEmailDate {
 
 /** Las fechas de una serie (spec 011): `pending`, la serie quedó pendiente de confirmar. */
 export type SeriesEmailData = AppointmentEmailData & { dates: SeriesEmailDate[]; pending?: boolean };
+
+/**
+ * Una cita como invitación de calendario (spec 027), al profesional. Sólo lo que sale en el evento: los
+ * pacientes a medias ("Juan P."), nunca su contacto, su cédula ni nada de la historia clínica, y el lugar
+ * sin la dirección del paciente. `kind`: la primera invitación de la cita, su cambio, su cancelación o
+ * que pasó a otra agenda (al profesional anterior le llega la cancelación del evento).
+ */
+export interface CalendarInviteEmailData {
+  kind: "new" | "updated" | "cancelled" | "moved";
+  /** El título del evento: "Juan P. · Terapia individual", con «Por confirmar · » delante si está pendiente. */
+  summary: string;
+  /** Los pacientes a medias, el principal primero. */
+  clientNames: string[];
+  serviceName: string;
+  professionalName: string;
+  businessName: string;
+  date: ISODate;
+  startTime: string;
+  endTime: string;
+  /** La dirección del negocio, «En línea» (con su enlace) o «A domicilio». */
+  place: string;
+  /** «Ver en Agenda360»: la cita en la agenda del panel. */
+  agendaUrl: string;
+}
 
 /* ------------------------------------------------------------------ Piezas -- */
 
@@ -691,6 +715,53 @@ export const emailTemplates = {
           })),
         },
         { kind: "button", label: "Abrir mi agenda", url: data.agendaUrl },
+      ],
+    });
+  },
+
+  /**
+   * Al profesional: su cita como invitación de calendario (spec 027). La invitación va adjunta (la añade el
+   * envío) y este email sólo la explica. Asunto: «Cita: Juan P. · Terapia individual · mar 20 oct, 15:00»,
+   * «Cambió: …», «Cancelada: …» o «Pasó a otra agenda: …».
+   */
+  calendarInvite: (data: CalendarInviteEmailData): EmailContent => {
+    const prefix = { new: "Cita", updated: "Cambió", cancelled: "Cancelada", moved: "Pasó a otra agenda" }[data.kind];
+    const lead = {
+      new: `Una cita de ${data.businessName} para tu calendario: Google, iPhone y Outlook la reconocen como invitación.`,
+      updated: "La cita cambió: tu calendario actualiza el mismo evento, sin duplicarlo.",
+      cancelled: "La cita se canceló: tu calendario la quita o la marca como cancelada.",
+      moved: "La cita pasó a la agenda de otro profesional: tu calendario la quita de la tuya.",
+    }[data.kind];
+    return platformEmail({
+      subject: `${prefix}: ${data.summary} · ${formatShortDate(data.date)}, ${data.startTime}`,
+      preheader: `${data.summary} · ${capitalize(formatLongDate(data.date))}, ${formatTimeRange(data.startTime, data.endTime)}.`,
+      title: {
+        new: "Una cita para tu calendario",
+        updated: "Tu cita cambió",
+        cancelled: "Tu cita se canceló",
+        moved: "Una cita pasó a otra agenda",
+      }[data.kind],
+      greeting: `Hola ${data.professionalName}:`,
+      blocks: [
+        { kind: "text", text: lead },
+        {
+          kind: "details",
+          title: "La cita",
+          rows: [
+            { label: data.clientNames.length > 1 ? "Pacientes" : "Paciente", value: joinNames(data.clientNames) },
+            { label: "Servicio", value: data.serviceName },
+            { label: "Fecha", value: capitalize(formatLongDate(data.date)) },
+            { label: "Hora", value: formatTimeRange(data.startTime, data.endTime) },
+            { label: "Lugar", value: data.place },
+          ],
+        },
+        { kind: "button", label: "Ver en Agenda360", url: data.agendaUrl },
+        {
+          kind: "note",
+          text:
+            "Te llega porque activaste «Recibir mis citas en mi calendario» en tu agenda. Si tu calendario no la añadió solo, " +
+            "toca «Añadir al calendario» en este email; los cambios siguientes se aplican solos.",
+        },
       ],
     });
   },

@@ -103,7 +103,10 @@ console.log("Cada tipo de email tiene su nivel");
       "welcome", "booking_created", "appointment_confirmed", "appointment_updated", "appointment_cancelled", "appointment_reminder",
       "appointment_pending", "appointment_completed", "appointment_no_show", "appointment_series", "appointment_series_cancelled",
     ],
-    business: ["appointment_copy", "booking_received", "professional_new_appointment", "professional_daily_agenda", "payment_receipt_received", "patient_cancelled"],
+    business: [
+      "appointment_copy", "booking_received", "professional_new_appointment", "professional_daily_agenda", "payment_receipt_received", "patient_cancelled",
+      "calendar_invite",
+    ],
   };
   const wrong = Object.entries(R2).flatMap(([level, types]) => types.filter((type) => EMAIL_PRIORITY[type] !== level));
   ok(wrong.length === 0, "los niveles son los de la tabla R2: equipo, paciente (con los recordatorios) y negocio (con la copia al profesional)", wrong);

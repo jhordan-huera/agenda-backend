@@ -60,6 +60,17 @@ export async function buildRawMessage(mail: Mail.Options): Promise<Buffer> {
   return message.build();
 }
 
+/**
+ * La invitación de calendario de un email (spec 027) tal como la pide nodemailer: con su método (el de la
+ * línea METHOD del iCalendar, REQUEST o CANCEL), nodemailer la añade como alternativa
+ * `text/calendar; method=…` (la que Gmail, Apple Mail y Outlook muestran como invitación) y además como
+ * adjunto `invitacion.ics`.
+ */
+export function calendarEventOf(content: string): NonNullable<Mail.Options["icalEvent"]> {
+  const method = /^METHOD:([A-Z-]+)\r?$/m.exec(content)?.[1] ?? "PUBLISH";
+  return { method, content, filename: "invitacion.ics" };
+}
+
 interface SenderOptions {
   kind?: GmailTransportKind;
   /** Inactividad máxima (SMTP) o duración máxima de cada petición (API). */

@@ -95,7 +95,7 @@ ok(
   "sin Gmail no envía nada: todo sigue en cola (recordatorios y sus copias)",
 );
 ok(
-  /Recordatorios: \d+ · reservas por la página: \d+ · pacientes nuevos del panel: \d+ · citas del panel: \d+ · series del panel: \d+ · series canceladas: \d+ · cambios de estado: \d+ · cambios de cuenta: \d+ · importaciones: \d+ · enviados/.test(run.output) && !/@/.test(run.output),
+  /Recordatorios: \d+ · invitaciones de calendario: \d+ · reservas por la página: \d+ · pacientes nuevos del panel: \d+ · citas del panel: \d+ · series del panel: \d+ · series canceladas: \d+ · cambios de estado: \d+ · cambios de cuenta: \d+ · importaciones: \d+ · enviados/.test(run.output) && !/@/.test(run.output),
   "el registro (público en GitHub) sólo lleva cifras, ningún email",
   run.output.slice(-300),
 );

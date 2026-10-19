@@ -80,7 +80,8 @@ export const QUERY_TEXT_MAX = 160;
  * - image_uploads: UNUSED_UPLOAD_HOURS = 24 (deleteUnusedImageUploads);
  * - rate_limits: al vencer cada cuenta (deleteExpiredRateLimits);
  * - backup_runs: BACKUP_RUNS_DAYS = 365 (scripts/backup.ts);
- * - database_stats: DATABASE_STATS_KEEP_DAYS = 400 (esta foto diaria).
+ * - database_stats: DATABASE_STATS_KEEP_DAYS = 400 (esta foto diaria);
+ * - calendar_invites: se borran en cascada con su cita o su agenda (migración 048).
  * Las que no están aquí salen con su nombre técnico y sin regla.
  */
 export const TABLE_INFO: Record<string, { label: string; retention: string }> = {
@@ -90,6 +91,7 @@ export const TABLE_INFO: Record<string, { label: string; retention: string }> = 
   appointments: { label: "Citas", retention: "Nunca" },
   appointment_clients: { label: "Pacientes de cada cita (sesiones de pareja)", retention: "Nunca" },
   appointment_series: { label: "Series de citas", retention: "Nunca" },
+  calendar_invites: { label: "Invitaciones de calendario enviadas", retention: "Con su cita o su agenda" },
   clients: { label: "Pacientes", retention: "Nunca" },
   clinical_profiles: { label: "Historia clínica: ficha de cada paciente", retention: "Nunca" },
   clinical_notes: { label: "Historia clínica: evoluciones", retention: "Nunca" },
