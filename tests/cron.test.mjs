@@ -139,14 +139,16 @@ ok(detail.length === 1 && /^[^@]{0,2}\*\*\*@/.test(detail[0].to) && detail[0].ty
 await runScript();
 ok(lastRun().report.sentSinceLastRun === 0, "y no los vuelve a contar", lastRun().report);
 
-// El registro del cron sólo guarda la semana en curso (2026-10-19): cada lunes, hora de Ecuador, se
-// borran las pasadas de la semana anterior.
-const weekStart = "(date_trunc('week', now() at time zone 'America/Guayaquil') at time zone 'America/Guayaquil')";
-sql(`insert into cron_runs (ran_at, report) values (${weekStart} - interval '1 minute', '{"prueba": "domingo"}'), (${weekStart} + interval '1 minute', '{"prueba": "lunes"}')`);
+// El registro del cron se borra cada lunes al mediodía, hora de Ecuador (2026-10-19): la primera pasada
+// desde las 12:00 borra todas las de antes. El último lunes a las 12:00, calculado aparte de la API:
+const cutoff = `(select max(t) from (select (d::date + time '12:00') at time zone 'America/Guayaquil' as t
+  from generate_series(current_date - 9, current_date + 1, interval '1 day') as d) as v
+  where t <= now() and extract(isodow from t at time zone 'America/Guayaquil') = 1)`;
+sql(`insert into cron_runs (ran_at, report) values (${cutoff} - interval '1 minute', '{"prueba": "11:59"}'), (${cutoff} + interval '1 minute', '{"prueba": "12:01"}')`);
 await runScript();
 const kept = sql("select string_agg(report->>'prueba', ',' order by ran_at) from cron_runs where report ? 'prueba'");
-ok(kept === "lunes", "se borran las pasadas de la semana anterior (el domingo a las 23:59) y queda la del lunes a las 00:01", kept);
-ok(Number(sql(`select count(*) from cron_runs where ran_at < ${weekStart}`)) === 0 && lastRun().report.sentSinceLastRun === 0, "nada de antes del lunes; la última pasada sigue ahí", lastRun().report);
+ok(kept === "12:01", "se borran las pasadas de antes del lunes a las 12:00 (la de las 11:59) y queda la de las 12:01", kept);
+ok(Number(sql(`select count(*) from cron_runs where ran_at < ${cutoff}`)) === 0 && lastRun().report.sentSinceLastRun === 0, "nada de antes del lunes al mediodía; la última pasada sigue ahí", lastRun().report);
 
 console.log("Alerta de intentos fallidos");
 received.length = 0;

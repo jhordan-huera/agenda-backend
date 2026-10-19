@@ -365,10 +365,13 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     totals?.at ?? null,
     report,
   ]);
-  // El registro del cron sólo guarda la semana en curso: cada lunes (hora de Ecuador) se borran las
-  // pasadas de la semana anterior (decisión del dueño del producto, 2026-10-19). Sólo se lee la última.
+  // El registro del cron se borra cada lunes al mediodía (hora de Ecuador): la primera pasada desde
+  // las 12:00 borra todas las de antes (decisión del dueño del producto, 2026-10-19). Sólo se lee la
+  // última. Restar 12 horas antes de truncar a la semana da el último lunes a las 12:00.
   await pool.query(
-    "delete from cron_runs where ran_at < (date_trunc('week', coalesce($1::timestamptz, now()) at time zone $2) at time zone $2)",
+    `delete from cron_runs
+      where ran_at < ((date_trunc('week', (coalesce($1::timestamptz, now()) at time zone $2) - interval '12 hours')
+                       + interval '12 hours') at time zone $2)`,
     [totals?.at ?? null, DEFAULT_TIMEZONE],
   );
   return report;
