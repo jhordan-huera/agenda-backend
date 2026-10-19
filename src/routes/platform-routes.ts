@@ -7,6 +7,7 @@ import { adminService, platformService } from "../services/admin-service.ts";
 import { analyticsService } from "../services/analytics-service.ts";
 import { appointmentPageService } from "../services/appointment-page-service.ts";
 import { categoryService } from "../services/category-service.ts";
+import { databaseStatsService } from "../services/database-stats-service.ts";
 import { platformNoticeService } from "../services/panel-notices.ts";
 import { paymentService } from "../services/payment-service.ts";
 import { publicBookingService } from "../services/public-booking-service.ts";
@@ -177,6 +178,23 @@ adminRoutes.get(
 adminRoutes.get(
   "/analytics",
   handle((req) => analyticsService.getSnapshot(req.ctx, req.query)),
+);
+// La pantalla «Base de datos» (spec 024): sólo el super admin principal (los demás, 403 en el servicio),
+// con su propio límite y sin caché. Se calcula al abrirla, en una transacción de sólo lectura.
+const databaseLimit = limitRequests({
+  name: "base-de-datos",
+  windowMinutes: 15,
+  max: 20,
+  message: "Demasiadas consultas de la base de datos. Espera unos minutos.",
+});
+
+adminRoutes.get(
+  "/database",
+  databaseLimit,
+  handle(async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    return databaseStatsService.get(req.ctx);
+  }),
 );
 adminRoutes.get(
   "/businesses",

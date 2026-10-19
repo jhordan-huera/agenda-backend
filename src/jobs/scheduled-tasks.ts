@@ -21,6 +21,7 @@ import {
   type BookingNotice,
 } from "../services/booking-alerts.ts";
 import { deleteStalePendingAttachments } from "../services/clinical-attachment-service.ts";
+import { saveDailyDatabaseStats, type DatabaseStatsRefresh } from "../services/database-stats-service.ts";
 import { deleteUnusedImageUploads } from "../services/image-service.ts";
 import { deleteStalePendingReceipts, purgeOldReceipts } from "../services/payment-service.ts";
 import { processEmailQueue, scrubEmails, type EmailQueueReport } from "../services/mailer.ts";
@@ -148,6 +149,11 @@ export interface ScheduledTasksReport {
    * Ecuador, una vez al día), si ya estaba, si era temprano o si falló (el cron siguió con lo demás).
    */
   analytics?: AnalyticsRefresh;
+  /**
+   * La foto del tamaño de la base (spec 024): si esta pasada la guardó (después de las 06:00 de Ecuador,
+   * una vez al día), si ya estaba, si era temprano o si falló (el cron siguió con lo demás).
+   */
+  databaseStats?: DatabaseStatsRefresh;
   /** Registros de auditoría borrados por antigüedad (purge_audit_logs: sesiones 90 días, acciones 5 meses, historia clínica 5 años). */
   auditPurged: number;
   /** Emails con más de EMAIL_CONTENT_DAYS días a los que se les borró el contenido. */
@@ -309,6 +315,11 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     console.error(`[analítica] No se pudo preparar la foto de hoy (${(error as { code?: string })?.code ?? "error"}).`);
     return { status: "failed", businesses: null, purged: 0 };
   });
+  // La foto del tamaño de la base (spec 024), una vez al día: si falla, el cron sigue y lo intenta en la próxima pasada.
+  const databaseStats = await saveDailyDatabaseStats().catch((error: unknown): DatabaseStatsRefresh => {
+    console.error(`[base de datos] No se pudo guardar la foto de hoy (${(error as { code?: string })?.code ?? "error"}).`);
+    return { status: "failed", sizeBytes: null, purged: 0 };
+  });
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
     reminderFailures: reminders.failures,
@@ -341,6 +352,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     push,
     panelNotices: { created: push.panel ?? 0, purged: panelPurged },
     analytics,
+    databaseStats,
     auditPurged: purged?.deleted ?? 0,
     emailContentPurged,
     receiptsPurged,

@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/024-base-de-datos-admin` (rama de trabajo: `dev`) · **Creada**: 2026-10-18
 
-**Estado**: Aprobada (2026-10-18, con el plan)
+**Estado**: Implementada (2026-10-18)
 
 **Repos**:
 - **agenda-backend:** las consultas de lectura, la ruta y la foto diaria en el cron.

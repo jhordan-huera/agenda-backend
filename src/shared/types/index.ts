@@ -1554,6 +1554,163 @@ export interface PublicAppointmentResult {
   already: boolean;
 }
 
+/* ------------------------------------ La pantalla «Base de datos» (spec 024) -- */
+
+/**
+ * Una sección de la pantalla que no se pudo leer (tardó más de 5 segundos o falló): dice «No se pudo
+ * leer ahora» y las demás se ven igual.
+ */
+export interface DatabaseSectionError {
+  error: string;
+}
+
+/** Lo que ocupa la base frente al tope del plan de Supabase (DATABASE_LIMIT_MB). */
+export interface DatabaseSize {
+  sizeBytes: number;
+  limitBytes: number;
+}
+
+/** Los archivos de Supabase Storage, frente a su tope (FILES_LIMIT_MB): no cuentan en la base. */
+export interface DatabaseFiles {
+  totalBytes: number;
+  limitBytes: number;
+  /** Uno por bucket, del que más ocupa al que menos. */
+  buckets: { bucket: string; label: string; files: number; bytes: number }[];
+}
+
+/** Una tabla en «Qué ocupa»: sólo su nombre y cifras, nunca sus filas. */
+export interface DatabaseTableStat {
+  /** El esquema: «public» (las de Agenda360), «auth», «storage»… */
+  schema: string;
+  /** El nombre técnico: «notifications». */
+  name: string;
+  /** En palabras: «Emails (cola e historial)». null: una tabla que no está en el mapa (sale su nombre técnico). */
+  label: string | null;
+  /** Si se borra sola y cuándo: «El contenido a los 30 días; queda el registro», «Nunca». null: no se sabe (las de Supabase). */
+  retention: string | null;
+  /** Lo que ocupa en total: los datos, los índices y los textos largos (toast). */
+  totalBytes: number;
+  dataBytes: number;
+  indexBytes: number;
+  toastBytes: number;
+  /** Filas, según la última estimación de PostgreSQL (null: todavía no la calculó). */
+  rows: number | null;
+}
+
+/** Lo que trae Supabase, aparte: el inicio de sesión (auth), el almacenamiento (storage) y lo interno. */
+export interface DatabaseTableGroup {
+  key: "auth" | "storage" | "internal";
+  label: string;
+  totalBytes: number;
+  tables: DatabaseTableStat[];
+}
+
+/** «Qué ocupa». */
+export interface DatabaseTables {
+  /** Las de Agenda360 (esquema public), de la que más ocupa a la que menos. */
+  app: DatabaseTableStat[];
+  /** Sólo los grupos que tienen tablas. */
+  supabase: DatabaseTableGroup[];
+  /** Lo que no es de ninguna tabla: el catálogo de PostgreSQL y lo demás (el total menos las tablas). */
+  otherBytes: number;
+}
+
+/** Quién hace trabajar a la base: la app, el cron, las conexiones (el pooler), Supabase u otra cuenta. */
+export type DatabaseWorker = "app" | "cron" | "pooler" | "supabase" | "other";
+
+/** Una de las consultas que más tiempo consumen (pg_stat_statements), sin valores. */
+export interface DatabaseQueryStat {
+  /** En palabras, cuando se reconoce: «El cron revisa su última pasada». */
+  label: string | null;
+  /** El texto normalizado ($1), sin comentarios, con los textos entre comillas tapados ('…') y recortado. */
+  text: string;
+  who: DatabaseWorker;
+  calls: number;
+  totalMs: number;
+  meanMs: number;
+  /** Su parte del tiempo total (0 a 1). */
+  share: number;
+}
+
+/** «Qué la hace trabajar». */
+export interface DatabaseWork {
+  /** Desde cuándo cuentan las estadísticas de consultas (null: no se sabe). */
+  since: ISODateTime | null;
+  totalMs: number;
+  calls: number;
+  /** El reparto por quién, del que más trabaja al que menos (sólo los que trabajaron). */
+  byWho: { who: DatabaseWorker; label: string; totalMs: number; calls: number; share: number }[];
+  /** Las 10 que más tiempo consumen. */
+  top: DatabaseQueryStat[];
+}
+
+/** Una tabla con muchas escrituras: sus filas vivas y muertas y su última limpieza (vacuum). */
+export interface DatabaseTableActivity {
+  schema: string;
+  name: string;
+  label: string | null;
+  /** Filas insertadas, cambiadas y borradas desde que se reiniciaron las estadísticas. */
+  writes: number;
+  liveRows: number;
+  deadRows: number;
+  /** La última limpieza, a mano o automática (null: nunca). */
+  lastVacuumAt: ISODateTime | null;
+}
+
+/** «Mantenimiento». */
+export interface DatabaseMaintenance {
+  /** Desde cuándo cuentan las estadísticas de las tablas (null: desde que arrancó la base). */
+  since: ISODateTime | null;
+  /** Las 10 con más escrituras. */
+  tables: DatabaseTableActivity[];
+  /** Los índices de Agenda360 que nunca se usaron (sin los únicos ni los de una restricción). */
+  unusedIndexes: { name: string; table: string; tableLabel: string | null; bytes: number }[];
+  /** Las conexiones abiertas ahora, por cuenta y estado, frente al máximo de PostgreSQL. */
+  connections: {
+    total: number;
+    max: number;
+    byRole: { role: string; who: DatabaseWorker; state: string; count: number }[];
+  };
+}
+
+/** Una foto diaria del historial (la guarda el cron después de las 06:00 de Ecuador). */
+export interface DatabaseHistoryPoint {
+  day: ISODate;
+  sizeBytes: number;
+  /** null: no se pudieron medir los archivos ese día. */
+  filesBytes: number | null;
+}
+
+/** «A este ritmo, se llena en…»: una regresión lineal del historial (7 días o más). */
+export interface DatabaseProjection {
+  /** Días de historial con los que se calculó. */
+  days: number;
+  /** Lo que crece cada 30 días (negativo si baja). */
+  bytesPerMonth: number;
+  /** Meses hasta el 70 % y hasta el tope desde la última foto (0: ya llegó; null: no crece). */
+  monthsTo70: number | null;
+  monthsToFull: number | null;
+}
+
+/**
+ * GET /api/admin/database (spec 024): sólo el super admin principal, con la verificación en dos pasos.
+ * Sólo nombres de tablas, tamaños y cifras; nunca datos de filas. Cada sección puede venir con su error.
+ */
+export interface DatabaseStats {
+  computedAt: ISODateTime;
+  size: DatabaseSize | DatabaseSectionError;
+  /** null: sin Supabase Storage (en local los archivos van a una carpeta). */
+  files: DatabaseFiles | DatabaseSectionError | null;
+  tables: DatabaseTables | DatabaseSectionError;
+  /** null: la estadística de consultas (pg_stat_statements) no está disponible. */
+  work: DatabaseWork | DatabaseSectionError | null;
+  maintenance: DatabaseMaintenance | DatabaseSectionError;
+  /** Los últimos 90 días, del más viejo al más nuevo. */
+  history: DatabaseHistoryPoint[] | DatabaseSectionError;
+  /** null: menos de 7 días de historial («Hacen falta unos días de datos para calcularlo»). */
+  projection: DatabaseProjection | null;
+}
+
 /* ------------------------------------------- Avisos en el celular (spec 013) -- */
 
 /**

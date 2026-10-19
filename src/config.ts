@@ -53,6 +53,11 @@ const envSchema = z.object({
   EMAIL_DAILY_QUOTA: z.coerce.number().int().min(1).default(500),
   /** Tope de la base de datos del plan de Supabase, en MB (la tarjeta «Base de datos» de Salud). */
   DATABASE_LIMIT_MB: z.coerce.number().int().min(1).default(500),
+  /**
+   * Tope de los archivos de Supabase Storage (historias clínicas, comprobantes e imágenes), en MB: la
+   * pantalla «Base de datos» del super admin principal (spec 024). El plan gratuito tiene 1 GB.
+   */
+  FILES_LIMIT_MB: z.coerce.number().int().min(1).default(1024),
   // Lo que se guarda del cupo para el equipo (contraseñas, seguridad, planes): los emails al paciente
   // usan como mucho el cupo menos esto.
   EMAIL_TEAM_RESERVE: z.coerce.number().int().min(0).default(20),
@@ -239,6 +244,8 @@ export const config = {
    */
   emailQuota: { quota: env.EMAIL_DAILY_QUOTA, teamReserve: env.EMAIL_TEAM_RESERVE, patientReserve: env.EMAIL_PATIENT_RESERVE },
   databaseLimitBytes: env.DATABASE_LIMIT_MB * 1024 * 1024,
+  /** Tope de los archivos de Supabase Storage (spec 024): no cuentan en la base. */
+  filesLimitBytes: env.FILES_LIMIT_MB * 1024 * 1024,
   /** Emails al paciente que provoca el público en 24 h: reservas online y registros (ver email-limits.ts). */
   publicEmailsPerDay: env.PUBLIC_EMAILS_PER_DAY,
   /**

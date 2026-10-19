@@ -187,6 +187,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 | Super admin | `/admin/stats` (con `growth`, el crecimiento del mes frente a los mismos días del mes pasado, y `health`, la salud del sistema: emails de hoy, el cupo de Gmail —`emailQuota`, spec 015—, último cron, última copia e intentos fallidos; spec 006; el reparto por plan, `businessesByPlan`, sólo cuenta los negocios activos) · `/admin/businesses` (+ `status`, `plan`, `members`, `client-required-fields`) · `/admin/categories` (CRUD) · `/admin/plan-requests` (+ `approve`, `reject`) · `/admin/users` (+ `active`, `password`) · `/admin/audit-logs?scope=admin\|all` · `/admin/emails` · `/admin/settings` · `PUT /admin/panel-colors` (los colores del panel de quien lo pide; spec 007) |
 | Avisos en el celular (spec 013) | `GET /push/config` · `PUT /push/device` · `PATCH /push/device` · `POST /push/device/off` · `POST /push/device/test` (sólo el propietario de un negocio activo, el rol Profesional con su agenda activa —sólo los resúmenes de su agenda: el de las 8, spec 017, y el de la mañana, spec 021— y el super admin; el aparato va en el cuerpo, nunca en la URL) |
 | Analítica (spec 016) | `GET /admin/analytics?days=30\|90` (sólo el super admin, con la verificación en dos pasos): `{ snapshot }`, la última foto de ese periodo, o `{ snapshot: null }` si aún no hay; `days` distinto de 30 o 90, 400. Lee una fila y no calcula nada. La ficha (`GET /admin/businesses/:id`) suma `analytics`: su parte de la última foto de 30 días y su tipo |
+| Base de datos (spec 024) | `GET /admin/database`: sólo el super admin principal (`platformOwner`), con la verificación en dos pasos; otro super admin o cualquier otra cuenta, 403 («Sólo el super admin principal ve la base de datos.»). Límite propio de 20 cada 15 minutos por conexión y `Cache-Control: no-store`. Devuelve `size`, `files`, `tables`, `work`, `maintenance`, `history` (90 días) y `projection`; cada sección puede venir como `{ error: "No se pudo leer ahora" }`, y `files` y `work` como `null` (no disponibles en esta base). No va a la actividad |
 | Centro de avisos (spec 014) | `GET /businesses/:id/notices/unread` · `GET …/notices` (`?limit&unread=1&cursor`) · `POST …/notices/:noticeId/read` · `POST …/notices/read-all` (cualquier rol del equipo; el super admin en modo soporte recibe 403) y lo mismo en `/admin/notices` (el super admin, con la verificación en dos pasos). Ninguna escribe en la actividad |
 | Citas por cerrar (spec 018) | `GET /businesses/:id/appointments/to-close` (`?cursor`, tandas de 50: `{ appointments, overdue, today, previousMonth, nextCursor }`) · `GET …/appointments/to-close/count` (`{ overdue, today, previousMonth }`; `previousMonth`, las de un mes anterior, spec 021) · `POST …/appointments/close-all` (`{ status: "completed", notify, ids }`: `{ closed, skipped }`). Cada uno ve lo suyo: el rol Profesional, su agenda (sin agenda, 403); el resto del equipo y el super admin en modo soporte, el negocio. Consultar no escribe en la actividad |
 | Citas completadas (spec 020) | `POST /businesses/:id/appointments/:appointmentId/correct-status` (`{ status, reason, notify }`: `status`, `confirmed`, `no_show` o `cancelled`; `reason`, de 10 a 300 caracteres; `notify`, por defecto `false`). Sólo el propietario y el super admin en modo soporte (los demás roles, 403) y sólo desde «Completada» (si no, 409). Devuelve la cita corregida |
@@ -1276,6 +1277,60 @@ de esto y la beta no la lleva.
 - **Publicación:** la migración 043 va antes del backend (`npm run db:migrate`, como paso aparte) y
   el backend antes del front. Sin variables nuevas. Hasta la primera foto, la página dice «Las cifras se
   preparan cada mañana».
+
+## La pantalla «Base de datos»
+
+Spec 024 (decisiones del dueño del producto, 2026-10-18). /admin → Salud → tarjeta «Base de datos» →
+«Ver detalle» (o `/admin/database`): qué ocupa la base, qué la hace trabajar, su mantenimiento, cómo
+crece y cuándo se llenaría. **Sólo la ve el super admin principal**; los demás super admins no ven el
+enlace y la API les responde 403. La beta no la lleva.
+
+- **Las seguridades:** la verificación en dos pasos, como el resto de /admin; el límite
+  `base-de-datos` (20 cada 15 minutos por conexión); `no-store`, y sólo nombres de tablas, tamaños y
+  cifras, nunca el contenido de una fila. De `pg_stat_activity` no se lee la columna `query`, y el texto
+  de `pg_stat_statements` sale sin comentarios (el panel de Supabase pone en ellos quién la escribió),
+  con los textos entre comillas (`'…'`), los cuerpos entre dólares (`$$…$$`), los números sueltos y
+  cualquier email tapados, y recortado a 160 caracteres (`cleanQueryText`).
+- **Sólo lectura, con tope de tiempo** (`src/services/database-stats-service.ts`): todo en una
+  transacción `begin read only` con `set local statement_timeout = '5s'`, **sin ningún `SET` de
+  sesión** (la API entra por el pooler 6543, que comparte la conexión). Cada sección va en su punto de
+  guardado: si tarda o falla, dice «No se pudo leer ahora» y las demás salen igual.
+- **Las secciones:**
+  - **`size` y `files`:** `pg_database_size` frente a `DATABASE_LIMIT_MB`, y los archivos de Supabase
+    Storage (`storage.objects`, la suma de `metadata->>'size'` por bucket) frente a `FILES_LIMIT_MB`
+    (opcional, 1024 por defecto). Sin el esquema `storage` (en local), `files` es `null`.
+  - **`tables`:** cada tabla con sus datos, índices, textos largos (toast) y filas estimadas. Las de
+    `public` llevan su nombre en palabras y su regla de borrado (`TABLE_INFO`, sacada del código: el
+    contenido de los emails a los 30 días, la actividad a los 5 meses, el registro del cron a los 30
+    días, los avisos de la campana a los 30, los del celular a los 7, los comprobantes a los 3 meses de
+    la cita, las fotos de la analítica a los 30 días…); la prueba falla si una tabla nueva no está. Las
+    de Supabase van aparte, por grupo (inicio de sesión, almacenamiento y lo interno), y el catálogo de
+    PostgreSQL, en `otherBytes`.
+  - **`work`:** de `pg_stat_statements`, en el esquema donde esté la extensión (en Supabase,
+    `extensions`) y sólo de esta base: el tiempo total desde que se reiniciaron las estadísticas, el
+    reparto por quién (la cuenta de la API, el pooler —`pgbouncer`—, las de Supabase y otras; el cron
+    entra con la misma cuenta que la API y se separa por las consultas que sólo hace él) y las 10 que
+    más tiempo consumen, en palabras cuando se reconocen (`QUERY_LABELS`). Sin la extensión, o sin
+    cargarla (`shared_preload_libraries`), `work` es `null`.
+  - **`maintenance`:** las 10 tablas con más escrituras, sus filas vivas y muertas y su última
+    limpieza; los índices de `public` que nunca se usaron (sin los únicos ni los de una restricción), y
+    las conexiones abiertas por cuenta y estado frente a `max_connections`.
+- **El historial** (migración 047, `database_stats`: una fila por día con el tamaño, el de los archivos
+  y las 10 tablas que más ocupan, sólo nombre y bytes): el cron de GitHub, en su primera pasada después
+  de las 06:00 de Ecuador, guarda la foto de hoy si falta y borra las de más de 400 días
+  (`saveDailyDatabaseStats`). Su línea del registro suma «base de datos: foto guardada (16,2 MB)», «ya
+  estaba la de hoy», «se guarda después de las 06:00» o «falló», sólo con la cifra. La pantalla muestra
+  los últimos 90 días y, con 7 fotos o más, `projection`: una regresión lineal simple da lo que crece
+  cada 30 días y los meses hasta el 70 % y hasta el tope, contados desde la última foto.
+- **No gasta CPU de Vercel sin motivo:** se calcula sólo al abrir la pantalla (y con «Actualizar»), y la
+  foto diaria la guarda el cron. Ver la pantalla no va a la actividad: es una consulta.
+- **Pruebas:** `tests/database-stats.test.ts`. En la base de `npm test` no están `pg_stat_statements`
+  ni el esquema `storage`: la suite prueba que `work` y `files` salen `null` y crea un esquema
+  `storage` falso para los archivos. Para probar también «Qué la hace trabajar» con datos, se apunta
+  `TEST_DATABASE_URL` a un PostgreSQL levantado con `-c shared_preload_libraries=pg_stat_statements`.
+- **Publicación:** la migración 047 va antes del backend, como paso aparte (`npm run db:migrate`).
+  Después, el backend y luego el front. `FILES_LIMIT_MB` es opcional. La primera foto la guarda el cron
+  a la mañana siguiente y la proyección sale a los 7 días.
 
 ## Pruebas
 
