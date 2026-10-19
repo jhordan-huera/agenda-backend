@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/025-historia-clinica-privada` (rama de trabajo: `dev`) · **Creada**: 2026-10-19
 
-**Estado**: Implementada (2026-10-19)
+**Estado**: Publicada (2026-10-19, PR backend #51 y front #37)
 
 **Repos**:
 - **agenda-backend:** el bloqueo en la API (la historia, los archivos, la impresión, la actividad clínica
