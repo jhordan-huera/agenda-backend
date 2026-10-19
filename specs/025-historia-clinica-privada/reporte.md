@@ -64,6 +64,9 @@ clínica, y todo lo demás del panel.
   - la pantalla que pide la verificación en dos pasos: «…todos los negocios y sus pacientes»;
   - comentarios en `context.ts`, `business-routes.ts`, `types/index.ts`, `auth/types.ts` y
     `repository.ts`.
+- **La sección 7 de la política** (proveedores), a pedido del dueño del producto: el servidor de la
+  aplicación es Amazon Web Services (la API está en AWS Lambda desde el 2026-10-19), y Vercel sirve la
+  página web. También en la beta.
 - **La prueba de que lo que cambia el soporte queda registrado** usa un cambio de rol, porque el
   soporte ya no da acceso clínico.
 
@@ -73,8 +76,6 @@ clínica, y todo lo demás del panel.
   - el super admin pone las contraseñas y podría entrar como el propietario, que se enteraría por el
     email de la contraseña nueva;
   - el acceso técnico a la base y a las copias de seguridad llega a los datos. La política lo dice.
-- **La sección 7 de la política** sigue nombrando a Vercel como servidor de la aplicación, y la API
-  está en AWS Lambda desde el 2026-10-19. No es de esta spec.
 
 ## Commits
 
