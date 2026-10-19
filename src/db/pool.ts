@@ -28,6 +28,14 @@ export const pool = new pg.Pool({
 
 pool.on("error", (error) => console.error("Error en una conexión inactiva de PostgreSQL:", error.message));
 
+// Un corte de red en una conexión prestada (el pooler de Supabase la cierra con ECONNRESET mientras
+// una petición la usa) llega como evento `error` del cliente, y sin quien lo escuche Node termina el
+// proceso entero (pasó el 2026-10-19 con `npm run dev` contra producción). Así sólo falla esa consulta:
+// el cliente queda marcado como roto y el pool lo descarta al devolverlo.
+pool.on("connect", (client) => {
+  client.on("error", (error) => console.error("Se cortó una conexión de PostgreSQL en uso:", error.message));
+});
+
 // En Vercel, cierra las conexiones inactivas antes de que la función se suspenda.
 if (config.onVercel) attachDatabasePool(pool);
 
