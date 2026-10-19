@@ -93,6 +93,23 @@ export function foldIcsLine(line: string): string {
   return parts.join(`${CRLF} `);
 }
 
+/**
+ * En desarrollo los emails se desvían a la cuenta de pruebas (EMAIL_REDIRECT_TO): la invitación también
+ * pasa a su nombre (el ATTENDEE), para que Gmail, Google Calendar o el iPhone la traten como propia y se
+ * pueda comprobar de verdad que el evento se añade, se mueve y se quita.
+ */
+export function readdressInvite(calendar: string, from: string, to: string): string {
+  const target = `mailto:${from}`.toLowerCase();
+  return calendar
+    .replace(/\r\n[ \t]/g, "")
+    .split(CRLF)
+    .map((line) => {
+      const at = line.startsWith("ATTENDEE") ? line.toLowerCase().lastIndexOf(target) : -1;
+      return foldIcsLine(at < 0 ? line : `${line.slice(0, at)}mailto:${to}${line.slice(at + target.length)}`);
+    })
+    .join(CRLF);
+}
+
 /** El iCalendar de la invitación: METHOD también en la cabecera del VCALENDAR, CRLF y líneas dobladas. */
 export function buildInviteIcs(event: InviteIcs): string {
   const lines = [

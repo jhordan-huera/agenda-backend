@@ -8,7 +8,7 @@
 // nombre a medias, nunca su cédula, su contacto, sus notas ni su historia clínica.
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { agent, checks, count, fakeNtfy, login, runCron, sql } from "./helpers/harness.ts";
-import { buildInviteIcs, escapeIcsText, foldIcsLine } from "../src/services/calendar-invites.ts";
+import { buildInviteIcs, escapeIcsText, foldIcsLine, readdressInvite } from "../src/services/calendar-invites.ts";
 import { EMAIL_PRIORITY, emailTypesOf } from "../src/services/email-limits.ts";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
 import { formatShortDate } from "../src/shared/lib/format.ts";
@@ -72,6 +72,23 @@ ok(
     folded.map((line, i) => (i === 0 ? line : line.slice(1))).join("") === longLine,
   "las líneas largas se doblan a 75 octetos, sin partir una ñ ni una tilde, y se desdoblan igual",
   folded.map((line) => Buffer.byteLength(line, "utf8")),
+);
+// En desarrollo (EMAIL_REDIRECT_TO), la invitación pasa a nombre de la cuenta de pruebas.
+const attendeeIcs = [
+  "BEGIN:VCALENDAR",
+  "METHOD:REQUEST",
+  foldIcsLine('ATTENDEE;CN="Psicóloga de una agenda con un nombre bastante largo";ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;RSVP=FALSE:mailto:Agenda.Larga@Example.com'),
+  "END:VCALENDAR",
+].join("\r\n");
+const readdressed = readdressInvite(attendeeIcs, "agenda.larga@example.com", "pruebas@example.org");
+const unfolded = readdressed.replace(/\r\n[ \t]/g, "");
+ok(
+  /ATTENDEE;[^\r\n]*:mailto:pruebas@example\.org\r\n/.test(unfolded) &&
+    !/agenda\.larga/i.test(unfolded) &&
+    readdressed.split("\r\n").every((line) => Buffer.byteLength(line, "utf8") <= 75) &&
+    unfolded.includes("METHOD:REQUEST"),
+  "desviada en desarrollo, la invitación va a nombre de la cuenta de pruebas (y sigue doblada a 75)",
+  readdressed,
 );
 const sample = buildInviteIcs({
   method: "CANCEL",

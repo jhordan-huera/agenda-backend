@@ -13,6 +13,7 @@ import {
   sentLast24h,
   type EmailPriority,
 } from "./email-limits.ts";
+import { readdressInvite } from "./calendar-invites.ts";
 import { calendarEventOf, createGmailSender } from "./gmail-transport.ts";
 import { isQuietTime, isReminderEmail, isReminderSql, minutesUntilQuietEnds, minutesUntilStart, reminderCurrentSql } from "./reminder-rules.ts";
 
@@ -374,7 +375,8 @@ async function deliver(email: QueuedEmail, send: (email: OutgoingEmail) => Promi
       subject: redirectTo ? `[Para ${email.to}] ${email.subject}` : email.subject,
       text,
       html,
-      calendar: email.calendar,
+      // Desviada a la cuenta de pruebas: la invitación, a su nombre (ver readdressInvite).
+      calendar: email.calendar && redirectTo ? readdressInvite(email.calendar, email.to, redirectTo) : email.calendar,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
