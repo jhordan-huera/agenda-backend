@@ -2,6 +2,7 @@ import { clinicalAttachmentColumns, clinicalNoteColumns, clinicalProfileColumns,
 import { isUuid, many, one, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
+import { CLINICAL_SUPPORT_BLOCKED_MESSAGE } from "../shared/lib/constants/business.ts";
 import { getZonedNow } from "../shared/lib/time.ts";
 import {
   clinicalAddendumSchema,
@@ -27,8 +28,8 @@ import { authorize, parseInput, type Actor, type RequestContext } from "./contex
 
 /**
  * Historia clínica (datos de salud: datos sensibles).
- * - El propietario, los miembros que él autoriza y el super admin desde "Gestionar negocio"
- *   (modo soporte, con los permisos del propietario).
+ * - Sólo el propietario y los miembros que él autoriza. Ni el super admin en modo soporte
+ *   ("Gestionar negocio"): no la ve ni la cambia (spec 025). Los formatos sí los gestiona.
  * - No hay borrado ni edición de evoluciones: se añaden aclaraciones con autor y fecha.
  * - Cada acceso queda en la auditoría.
  */
@@ -36,9 +37,29 @@ import { authorize, parseInput, type Actor, type RequestContext } from "./contex
 /** Como mucho un registro de "consultó la historia" por persona y paciente en este intervalo. */
 const VIEW_LOG_INTERVAL_MINUTES = 30;
 
+/**
+ * Lo clínico del paciente (antecedentes, evoluciones, archivos): el propietario y los miembros con
+ * acceso clínico. El super admin en modo soporte, nunca: lo rechaza antes de mirar si la historia
+ * está activada, para que reciba siempre el mensaje de privacidad. Toda ruta clínica nueva que la
+ * use nace bloqueada para él.
+ */
 export async function authorizeClinical(db: Db, ctx: RequestContext, businessId: string, lock = false): Promise<Actor> {
-  // El super admin (modo soporte) entra con rol de propietario: queda identificado en la auditoría.
   const actor = await authorize(db, ctx, businessId, undefined, { lock });
+  if (actor.support) throw new AppError("forbidden", CLINICAL_SUPPORT_BLOCKED_MESSAGE);
+  return assertClinicalAccess(db, businessId, actor);
+}
+
+/**
+ * Los formatos de historia clínica: son plantillas, no datos de pacientes, así que el super admin en
+ * modo soporte los sigue gestionando con los permisos del propietario (queda identificado en la
+ * auditoría). Los demás, como en la historia.
+ */
+export async function authorizeClinicalTemplates(db: Db, ctx: RequestContext, businessId: string, lock = false): Promise<Actor> {
+  return assertClinicalAccess(db, businessId, await authorize(db, ctx, businessId, undefined, { lock }));
+}
+
+/** La historia está activada en el negocio y, salvo el propietario, el miembro tiene acceso clínico. */
+async function assertClinicalAccess(db: Db, businessId: string, actor: Actor): Promise<Actor> {
   const access = await one<{ enabled: boolean; clinicalAccess: boolean | null }>(
     db,
     `select b.clinical_records_enabled as enabled, bu.clinical_access as "clinicalAccess"
@@ -151,27 +172,24 @@ export const clinicalService = {
   /** Formatos de evolución disponibles para el negocio (con `includeInactive`, también los propios desactivados). */
   async listTemplates(ctx: RequestContext, businessId: string, includeInactive = false): Promise<ClinicalTemplate[]> {
     return transaction(async (db) => {
-      await authorizeClinical(db, ctx, businessId);
+      await authorizeClinicalTemplates(db, ctx, businessId);
       return availableTemplates(db, businessId, { includeInactive });
     });
   },
 
-  /** Antecedentes y evoluciones del paciente. Registra el acceso en la auditoría (salvo en modo soporte). */
+  /** Antecedentes y evoluciones del paciente (también para la impresión). Registra el acceso en la auditoría. */
   async get(ctx: RequestContext, businessId: string, clientId: string): Promise<ClinicalRecord> {
     return transaction(async (db) => {
       const actor = await authorizeClinical(db, ctx, businessId);
       const client = await findPatient(db, businessId, clientId, actor);
-      // El super admin en modo soporte no deja rastro de lo que sólo consulta.
-      const loggedRecently =
-        actor.support ||
-        (await one(
-          db,
-          `select 1 from audit_logs
-            where business_id = $1 and action = 'clinical_record.viewed' and entity_id = $2 and actor_id = $3
-              and created_at > now() - make_interval(mins => $4)
-            limit 1`,
-          [businessId, clientId, actor.userId, VIEW_LOG_INTERVAL_MINUTES],
-        ));
+      const loggedRecently = await one(
+        db,
+        `select 1 from audit_logs
+          where business_id = $1 and action = 'clinical_record.viewed' and entity_id = $2 and actor_id = $3
+            and created_at > now() - make_interval(mins => $4)
+          limit 1`,
+        [businessId, clientId, actor.userId, VIEW_LOG_INTERVAL_MINUTES],
+      );
       if (!loggedRecently) {
         await logAudit(db, {
           businessId,

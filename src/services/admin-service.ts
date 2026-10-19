@@ -458,10 +458,11 @@ export const adminService = {
     const [[summary], members, recentActivity, analytics, referrals] = await Promise.all([
       summarizeBusinesses(pool, businessId),
       listTeamMembers(pool, businessId),
+      // Sin los eventos de la historia clínica (spec 025): llevan pacientes, formatos y nombres de archivos.
       many<AuditLog>(
         pool,
         `select ${auditLogColumns()} from audit_logs
-          where business_id = $1 and entity_type <> 'session'
+          where business_id = $1 and entity_type not in ('session', 'clinical_record')
           order by created_at desc, id desc
           limit 15`,
         [businessId],
@@ -1109,12 +1110,13 @@ export const adminService = {
 
   /**
    * Auditoría de toda la plataforma. `scope`: "admin" (acciones del super admin), "security"
-   * (inicios de sesión, intentos fallidos y cierres, con IP y navegador) o "all".
+   * (inicios de sesión, intentos fallidos y cierres, con IP y navegador) o "all". Nunca los eventos
+   * de la historia clínica (spec 025): sólo los ven el propietario y los miembros que él autoriza.
    */
   async listAuditLogs(ctx: RequestContext, query: Record<string, unknown>): Promise<AuditLogPage<AdminAuditLog>> {
     authorizeSuperAdmin(ctx);
     const { scope = "all", businessId, ...rest } = query;
-    const where: string[] = [];
+    const where: string[] = ["l.entity_type <> 'clinical_record'"];
     const values: unknown[] = [];
     const selected = parseInput(z.enum(["admin", "security", "all"]), scope);
     if (selected === "admin") where.push("l.action like 'platform.%'");

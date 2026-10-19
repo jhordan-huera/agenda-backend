@@ -112,19 +112,21 @@ export const auditLogService = {
   /**
    * Actividad del negocio. Sin los eventos de sesión (inicios de sesión, IP y navegador): ésos
    * sólo los ve el super admin. Los de la historia clínica (quién la consultó, nombres de archivos…)
-   * sólo quien tiene acceso clínico: el propietario y los miembros que él autorizó.
+   * sólo quien tiene acceso clínico: el propietario y los miembros que él autorizó; el super admin
+   * en modo soporte, no (spec 025). Los cambios de acceso del equipo (`team`) sí los ve.
    */
   async list(ctx: RequestContext, businessId: string, query: Record<string, unknown>): Promise<AuditLogPage> {
     const actor = await authorize(pool, ctx, businessId, "audit.view");
     const filters = parseAuditFilters(query);
     const clinicalAccess =
-      actor.role === "owner" ||
-      Boolean(
-        await one(pool, "select 1 from business_users where business_id = $1 and user_id = $2 and clinical_access", [
-          businessId,
-          actor.userId,
-        ]),
-      );
+      !actor.support &&
+      (actor.role === "owner" ||
+        Boolean(
+          await one(pool, "select 1 from business_users where business_id = $1 and user_id = $2 and clinical_access", [
+            businessId,
+            actor.userId,
+          ]),
+        ));
     return queryAuditLogs<AuditLog>(
       pool,
       {

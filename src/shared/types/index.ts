@@ -760,8 +760,7 @@ export interface AuditLogPage<T extends AuditLog = AuditLog> {
 
 /**
  * Antecedentes del paciente (uno por cliente). Datos de salud: datos sensibles. Sólo los ven
- * el propietario, los miembros que él autoriza y el super admin en modo soporte («Gestionar
- * negocio»), que no los ve desde el panel /admin.
+ * el propietario y los miembros que él autoriza; ni el super admin en modo soporte (spec 025).
  */
 export interface ClinicalProfile {
   businessId: string;

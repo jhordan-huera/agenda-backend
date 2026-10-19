@@ -1,4 +1,6 @@
 // Historia clínica y precio visible.
+import { CLINICAL_SUPPORT_BLOCKED_MESSAGE } from "../src/shared/lib/constants/business.ts";
+
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
 const ok = (cond, label, extra) => {
@@ -52,13 +54,17 @@ ok(r.status === 200, "el staff autorizado ve la historia", r.status);
 r = await ricardo("PATCH", `${B}/team/${rs.userId}/clinical-access`, { access: false });
 ok(r.status === 403, "al propietario no se le puede quitar", r.body);
 
+// Spec 025: ni el soporte de Agenda360 la ve (tests/clinical-support.test.ts lo prueba camino a camino).
 const { a: admin } = await login("admin@demo.com");
 r = await admin("GET", `${B}/clients/${patient.id}/clinical-record`);
-ok(r.status === 200 && r.body.profile, "el super admin ve la historia en modo soporte", r.body);
-r = await admin("PATCH", `${B}/team/${es.userId}/clinical-access`, { access: true });
-ok(r.status === 204, "el super admin puede dar acceso clínico", r.body);
+ok(r.status === 403 && r.body.error.message === CLINICAL_SUPPORT_BLOCKED_MESSAGE, "el super admin en modo soporte no ve la historia (403)", r.body);
+r = await admin("PATCH", `${B}/team/${es.userId}/clinical-access`, { access: false });
+ok(r.status === 403 && /Sólo el propietario/.test(r.body.error.message), "ni da o quita el acceso clínico", r.body);
 r = await admin("GET", `${B}/clients`);
 ok(r.status === 200, "pero sí gestiona el resto del negocio", r.status);
+r = await admin("PATCH", `${B}/team/${es.userId}`, { role: "admin" });
+ok(r.status === 204, "por ejemplo, cambia el rol de un miembro", r.body);
+await admin("PATCH", `${B}/team/${es.userId}`, { role: "staff" });
 
 console.log("Registro");
 r = await ricardo("PUT", `${B}/clients/${patient.id}/clinical-record/profile`, {
@@ -100,9 +106,10 @@ ok(r.status === 403, "al retirar el permiso deja de verla", r.status);
 console.log("Auditoría");
 const logs = (await ricardo("GET", `${B}/audit-logs?entityType=clinical_record&entityId=${patient.id}`)).body.entries;
 const views = logs.filter((l) => l.action === "clinical_record.viewed");
-ok(views.length === 2 && !views.some((l) => /\(Super admin\)/.test(l.actorName)), "cada persona del negocio queda registrada una vez al consultar (Ricardo y Elena); el super admin en modo soporte, no", views.map((l) => l.actorName));
+ok(views.length === 2 && !views.some((l) => /\(Super admin\)/.test(l.actorName)), "cada persona del negocio queda registrada una vez al consultar (Ricardo y Elena); el super admin, rechazado, no", views.map((l) => l.actorName));
 const teamLogs = (await ricardo("GET", `${B}/audit-logs?entityType=team`)).body.entries;
-ok(teamLogs.some((l) => l.action === "team.clinical_access_granted" && /\(Super admin\)/.test(l.actorName)), "lo que el super admin cambia sí queda registrado", teamLogs.map((l) => `${l.actorName}: ${l.action}`));
+ok(teamLogs.some((l) => l.action === "team.role_changed" && /\(Super admin\)/.test(l.actorName) && /Elena/.test(l.summary)), "lo que el super admin cambia sí queda registrado", teamLogs.map((l) => `${l.actorName}: ${l.action}`));
+ok(!teamLogs.some((l) => l.action.startsWith("team.clinical_access") && /\(Super admin\)/.test(l.actorName)), "su intento de quitar el acceso clínico, no (no cambió nada)", teamLogs.map((l) => `${l.actorName}: ${l.action}`));
 ok(["clinical_record.profile_updated", "clinical_record.note_added", "clinical_record.addendum_added"].every((a) => logs.some((l) => l.action === a)), "cambios registrados", logs.map((l) => l.action));
 
 console.log("Negocio sin historia clínica");

@@ -1,8 +1,9 @@
 // «Sólo sus pacientes»: un profesional no abre la ficha ni la historia clínica de un paciente ajeno
 // reservándole una cita en su propia agenda desde la página pública. Además: la actividad clínica sólo
-// la ve quien tiene acceso clínico, y las lecturas clínicas del super admin en modo soporte no quedan
-// en la actividad del negocio (sólo lo que crea o cambia).
+// la ve quien tiene acceso clínico, y el super admin en modo soporte no abre la historia ni sus
+// archivos (spec 025): sus intentos no quedan en la actividad del negocio.
 import pg from "pg";
+import { CLINICAL_SUPPORT_BLOCKED_MESSAGE } from "../src/shared/lib/constants/business.ts";
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
@@ -271,14 +272,17 @@ ok(entries.length === ownerClinical.length, "con acceso clínico, sí", [entries
 await ricardo("PATCH", `${B}/team/${es.userId}/clinical-access`, { access: false });
 await ricardo("PATCH", `${B}/team/${es.userId}`, { role: "staff" });
 
-console.log("Lecturas clínicas del super admin en modo soporte: no quedan en la actividad");
+console.log("El super admin en modo soporte no abre la historia ni sus archivos (spec 025)");
 const { a: admin } = await login("admin@demo.com");
+const auditCount = async () => Number((await db.query("select count(*) from audit_logs where business_id = $1", [rs.businessId])).rows[0].count);
+let before = await auditCount();
 r = await admin("GET", `${B}/clients/${ajeno.id}/clinical-record`);
-ok(r.status === 200, "el super admin abre una historia en modo soporte", r.status);
+ok(r.status === 403 && r.body?.error?.message === CLINICAL_SUPPORT_BLOCKED_MESSAGE, "abrir una historia: 403 con el mensaje de privacidad", r.body);
+ok((await auditCount()) === before, "el intento no queda en la actividad del negocio", [before, await auditCount()]);
 const views = (await ricardo("GET", `${B}/audit-logs?entityType=clinical_record&entityId=${ajeno.id}`)).body.entries;
 ok(
-  !views.some((l: { action: string; actorName: string }) => l.action === "clinical_record.viewed" && /\(Super admin\)/.test(l.actorName)),
-  "su consulta no queda en la actividad del negocio",
+  !views.some((l: { action: string; actorName: string }) => /\(Super admin\)/.test(l.actorName)),
+  "en su historia no hay nada del super admin",
   views.map((l: { actorName: string; action: string }) => `${l.actorName}: ${l.action}`),
 );
 const pdf = Buffer.from("%PDF-1.4 informe ".repeat(20));
@@ -291,14 +295,16 @@ r = await ricardo("POST", `${B}/clients/${ajeno.id}/clinical-record/attachments`
 await fetch(ORIGIN + r.body.upload.url, { method: "PUT", headers: r.body.upload.headers, body: pdf });
 const attachmentId: string = r.body.attachment.id;
 await ricardo("POST", `${B}/clinical-attachments/${attachmentId}/complete`);
+before = await auditCount();
 r = await admin("GET", `${B}/clinical-attachments/${attachmentId}/url`);
-ok(r.status === 200 && r.body.url, "el super admin descarga un archivo de la historia", r.body);
+ok(r.status === 403 && r.body?.error?.message === CLINICAL_SUPPORT_BLOCKED_MESSAGE && !r.body.url, "descargar un archivo de la historia: 403 con el mensaje, sin enlace", r.body);
+ok((await auditCount()) === before, "tampoco queda en la actividad", [before, await auditCount()]);
 r = await ricardo("GET", `${B}/clinical-attachments/${attachmentId}/url`);
-ok(r.status === 200 && r.body.url, "el propietario también lo abre", r.body);
+ok(r.status === 200 && r.body.url, "el propietario sí lo abre", r.body);
 const opened = (await ricardo("GET", `${B}/audit-logs?action=clinical_record.attachment_opened&entityId=${ajeno.id}`)).body.entries;
 ok(
   opened.length === 1 && !/\(Super admin\)/.test(opened[0].actorName) && /Informe\.pdf/.test(opened[0].summary),
-  "queda la descarga del propietario; la del super admin, no",
+  "queda sólo la apertura del propietario",
   opened,
 );
 

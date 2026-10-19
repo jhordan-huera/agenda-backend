@@ -52,11 +52,12 @@ export function requireUser(ctx: RequestContext): User {
  * Autorización de cada operación de un negocio: exige sesión, pertenencia al negocio
  * (aislamiento multi-tenant), que el negocio no esté suspendido y, opcionalmente, un
  * permiso del rol. El super admin ("Gestionar negocio" en el panel /admin) actúa en
- * cualquier negocio, aunque esté suspendido, con los permisos del propietario y queda
- * identificado en la auditoría (sólo lo que crea o cambia, no lo que consulta). Necesita la
- * verificación en dos pasos activada (ver superAdminNeedsTwoFactor). Con `lock` bloquea la fila del
- * negocio hasta el fin de la transacción: así dos escrituras simultáneas del mismo negocio (p. ej. dos
- * reservas a la misma hora, o el último cupo del plan) se ejecutan una detrás de otra.
+ * cualquier negocio, aunque esté suspendido, con los permisos del propietario (salvo la historia
+ * clínica: ver authorizeClinical) y queda identificado en la auditoría (sólo lo que crea o
+ * cambia, no lo que consulta). Necesita la verificación en dos pasos activada (ver
+ * superAdminNeedsTwoFactor). Con `lock` bloquea la fila del negocio hasta el fin de la transacción:
+ * así dos escrituras simultáneas del mismo negocio (p. ej. dos reservas a la misma hora, o el último
+ * cupo del plan) se ejecutan una detrás de otra.
  */
 export async function authorize(
   db: Db,

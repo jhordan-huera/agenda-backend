@@ -30,6 +30,8 @@ Agenda360 guarda datos de salud (historia clínica, citas, contacto de pacientes
 - La analítica (Vercel Analytics / Speed Insights) recibe rutas sin identificadores ni tokens y sin
   parámetros.
 - Las páginas públicas (reservas, pago y «Tu cita») no exponen datos internos del negocio ni de otros pacientes.
+- La historia clínica sólo la ven el propietario y los miembros que él autoriza; ni el soporte de la
+  plataforma (spec 025, 2026-10-19).
 - Nunca se copian datos de producción a local ni a pruebas, ni siquiera anonimizados.
 - La base de producción sólo se consulta en lectura desde el equipo; las migraciones las aplica el
   dueño del producto.
@@ -43,8 +45,13 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - Las contraseñas las pone siempre el super admin y van por email: no hay "olvidé mi contraseña"
   automático ni enlaces para definirla; mínimo 8 caracteres.
 - Sólo el super admin agrega miembros de equipo, cambia planes y categorías de negocio.
-- En modo soporte el super admin tiene permisos de propietario y ve la historia clínica; no se
-  avisa al negocio de la entrada ni se registran sus consultas, sólo lo que crea o cambia.
+- En modo soporte el super admin tiene permisos de propietario, salvo la historia clínica: no ve ni
+  cambia antecedentes, evoluciones, archivos ni su actividad, ni da o quita el acceso clínico al
+  equipo; sí gestiona los formatos y la activa o desactiva (spec 025, 2026-10-19). No se avisa al
+  negocio de la entrada ni se registran sus consultas, sólo lo que crea o cambia. Riesgos aceptados:
+  el super admin pone las contraseñas y podría entrar como el propietario (se enteraría por el email
+  de la contraseña nueva), y el acceso técnico a la base y a las copias, reservado al mantenimiento,
+  llega a los datos (la política lo dice).
 - La verificación en dos pasos es obligatoria para el super admin.
 - Los negocios no ven planes ni precios (ni en el panel ni en la portada). La única excepción es el
   descuento del programa de referidos en la tarjeta del propietario (2026-10-18).
@@ -270,4 +277,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.21.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-18
+**Versión**: 1.22.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-19
