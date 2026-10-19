@@ -50,6 +50,7 @@ import {
   resolveAppointmentProfessional,
   saveAppointment,
 } from "./business-data-service.ts";
+import { syncCalendarInvites } from "./calendar-invites.ts";
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
 import { notifySeriesCancelled, notifySeriesCreated } from "./notifications.ts";
 import { planOf } from "./plan-limits.ts";
@@ -276,6 +277,8 @@ export const appointmentSeriesService = {
       }
 
       await notifySeriesCreated(db, created, actor.userId);
+      // Invitaciones de calendario (spec 027): sólo salen las de la ventana; las demás, cuando les toque.
+      await syncCalendarInvites(db, created.map((appointment) => appointment.id));
       // «Citas nuevas en tu agenda» en el celular del propietario: un solo aviso por serie (spec 013).
       await notifyNewSeries(db, created, actor.userId);
       const names = joinNames(await clientNamesOf(db, appointmentClientIds(created[0])));
@@ -323,6 +326,8 @@ export const appointmentSeriesService = {
       const cancelled: Appointment[] = [];
       for (const before of targets) cancelled.push(await saveAppointment(db, { ...before, status: "cancelled" }, false));
       if (notify) await notifySeriesCancelled(db, cancelled);
+      // El calendario del profesional las quita también sin avisar al paciente (spec 027).
+      await syncCalendarInvites(db, cancelled.map((appointment) => appointment.id));
       const names = joinNames(await clientNamesOf(db, appointmentClientIds(from)));
       await logAudit(db, {
         businessId,

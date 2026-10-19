@@ -3,12 +3,14 @@ import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { BANK_ACCOUNT_TYPE_LABELS, DEFAULT_WEEKLY_SCHEDULE } from "../shared/lib/constants/business.ts";
 import { getFullName } from "../shared/lib/format.ts";
-import type { ProfessionalInput } from "../shared/lib/validations/professional.ts";
+import { hasPermission } from "../shared/lib/permissions.ts";
+import { calendarInvitesSchema, type ProfessionalInput } from "../shared/lib/validations/professional.ts";
 import type { BankAccount, Professional, Schedule } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
 import { diffChanges, PROFESSIONAL_FIELDS, type ProfessionalForAudit } from "./audit-changes.ts";
 import { accountsToSave, bankAccountValues, parseProfessionalInput } from "./bank-accounts.ts";
-import { authorize, type RequestContext } from "./context.ts";
+import { syncCalendarInvites, upcomingInviteIds } from "./calendar-invites.ts";
+import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
 import { assertStoredImage, imageFolder, releaseImages } from "./image-service.ts";
 import { assertMultipleAgendas, assertProfessionalLimit } from "./plan-limits.ts";
 
@@ -143,6 +145,46 @@ async function copyStartingSchedule(db: Db, businessId: string, professionalId: 
   }
 }
 
+/** Sin email no hay a dónde enviar las invitaciones de calendario (spec 027). */
+const CALENDAR_WITHOUT_EMAIL_MESSAGE =
+  "Para recibir las citas en el calendario, la agenda necesita un email: escribe su «Email para sus avisos» o vincúlala a un usuario del equipo.";
+
+/** El email de una agenda con estos datos: el de avisos o, si está vacío, el de su usuario ("" = ninguno). */
+async function agendaEmailOf(db: Db, email: string, userId: string | null): Promise<string> {
+  const row = await one<{ email: string }>(
+    db,
+    "select coalesce(nullif($1::text, ''), (select u.email from users u where u.id = $2::uuid), '') as email",
+    [email, isUuid(userId) ? userId : null],
+  );
+  return row?.email ?? "";
+}
+
+/**
+ * Activar o desactivar las invitaciones de calendario de una agenda va a la actividad (spec 027), con su
+ * propia entrada: «Activó las invitaciones de calendario de la agenda de Dra. Valeria Cruz».
+ */
+async function logCalendarInvites(db: Db, actor: Actor, professional: Professional): Promise<void> {
+  const enabled = professional.calendarInvites;
+  await logAudit(db, {
+    businessId: professional.businessId,
+    actor,
+    action: enabled ? "professional.calendar_invites_enabled" : "professional.calendar_invites_disabled",
+    entityType: "professional",
+    entityId: professional.id,
+    summary: `${enabled ? "Activó" : "Desactivó"} las invitaciones de calendario de la agenda de ${professional.displayName}`,
+    changes: [{ label: "Invitaciones de calendario", before: enabled ? "No" : "Sí", after: enabled ? "Sí" : "No" }],
+  });
+}
+
+/**
+ * Al activarlas (o si cambió el email al que llegan), salen enseguida las de las citas de la ventana: las
+ * de más lejos, cuando entren (el cron). Devuelve cuántas quedaron en cola.
+ */
+async function syncAgendaInvites(db: Db, professional: Professional): Promise<number> {
+  if (!professional.calendarInvites) return 0;
+  return syncCalendarInvites(db, await upcomingInviteIds(db, { professionalId: professional.id }));
+}
+
 /** La foto de una agenda: de las fotos de agendas del negocio o la del usuario que la atiende. */
 const agendaImageFolders = (businessId: string, userId: string | null) => [
   imageFolder.professional(businessId),
@@ -152,9 +194,9 @@ const agendaImageFolders = (businessId: string, userId: string | null) => [
 export const professionalService = {
   /**
    * Las agendas del negocio. El rol Profesional sólo ve las suyas enteras: de las demás, lo que necesita
-   * la agenda (nombre, foto, color, especialidad, servicios), sin su email, su sala de videollamada ni
-   * sus cuentas bancarias (spec 009). Recepción sí las recibe: manda por WhatsApp los datos de pago y el
-   * enlace de la consulta de cualquier agenda.
+   * la agenda (nombre, foto, color, especialidad, servicios), sin su email (tampoco el de sus invitaciones
+   * de calendario), su sala de videollamada ni sus cuentas bancarias (spec 009). Recepción sí las recibe:
+   * manda por WhatsApp los datos de pago y el enlace de la consulta de cualquier agenda.
    */
   async list(ctx: RequestContext, businessId: string): Promise<Professional[]> {
     const actor = await authorize(pool, ctx, businessId);
@@ -163,7 +205,7 @@ export const professionalService = {
     return professionals.map((professional) =>
       professional.userId === actor.userId
         ? professional
-        : { ...professional, email: "", meetingUrl: "", bankAccounts: [], bankAccount: null },
+        : { ...professional, email: "", calendarEmail: "", meetingUrl: "", bankAccounts: [], bankAccount: null },
     );
   },
 
@@ -178,6 +220,9 @@ export const professionalService = {
       await assertAssignableMember(db, businessId, data.userId);
       await assertOwnServices(db, businessId, data);
       assertStoredImage(data.avatarUrl, null, "La foto", agendaImageFolders(businessId, data.userId));
+      if (data.calendarInvites && !(await agendaEmailOf(db, data.email, data.userId))) {
+        throw new AppError("validation", CALENDAR_WITHOUT_EMAIL_MESSAGE);
+      }
       const next = await one<{ order: number }>(
         db,
         `select coalesce(max(sort_order), 0) + 1 as "order" from professionals where business_id = $1`,
@@ -187,8 +232,9 @@ export const professionalService = {
         db,
         `insert into professionals
            (business_id, user_id, display_name, title, avatar_url, color, email, all_services,
-            notify_new_appointments, daily_agenda, is_active, sort_order, meeting_url, bank_accounts, bank_account)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            notify_new_appointments, daily_agenda, is_active, sort_order, meeting_url, bank_accounts, bank_account,
+            calendar_invites)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
          returning id`,
         [
           businessId,
@@ -206,6 +252,7 @@ export const professionalService = {
           data.meetingUrl,
           // La primera cuenta también en bank_account, para el código anterior (ver bank-accounts.ts).
           ...bankAccountValues(accountsToSave(parsed, [])),
+          data.calendarInvites ?? false,
         ],
       ))!;
       await saveServices(db, id, data);
@@ -219,6 +266,8 @@ export const professionalService = {
         entityId: id,
         summary: `Agregó al profesional ${professional.displayName}`,
       });
+      // Una agenda nueva aún no tiene citas: sólo queda en la actividad que nace con las invitaciones.
+      if (professional.calendarInvites) await logCalendarInvites(db, actor, professional);
       return professional;
     });
   },
@@ -234,11 +283,18 @@ export const professionalService = {
       if (!data.isActive && before.isActive) await assertAnotherActive(db, businessId, professionalId);
       await assertAssignableMember(db, businessId, data.userId, professionalId);
       await assertOwnServices(db, businessId, data);
+      // Las invitaciones de calendario (spec 027): sin el campo (un front anterior), las que tenía. Sin email
+      // no se activan; si ya estaban y la agenda se queda sin email, se apagan (no hay a dónde enviarlas).
+      let calendarInvites = data.calendarInvites ?? before.calendarInvites;
+      if (calendarInvites && !(await agendaEmailOf(db, data.email, data.userId))) {
+        if (!before.calendarInvites) throw new AppError("validation", CALENDAR_WITHOUT_EMAIL_MESSAGE);
+        calendarInvites = false;
+      }
       await db.query(
         `update professionals
             set user_id = $2, display_name = $3, title = $4, avatar_url = $5, color = $6, email = $7,
                 all_services = $8, notify_new_appointments = $9, daily_agenda = $10, is_active = $11,
-                meeting_url = $12, bank_accounts = $13, bank_account = $14
+                meeting_url = $12, bank_accounts = $13, bank_account = $14, calendar_invites = $15
           where id = $1`,
         [
           professionalId,
@@ -255,24 +311,56 @@ export const professionalService = {
           data.meetingUrl,
           // La primera cuenta también en bank_account, para el código anterior (ver bank-accounts.ts).
           ...bankAccountValues(accountsToSave(parsed, before.bankAccounts)),
+          calendarInvites,
         ],
       );
       await saveServices(db, professionalId, data);
       const professional = await findProfessional(db, businessId, professionalId);
       const verb = before.isActive && !professional.isActive ? "Desactivó" : !before.isActive && professional.isActive ? "Reactivó" : "Editó";
-      await logAudit(db, {
-        businessId,
-        actor,
-        action: "professional.updated",
-        entityType: "professional",
-        entityId: professionalId,
-        summary: `${verb} al profesional ${professional.displayName}`,
-        changes: diffChanges(await professionalForAudit(db, before), await professionalForAudit(db, professional), PROFESSIONAL_FIELDS),
-      });
+      const changes = diffChanges(await professionalForAudit(db, before), await professionalForAudit(db, professional), PROFESSIONAL_FIELDS);
+      const calendarChanged = professional.calendarInvites !== before.calendarInvites;
+      // Sólo el interruptor: basta su propia entrada (abajo), sin un «Editó» vacío.
+      if (!calendarChanged || changes.length > 0 || verb !== "Editó") {
+        await logAudit(db, {
+          businessId,
+          actor,
+          action: "professional.updated",
+          entityType: "professional",
+          entityId: professionalId,
+          summary: `${verb} al profesional ${professional.displayName}`,
+          changes,
+        });
+      }
+      if (calendarChanged) await logCalendarInvites(db, actor, professional);
+      // Recién activadas, o con otro email: las citas de la ventana, a su calendario (el nuevo).
+      if (calendarChanged || professional.calendarEmail !== before.calendarEmail) await syncAgendaInvites(db, professional);
       return { professional, previousAvatar: before.avatarUrl };
     });
     if (previousAvatar !== professional.avatarUrl) await releaseImages([previousAvatar]);
     return professional;
+  },
+
+  /**
+   * El interruptor de las invitaciones de calendario, solo (spec 027): lo cambian el profesional en su
+   * agenda («Tu agenda» en su perfil, también el rol Profesional) y quien gestiona los profesionales en
+   * cualquiera. Va a la actividad y, al activarlo, salen enseguida las de las citas de la ventana.
+   */
+  async setCalendarInvites(ctx: RequestContext, businessId: string, professionalId: string, input: unknown): Promise<Professional> {
+    const { calendarInvites } = parseInput(calendarInvitesSchema, input ?? {});
+    return transaction(async (db) => {
+      const actor = await authorize(db, ctx, businessId, undefined, { lock: true });
+      const before = await findProfessional(db, businessId, professionalId);
+      if (!hasPermission(actor.role, "professionals.manage") && before.userId !== actor.userId) {
+        throw new AppError("forbidden", "Sólo puedes cambiar las invitaciones de calendario de tu propia agenda.");
+      }
+      if (calendarInvites === before.calendarInvites) return before;
+      if (calendarInvites && !before.calendarEmail) throw new AppError("validation", CALENDAR_WITHOUT_EMAIL_MESSAGE);
+      await db.query("update professionals set calendar_invites = $2 where id = $1", [professionalId, calendarInvites]);
+      const professional = await findProfessional(db, businessId, professionalId);
+      await logCalendarInvites(db, actor, professional);
+      await syncAgendaInvites(db, professional);
+      return professional;
+    });
   },
 
   /** Sólo sin citas: con historial se desactiva (así se conservan sus citas y reportes). */

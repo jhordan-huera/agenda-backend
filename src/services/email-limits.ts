@@ -58,6 +58,8 @@ export const EMAIL_PRIORITY: Record<EmailType, EmailPriority> = {
   professional_daily_agenda: "business",
   payment_receipt_received: "business",
   patient_cancelled: "business",
+  // Las invitaciones de calendario al profesional (spec 027): como la copia, esperan si un día no hay cupo.
+  calendar_invite: "business",
 };
 
 /** Los niveles, del que sale primero al último. */

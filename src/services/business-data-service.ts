@@ -64,6 +64,7 @@ import {
   type AgendaScope,
 } from "./agenda-scope.ts";
 import { WITHOUT_NOTICE } from "./booking-alerts.ts";
+import { syncCalendarInvites } from "./calendar-invites.ts";
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
 import { isRescheduled, notifyAppointmentChange } from "./notifications.ts";
 import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
@@ -308,7 +309,15 @@ export const clientService = {
       ]))!;
       // Los comprobantes de sus citas se borran con ellas (y sus archivos, después).
       const receipts = await receiptPaths(db, { clientId });
+      // Invitaciones de calendario (spec 027): sus citas desaparecen del calendario del profesional antes de
+      // borrarse; en las que era otra persona de la sesión, el evento se queda sin su nombre.
+      const ownAppointments = await many<{ id: string }>(db, "select id from appointments where client_id = $1", [clientId]);
+      const sharedAppointments = await many<{ id: string }>(db, "select appointment_id as id from appointment_clients where client_id = $1", [
+        clientId,
+      ]);
+      await syncCalendarInvites(db, ownAppointments.map((row) => row.id), { removing: true });
       await db.query("delete from clients where id = $1", [clientId]); // las citas se borran en cascada
+      await syncCalendarInvites(db, sharedAppointments.map((row) => row.id));
       await logAudit(db, {
         businessId,
         actor,
@@ -362,10 +371,12 @@ export const clientService = {
       }
       // Como otra persona de una sesión: si la ficha ya está en esa cita, sobra; si no, la ocupa ella
       // (se borra y se vuelve a añadir: el límite de 3 personas lo comprueba el trigger al añadir).
-      await db.query(
+      const merged = await many<{ id: string }>(
+        db,
         `delete from appointment_clients ac using appointments a
           where ac.appointment_id = a.id and ac.client_id = $1
-            and (a.client_id = $2 or exists (select 1 from appointment_clients other where other.appointment_id = a.id and other.client_id = $2))`,
+            and (a.client_id = $2 or exists (select 1 from appointment_clients other where other.appointment_id = a.id and other.client_id = $2))
+          returning ac.appointment_id as id`,
         [clientId, claimed.id],
       );
       // Con su enlace a «Tu cita» y su «Confirmo que voy» (spec 010): es la misma persona, y el enlace de
@@ -386,7 +397,7 @@ export const clientService = {
         );
       }
       // Como principal (si la ficha era otra persona de esa cita, el trigger de la 032 la quita de ahí).
-      const moved = await db.query("update appointments set client_id = $2 where client_id = $1", [clientId, claimed.id]);
+      const moved = await db.query("update appointments set client_id = $2 where client_id = $1 returning id", [clientId, claimed.id]);
       const updated = (await one<Client>(
         db,
         `update clients set email = case when $2::boolean then $3 else email end, phone = case when $4::boolean then $5 else phone end
@@ -395,6 +406,12 @@ export const clientService = {
         [claimed.id, updateEmail, provisional.email, updatePhone, provisional.phone],
       ))!;
       await db.query("delete from clients where id = $1", [clientId]);
+      // El evento de calendario de esas citas lleva ahora el nombre de la ficha (spec 027).
+      await syncCalendarInvites(db, [
+        ...merged.map((row) => row.id),
+        ...moved.rows.map((row: { id: string }) => row.id),
+        ...extras.map((extra) => extra.appointmentId),
+      ]);
       const appointments = (moved.rowCount ?? 0) + extras.length;
       await logAudit(db, {
         businessId,
@@ -769,6 +786,8 @@ async function saveStatusChange(
   // Confirmada (o atendida) por recepción, un administrador o el propietario: el paciente pasa a ser del profesional.
   await releaseClientAccess(db, actor, appointment.id);
   if (notifyPatient) await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
+  // El calendario del profesional se pone al día también sin avisar al paciente (spec 027).
+  await syncCalendarInvites(db, [appointment.id]);
   await logAudit(db, {
     businessId: before.businessId,
     actor,
@@ -931,6 +950,7 @@ export const appointmentService = {
       ))!;
       const appointment = await saveExtraClients(db, inserted, extraClientIds, []);
       await notifyAppointmentChange(db, null, appointment, "dashboard", actor.userId);
+      await syncCalendarInvites(db, [appointment.id]);
       await logAudit(db, {
         businessId,
         actor,
@@ -992,6 +1012,8 @@ export const appointmentService = {
       const appointment = await saveExtraClients(db, saved, extraClientIds, before.extraClientIds);
       await releaseClientAccess(db, actor, appointment.id);
       await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
+      // Sólo sale algo si cambió lo que se ve en el calendario (la huella): no por el precio ni las notas.
+      await syncCalendarInvites(db, [appointment.id]);
 
       const rescheduled = before.date !== appointment.date || before.startTime !== appointment.startTime;
       await logAudit(db, {
@@ -1152,6 +1174,7 @@ export const PATIENT_LINK_ACTOR = "Paciente (desde su email)";
 export async function cancelFromPatientLink(db: Db, before: Appointment): Promise<Appointment> {
   const appointment = await saveAppointment(db, { ...before, status: "cancelled" }, false);
   await notifyAppointmentChange(db, before, appointment, "patient_link", null);
+  await syncCalendarInvites(db, [appointment.id]);
   await logAudit(db, {
     businessId: before.businessId,
     actor: null,

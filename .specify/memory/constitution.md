@@ -53,6 +53,10 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   de la contraseña nueva), y el acceso técnico a la base y a las copias, reservado al mantenimiento,
   llega a los datos (la política lo dice).
 - La verificación en dos pasos es obligatoria para el super admin.
+- Las citas pueden llegar al profesional como invitaciones de calendario por email (spec 027,
+  2026-10-19), si activa el interruptor de su agenda (apagado al principio): el paciente a medias,
+  sólo las de los próximos 14 días, y se actualizan o cancelan con el mismo evento. La suscripción
+  para iPhone/iPad y la conexión directa con Google siguen paradas.
 - Los negocios no ven planes ni precios (ni en el panel ni en la portada). La única excepción es el
   descuento del programa de referidos en la tarjeta del propietario (2026-10-18).
 - Los pacientes se identifican por cédula (sólo números) dentro de cada negocio. La reserva
@@ -277,4 +281,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.22.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-19
+**Versión**: 1.23.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-19

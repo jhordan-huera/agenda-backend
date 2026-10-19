@@ -277,6 +277,16 @@ export interface Professional {
   notifyNewAppointments: boolean;
   /** Email cada mañana con sus citas del día. */
   dailyAgenda: boolean;
+  /**
+   * Cada cita de los próximos días le llega como invitación de calendario (spec 027): Google, iPhone u
+   * Outlook la añaden y la actualizan solos. Apagado al principio.
+   */
+  calendarInvites: boolean;
+  /**
+   * A dónde le llegan las invitaciones de calendario (y la copia de los emails al paciente): `email` o,
+   * si está vacío, el de su usuario. "" = la agenda no tiene email y no puede activarlas.
+   */
+  calendarEmail: string;
   /** Enlace de su sala de videollamada (Meet, Zoom…) para las citas virtuales ("" = sin enlace). */
   meetingUrl: string;
   /**
@@ -691,7 +701,9 @@ export type EmailType =
   /** Al paciente: todas las fechas de una serie de citas nueva, en un solo email (spec 011). */
   | "appointment_series"
   /** Al paciente: «Cancelar ésta y las siguientes» de una serie, con las fechas canceladas (spec 011). */
-  | "appointment_series_cancelled";
+  | "appointment_series_cancelled"
+  /** Al profesional: la cita como invitación de calendario, su cambio o su cancelación (spec 027). */
+  | "calendar_invite";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo

@@ -17,7 +17,8 @@
  * de Gmail (spec 015), opcional: EMAIL_DAILY_QUOTA, EMAIL_TEAM_RESERVE y EMAIL_PATIENT_RESERVE, los
  * mismos valores que la API. La analítica del super admin (spec 016) se prepara aquí cada mañana, sin
  * variables nuevas. El aviso de la mañana y el aviso al super admin de los recordatorios enviados (spec
- * 021), tampoco. La foto diaria del tamaño de la base (spec 024), tampoco.
+ * 021), tampoco. La foto diaria del tamaño de la base (spec 024), tampoco. Las invitaciones de calendario
+ * de las citas que entran en la ventana de 14 días (spec 027), tampoco: salen con la misma cuenta de Gmail.
  *
  * Prueba local: node --env-file=.env scripts/cron.ts
  */
@@ -47,6 +48,7 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   booking_received: ["Aviso de nueva reserva (al negocio)", "Avisos de nueva reserva (al negocio)"],
   professional_new_appointment: ["Aviso de cita nueva (al profesional)", "Avisos de cita nueva (al profesional)"],
   appointment_copy: ["Copia al profesional", "Copias al profesional"],
+  calendar_invite: ["Invitación de calendario (al profesional)", "Invitaciones de calendario (al profesional)"],
   professional_daily_agenda: ["Agenda del día (al profesional)", "Agendas del día (al profesional)"],
   payment_receipt_received: ["Comprobante de pago (al negocio)", "Comprobantes de pago (al negocio)"],
   patient_cancelled: ["Aviso de cancelación del paciente (al negocio)", "Avisos de cancelación del paciente (al negocio)"],
@@ -454,7 +456,8 @@ async function main(): Promise<void> {
     }
 
     console.info(
-      `Recordatorios: ${report.reminders} · reservas por la página: ${report.onlineBookings ?? 0} · ` +
+      `Recordatorios: ${report.reminders} · invitaciones de calendario: ${report.calendarInvites ?? 0} · ` +
+        `reservas por la página: ${report.onlineBookings ?? 0} · ` +
         `pacientes nuevos del panel: ${report.panelClients ?? 0} · citas del panel: ${report.panelAppointments ?? 0} · ` +
         `series del panel: ${report.panelSeries ?? 0} · series canceladas: ${report.seriesCancellations ?? 0} · ` +
         `cambios de estado: ${report.statusChanges ?? 0} · cambios de cuenta: ${report.accountChanges ?? 0} · ` +

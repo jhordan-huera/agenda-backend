@@ -33,6 +33,11 @@ export const professionalSchema = z
     serviceIds: z.array(z.string()).max(200).default([]),
     notifyNewAppointments: z.boolean(),
     dailyAgenda: z.boolean(),
+    /**
+     * Sus citas como invitaciones de calendario (spec 027). Sin el campo (un front anterior), se conserva
+     * lo que tenía; al crear la agenda, apagado.
+     */
+    calendarInvites: z.boolean().optional(),
     isActive: z.boolean(),
   })
   .refine((data) => data.allServices || data.serviceIds.length > 0, {
@@ -41,3 +46,11 @@ export const professionalSchema = z
   });
 
 export type ProfessionalInput = z.infer<typeof professionalSchema>;
+
+/**
+ * El interruptor de las invitaciones de calendario de una agenda (spec 027), solo: lo cambian el
+ * profesional en la suya («Tu agenda») y quien gestiona los profesionales en cualquiera.
+ */
+export const calendarInvitesSchema = z.object({
+  calendarInvites: z.boolean({ error: "Indica si quieres recibir tus citas en tu calendario" }),
+});

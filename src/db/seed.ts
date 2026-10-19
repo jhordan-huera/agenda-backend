@@ -29,6 +29,7 @@ const TABLES = [
   "clinical_notes",
   "clinical_profiles",
   "audit_logs",
+  "calendar_invites",
   "notifications",
   "appointment_clients",
   "appointments",

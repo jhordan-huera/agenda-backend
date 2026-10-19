@@ -42,6 +42,7 @@ export type ChangeOrigin = "dashboard" | "booking_page" | "patient_link";
  * motivo). El cupo de Gmail no se mira aquí sino al enviar (mailer.ts): lo que no cabe espera en la cola.
  * `secret`: la contraseña que el mailer pone en lugar de PASSWORD_MASK al enviarlo (ver mailer.ts).
  * `hold`: motivo para no enviarlo, si quien lo pone en cola ya lo sabe.
+ * `calendar`: el iCalendar de una invitación de calendario (spec 027), que sale como text/calendar.
  */
 export async function queueEmail(
   db: Db,
@@ -54,14 +55,15 @@ export async function queueEmail(
     /** Emails que se envían una sola vez (la agenda del día de un profesional, cada recordatorio). */
     dedupeKey?: string;
     hold?: string | null;
+    calendar?: string;
   } & EmailContent,
 ): Promise<boolean> {
   const hold = message.hold ?? (await publicEmailHold(db, message.type, message.appointmentId ?? null));
   const result = await db.query(
     `insert into notifications
-       (business_id, type, to_email, subject, body, html, appointment_id, status, secret, dedupe_key, last_error)
+       (business_id, type, to_email, subject, body, html, appointment_id, status, secret, dedupe_key, last_error, calendar)
      values ($1, $2, $3, $4, $5, $6, $7, case when $10::text is null then 'queued' else 'failed' end,
-             case when $10::text is null then $8 end, $9, $10)
+             case when $10::text is null then $8 end, $9, $10, $11)
      on conflict do nothing`,
     [
       message.businessId,
@@ -74,6 +76,7 @@ export async function queueEmail(
       message.secret ?? null,
       message.dedupeKey ?? null,
       hold,
+      message.calendar ?? null,
     ],
   );
   const queued = (result.rowCount ?? 0) > 0 && hold === null;
@@ -244,8 +247,8 @@ function appointmentPageFor(
   };
 }
 
-/** Enlace a la cita en la agenda del panel. */
-const agendaUrlOf = (appointment: Appointment) =>
+/** Enlace a la cita en la agenda del panel (también el «Ver en Agenda360» de las invitaciones de calendario). */
+export const agendaUrlOf = (appointment: Pick<Appointment, "id" | "date">) =>
   `${appOrigin()}/dashboard/calendar?date=${appointment.date}&appointment=${appointment.id}`;
 
 /**
