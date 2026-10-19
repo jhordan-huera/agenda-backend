@@ -12,6 +12,7 @@ import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availa
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
 import type { Professional, PublicBusinessProfile } from "../src/shared/types/index.ts";
 import { viaProxy } from "./helpers/proxy.mjs";
+import { freePort } from "./helpers/harness.ts";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 const ORIGIN = new URL(BASE).origin;
@@ -61,9 +62,9 @@ const storedFile = (url: string) => join(process.env.LOCAL_STORAGE_DIR!, "imagen
 
 /** Otra API contra la misma base (como otra instancia en Vercel o Lambda). */
 const servers: ChildProcess[] = [];
-let nextPort = Number(new URL(BASE).port) + 20;
 async function startApi(env: Record<string, string>): Promise<{ base: string; output: () => string }> {
-  const port = nextPort++;
+  // Un puerto libre de verdad: «el de la API + 20» podía pasar de 65535 (falló el 2026-10-19 con 65537).
+  const port = await freePort();
   let output = "";
   const child = spawn(process.execPath, ["src/server.ts"], {
     env: { ...process.env, PORT: String(port), ...env },

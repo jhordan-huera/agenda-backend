@@ -17,7 +17,7 @@
  * de Gmail (spec 015), opcional: EMAIL_DAILY_QUOTA, EMAIL_TEAM_RESERVE y EMAIL_PATIENT_RESERVE, los
  * mismos valores que la API. La analítica del super admin (spec 016) se prepara aquí cada mañana, sin
  * variables nuevas. El aviso de la mañana y el aviso al super admin de los recordatorios enviados (spec
- * 021), tampoco.
+ * 021), tampoco. La foto diaria del tamaño de la base (spec 024), tampoco.
  *
  * Prueba local: node --env-file=.env scripts/cron.ts
  */
@@ -394,6 +394,24 @@ export function describeAnalyticsLine(report: ScheduledTasksReport): string {
   return ` · analítica: ${detail}`;
 }
 
+/**
+ * "· base de datos: foto guardada (16,2 MB)": la foto diaria del tamaño de la base (spec 024). Sólo la
+ * cifra: el registro es público.
+ */
+export function describeDatabaseLine(report: ScheduledTasksReport): string {
+  if (!report.databaseStats) return "";
+  const { status, sizeBytes } = report.databaseStats;
+  const detail =
+    status === "saved"
+      ? `foto guardada (${((sizeBytes ?? 0) / 1024 / 1024).toFixed(1).replace(".", ",")} MB)`
+      : status === "ready"
+        ? "ya estaba la de hoy"
+        : status === "early"
+          ? "se guarda después de las 06:00"
+          : "falló (se reintenta en la próxima pasada)";
+  return ` · base de datos: ${detail}`;
+}
+
 /** El cron no pudo trabajar: aviso urgente y el job de GitHub termina con error. */
 async function fail(reason: string): Promise<void> {
   await notify({
@@ -451,6 +469,7 @@ async function main(): Promise<void> {
         `${describePanelLine(report)}` +
         `${describePushLine(report, config.webPushProblem ? `sin envío: ${config.webPushProblem}` : null)}` +
         `${describeRemindersLine(report)}` +
+        `${describeDatabaseLine(report)}` +
         `${describeAnalyticsLine(report)} · ${report.durationMs} ms`,
     );
     const notices = [

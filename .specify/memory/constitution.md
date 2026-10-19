@@ -145,6 +145,10 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   Leer no se registra en la actividad (2026-10-15).
 - La analítica de /admin (spec 016) sólo la ve el super admin, sólo con cifras por negocio (nunca
   datos de pacientes), y se prepara una vez al día con el cron, fuera de Vercel (2026-10-15).
+- La pantalla «Base de datos» de /admin (spec 024) sólo la ve el super admin principal, con la
+  verificación en dos pasos y un límite de peticiones; sólo muestra nombres de tablas, tamaños y
+  cifras (las consultas sin valores), nunca datos de filas. Su historial lo guarda el cron una vez
+  al día (2026-10-18).
 - Una cita Completada queda fija: no cambia de estado ni de datos (salvo el pago, los comprobantes y
   las notas), y sólo el propietario la corrige, con un motivo que queda en la actividad. Ninguna cita
   vuelve a Pendiente; No asistió y Cancelada se pueden cambiar (2026-10-16).
@@ -266,4 +270,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.20.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-18
+**Versión**: 1.21.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-18

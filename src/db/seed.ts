@@ -21,6 +21,7 @@ const TABLES = [
   "push_subscriptions",
   "cron_runs",
   "analytics_snapshots",
+  "database_stats",
   "rate_limits",
   "image_uploads",
   "plan_change_requests",
