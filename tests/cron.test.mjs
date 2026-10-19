@@ -139,6 +139,15 @@ ok(detail.length === 1 && /^[^@]{0,2}\*\*\*@/.test(detail[0].to) && detail[0].ty
 await runScript();
 ok(lastRun().report.sentSinceLastRun === 0, "y no los vuelve a contar", lastRun().report);
 
+// El registro del cron sólo guarda la semana en curso (2026-10-19): cada lunes, hora de Ecuador, se
+// borran las pasadas de la semana anterior.
+const weekStart = "(date_trunc('week', now() at time zone 'America/Guayaquil') at time zone 'America/Guayaquil')";
+sql(`insert into cron_runs (ran_at, report) values (${weekStart} - interval '1 minute', '{"prueba": "domingo"}'), (${weekStart} + interval '1 minute', '{"prueba": "lunes"}')`);
+await runScript();
+const kept = sql("select string_agg(report->>'prueba', ',' order by ran_at) from cron_runs where report ? 'prueba'");
+ok(kept === "lunes", "se borran las pasadas de la semana anterior (el domingo a las 23:59) y queda la del lunes a las 00:01", kept);
+ok(Number(sql(`select count(*) from cron_runs where ran_at < ${weekStart}`)) === 0 && lastRun().report.sentSinceLastRun === 0, "nada de antes del lunes; la última pasada sigue ahí", lastRun().report);
+
 console.log("Alerta de intentos fallidos");
 received.length = 0;
 for (let i = 0; i < 10; i++) {

@@ -785,7 +785,8 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
   - **El cron de GitHub** (`scripts/cron.ts`, cada 10 min) trabaja **aislado de Vercel**: se conecta
     directamente a la base y a Gmail, pone en cola y envía los recordatorios, reintenta los correos
     que la API no pudo enviar y limpia lo caducado. **Avisa por ntfy** de lo enviado o fallido y da
-    señal de vida a healthchecks.io. Cada ejecución queda en la tabla `cron_runs` (30 días).
+    señal de vida a healthchecks.io. Cada ejecución queda en la tabla `cron_runs`, y cada lunes (hora
+    de Ecuador) se borran las de la semana anterior.
   - **Avisos por ntfy de pacientes** (`src/services/booking-alerts.ts`), con los datos a medias:
     - **cada reserva por la página:** dice de cada persona si es «Paciente nuevo» o «Ya era paciente»;
     - **cada cita agendada desde el panel:** lo mismo que una reserva, con quién la agendó y su rol

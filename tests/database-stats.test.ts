@@ -61,7 +61,7 @@ ok(
 );
 const audit = tables.app.find((table) => table.name === "audit_logs");
 const cron = tables.app.find((table) => table.name === "cron_runs");
-ok(audit?.label === "Actividad" && /^5 meses/.test(audit.retention ?? "") && cron?.label === "Registro del cron" && cron.retention === "30 días", "«Actividad», 5 meses; «Registro del cron», 30 días", [audit, cron]);
+ok(audit?.label === "Actividad" && /^5 meses/.test(audit.retention ?? "") && cron?.label === "Registro del cron" && cron.retention === "Cada lunes (queda la semana en curso)", "«Actividad», 5 meses; «Registro del cron», se borra cada lunes", [audit, cron]);
 const publicTables = sql("select tablename from pg_tables where schemaname = 'public' order by 1").split("\n");
 const missing = publicTables.filter((name) => !TABLE_INFO[name]);
 ok(missing.length === 0 && publicTables.length > 30, `las ${publicTables.length} tablas de Agenda360 están en TABLE_INFO (una nueva sin su regla hace fallar esta prueba)`, missing);

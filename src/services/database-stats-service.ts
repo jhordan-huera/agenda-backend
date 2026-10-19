@@ -69,7 +69,7 @@ export const QUERY_TEXT_MAX = 160;
 
 /**
  * Cada tabla de Agenda360 en palabras, con su regla de borrado tal como está en el código (spec 024):
- * - cron_runs: `delete from cron_runs … 30 days` (src/jobs/scheduled-tasks.ts);
+ * - cron_runs: cada lunes se borran las pasadas de la semana anterior (src/jobs/scheduled-tasks.ts);
  * - notifications: EMAIL_CONTENT_DAYS = 30 (purgeOldEmailContent; los que siguen en cola no se tocan);
  * - audit_logs: purge_audit_logs (migración 026): 5 meses, las sesiones 90 días y la historia clínica 5 años;
  * - sessions y login_challenges: deleteExpiredSessions, al caducar;
@@ -86,7 +86,7 @@ export const QUERY_TEXT_MAX = 160;
 export const TABLE_INFO: Record<string, { label: string; retention: string }> = {
   notifications: { label: "Emails (cola e historial)", retention: "El contenido a los 30 días; queda el registro" },
   audit_logs: { label: "Actividad", retention: "5 meses (las sesiones, 90 días; la historia clínica, 5 años)" },
-  cron_runs: { label: "Registro del cron", retention: "30 días" },
+  cron_runs: { label: "Registro del cron", retention: "Cada lunes (queda la semana en curso)" },
   appointments: { label: "Citas", retention: "Nunca" },
   appointment_clients: { label: "Pacientes de cada cita (sesiones de pareja)", retention: "Nunca" },
   appointment_series: { label: "Series de citas", retention: "Nunca" },
@@ -175,7 +175,7 @@ const QUERY_LABELS: { pattern: RegExp; label: string; cron?: true; onlySupabase?
   // El cron (scripts/cron.ts → runScheduledTasks).
   { pattern: /^select ran_at as "ranat" from cron_runs order by ran_at desc/, label: "El cron revisa su última pasada", cron: true },
   { pattern: /^insert into cron_runs\b/, label: "El cron guarda su resumen", cron: true },
-  { pattern: /^delete from cron_runs\b/, label: "El cron borra sus pasadas de más de 30 días", cron: true },
+  { pattern: /^delete from cron_runs\b/, label: "El cron borra sus pasadas de la semana anterior", cron: true },
   { pattern: /\bpurge_audit_logs\(\)/, label: "El cron borra la actividad vieja", cron: true },
   { pattern: /^update notifications set body = /, label: "El cron borra el contenido de los emails viejos", cron: true },
   { pattern: /^delete from sessions where expires_at\b/, label: "El cron borra las sesiones caducadas", cron: true },
