@@ -395,11 +395,16 @@ export const teamService = {
     });
   },
 
-  /** Autoriza (o retira) el acceso de un miembro a las historias clínicas. El propietario (o el super admin en modo soporte). */
+  /**
+   * Autoriza (o retira) el acceso de un miembro a las historias clínicas. Sólo el propietario, desde
+   * su sesión: el super admin en modo soporte no (spec 025), porque crea los miembros con la
+   * contraseña que elige y podría entrar con uno autorizado.
+   */
   async setClinicalAccess(ctx: RequestContext, businessId: string, userId: string, access: unknown): Promise<void> {
     const allowed = parseInput(z.boolean(), access);
     await transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "team.manage", { lock: true });
+      if (actor.support) throw new AppError("forbidden", "Sólo el propietario puede dar o quitar el acceso a la historia clínica.");
       const member = isUuid(userId) ? await findTeamMember(db, businessId, userId) : null;
       if (!member) throw new AppError("not_found", "Miembro no encontrado.");
       if (member.role === "owner") {

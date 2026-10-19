@@ -210,7 +210,7 @@ businessRoutes.post(
   handle((req) => clientService.confirmClaim(req.ctx, req.params.businessId, req.params.clientId, req.body)),
 );
 
-// Historia clínica (propietario, miembros autorizados y super admin en modo soporte)
+// Historia clínica (propietario y miembros autorizados; el super admin en modo soporte, sólo los formatos)
 businessRoutes.get(
   "/:businessId/clinical-templates",
   handle((req) => clinicalService.listTemplates(req.ctx, req.params.businessId, req.query.all === "1")),

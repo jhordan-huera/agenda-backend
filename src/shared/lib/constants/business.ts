@@ -210,6 +210,13 @@ export const REFERRAL_QUALIFY_DAYS = 30;
 /** «$1,50», «$3,00»: el descuento como lo dicen la tarjeta del propietario y /admin. */
 export const formatReferralAmount = (amount: number) => `$${amount.toFixed(2).replace(".", ",")}`;
 
+/**
+ * La historia clínica no se ve en modo soporte (spec 025, 2026-10-19): la API lo responde con este
+ * mensaje y la pantalla lo muestra en la pestaña, la impresión y la cita.
+ */
+export const CLINICAL_SUPPORT_BLOCKED_MESSAGE =
+  "Por privacidad, el soporte de Agenda360 no tiene acceso a la historia clínica de los pacientes.";
+
 /** Horario sugerido en el onboarding: lunes a viernes 08:00–17:00, sábado 09:00–13:00, domingo cerrado. */
 export const DEFAULT_WEEKLY_SCHEDULE: { dayOfWeek: DayOfWeek; isActive: boolean; intervals: TimeRange[] }[] =
   WEEK_DAYS.map(({ value }) => ({

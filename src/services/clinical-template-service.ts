@@ -5,20 +5,20 @@ import { hasPermission } from "../shared/lib/permissions.ts";
 import { clinicalTemplateInputSchema } from "../shared/lib/validations/clinical.ts";
 import type { ClinicalField, ClinicalTemplate } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
-import { authorizeClinical, availableTemplates } from "./clinical-service.ts";
+import { authorizeClinicalTemplates, availableTemplates } from "./clinical-service.ts";
 import { parseInput, type Actor, type RequestContext } from "./context.ts";
 import { planOf } from "./plan-limits.ts";
 
 /**
  * Formatos de historia clínica propios de un negocio (planes de pago). Los gestiona el
- * propietario (o el super admin en modo soporte). Guardar cambios crea una versión nueva:
- * las evoluciones ya escritas conservan la suya.
+ * propietario (o el super admin en modo soporte: son plantillas, no datos de pacientes). Guardar
+ * cambios crea una versión nueva: las evoluciones ya escritas conservan la suya.
  */
 
 const MAX_OWN_TEMPLATES = 30;
 
 async function authorizeManager(db: Db, ctx: RequestContext, businessId: string): Promise<Actor> {
-  const actor = await authorizeClinical(db, ctx, businessId, true);
+  const actor = await authorizeClinicalTemplates(db, ctx, businessId, true);
   if (!hasPermission(actor.role, "business.manage")) {
     throw new AppError("forbidden", "Sólo el propietario del negocio gestiona los formatos de historia clínica.");
   }
@@ -88,7 +88,7 @@ export const clinicalTemplateService = {
   /** Un formato (de la plataforma o propio, también desactivado): para verlo, editarlo o duplicarlo. */
   async get(ctx: RequestContext, businessId: string, templateId: string): Promise<ClinicalTemplate> {
     return transaction(async (db) => {
-      await authorizeClinical(db, ctx, businessId);
+      await authorizeClinicalTemplates(db, ctx, businessId);
       return findTemplate(db, businessId, templateId);
     });
   },
