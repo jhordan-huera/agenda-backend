@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/027-invitaciones-calendario` (rama de trabajo: `dev`) · **Creada**: 2026-10-19
 
-**Estado**: Aprobada (2026-10-19), con el interruptor apagado al principio, la ventana de 14 días y el paciente a medias
+**Estado**: Implementada (2026-10-19)
 
 **Repos**:
 - **agenda-backend:** las invitaciones (crearlas, actualizarlas y cancelarlas), el email y el cron.

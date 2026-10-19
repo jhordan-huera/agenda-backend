@@ -55,5 +55,5 @@ aprobado», con los tres valores por defecto) y el plan («procede por favor») 
   de Gmail, `database-stats` y la del cron. `npm run typecheck` y la suite completa.
 - [x] T011 Front: build, lint, `check:contrast` y el recorrido del interruptor en los dos modos y a
   390 px. (Build, lint y `check:contrast` pasan el 2026-10-19; falta el recorrido en el navegador.)
-- [ ] T012 La comprobación real con el dueño (Gmail y un iPhone), el `reporte.md` y los commits en
+- [x] T012 La comprobación real con el dueño (Gmail y un iPhone), el `reporte.md` y los commits en
   `dev`.
