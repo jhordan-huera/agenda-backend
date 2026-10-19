@@ -29,6 +29,7 @@ import { maskEmail, shortName } from "../services/masking.ts";
 import { runDailyAgendaJob, runReminderJob } from "../services/notifications.ts";
 import { cleanupPanelNotices } from "../services/panel-notices.ts";
 import { runPushJobs, type PushReport } from "../services/push-notices.ts";
+import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import type { EmailType } from "../shared/types/index.ts";
 
 /** Emails puestos en cola y negocios en los que falló el trabajo (se siguió con los demás). */
@@ -364,6 +365,14 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     totals?.at ?? null,
     report,
   ]);
-  await pool.query("delete from cron_runs where ran_at < now() - interval '30 days'");
+  // El registro del cron se borra cada lunes al mediodía (hora de Ecuador): la primera pasada desde
+  // las 12:00 borra todas las de antes (decisión del dueño del producto, 2026-10-19). Sólo se lee la
+  // última. Restar 12 horas antes de truncar a la semana da el último lunes a las 12:00.
+  await pool.query(
+    `delete from cron_runs
+      where ran_at < ((date_trunc('week', (coalesce($1::timestamptz, now()) at time zone $2) - interval '12 hours')
+                       + interval '12 hours') at time zone $2)`,
+    [totals?.at ?? null, DEFAULT_TIMEZONE],
+  );
   return report;
 }

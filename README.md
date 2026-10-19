@@ -785,7 +785,8 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
   - **El cron de GitHub** (`scripts/cron.ts`, cada 10 min) trabaja **aislado de Vercel**: se conecta
     directamente a la base y a Gmail, pone en cola y envía los recordatorios, reintenta los correos
     que la API no pudo enviar y limpia lo caducado. **Avisa por ntfy** de lo enviado o fallido y da
-    señal de vida a healthchecks.io. Cada ejecución queda en la tabla `cron_runs` (30 días).
+    señal de vida a healthchecks.io. Cada ejecución queda en la tabla `cron_runs`, y cada lunes a las
+    12:00 (hora de Ecuador) se borran las de antes.
   - **Avisos por ntfy de pacientes** (`src/services/booking-alerts.ts`), con los datos a medias:
     - **cada reserva por la página:** dice de cada persona si es «Paciente nuevo» o «Ya era paciente»;
     - **cada cita agendada desde el panel:** lo mismo que una reserva, con quién la agendó y su rol
@@ -1414,8 +1415,10 @@ lote y 8 s para empezar envíos, unos 20 s en el peor caso; lo que no salga lo e
 misma región de AWS que Supabase: misma latencia que Vercel `pdx1`. Gratis: el nivel siempre
 gratuito de Lambda (1 M de peticiones y 400.000 GB-s al mes) queda muy por encima del uso.
 
-Mientras dure la migración, Vercel sigue sirviendo la API: las dos versiones usan la misma base y el
-frontend decide a cuál llama con su variable `API_URL`.
+**Desde el 2026-10-19 la web usa Lambda** (`API_URL` del frontend = la Function URL). Las dos versiones usan
+la misma base, y el frontend decide a cuál llama con su variable `API_URL`. El proyecto de la API en Vercel
+queda una semana como respaldo; después se borra (paso 5). Las variables nuevas del backend van en Lambda
+(y en los secretos de GitHub si las usa el cron), ya no en Vercel.
 
 1. **Cuenta de AWS** en el plan *Paid* (el *Free* cierra la cuenta a los 6 meses; lo gratuito de
    Lambda sigue siéndolo), con MFA y un presupuesto con alerta de 1 USD (Billing → Budgets).

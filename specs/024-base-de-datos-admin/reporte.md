@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev · **Fecha**: 2026-10-18
+**Estado**: Publicada (2026-10-19, PR backend #49 y front #36) · **Fecha**: 2026-10-18
 
 **Repos**: los dos (la beta no la lleva) · **Migración**: Sí: `047_database_stats.sql`
 
