@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/026-tu-dia-deslizable` (rama de trabajo: `dev`) · **Creada**: 2026-10-19
 
-**Estado**: Implementada (2026-10-19)
+**Estado**: Publicada (2026-10-19, PR front #38)
 
 **Repos**:
 - **agenda-front:** la franja «Tu día» del Inicio.

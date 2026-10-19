@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev · **Fecha**: 2026-10-19
+**Estado**: Publicada (2026-10-19, PR backend #52 y front #38) · **Fecha**: 2026-10-19
 
 **Repos**: los dos (la beta no lo lleva) · **Migración**: Sí: `048_calendar_invites.sql`
 
