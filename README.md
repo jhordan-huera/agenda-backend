@@ -1414,8 +1414,10 @@ lote y 8 s para empezar envíos, unos 20 s en el peor caso; lo que no salga lo e
 misma región de AWS que Supabase: misma latencia que Vercel `pdx1`. Gratis: el nivel siempre
 gratuito de Lambda (1 M de peticiones y 400.000 GB-s al mes) queda muy por encima del uso.
 
-Mientras dure la migración, Vercel sigue sirviendo la API: las dos versiones usan la misma base y el
-frontend decide a cuál llama con su variable `API_URL`.
+**Desde el 2026-10-19 la web usa Lambda** (`API_URL` del frontend = la Function URL). Las dos versiones usan
+la misma base, y el frontend decide a cuál llama con su variable `API_URL`. El proyecto de la API en Vercel
+queda una semana como respaldo; después se borra (paso 5). Las variables nuevas del backend van en Lambda
+(y en los secretos de GitHub si las usa el cron), ya no en Vercel.
 
 1. **Cuenta de AWS** en el plan *Paid* (el *Free* cierra la cuenta a los 6 meses; lo gratuito de
    Lambda sigue siéndolo), con MFA y un presupuesto con alerta de 1 USD (Billing → Budgets).
