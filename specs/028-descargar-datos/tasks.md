@@ -56,5 +56,5 @@ description: "Tareas de «Descargar los datos del negocio»"
   completa.
 - [x] T011 `front/`: build, lint y `check:contrast`, y la prueba de ida y vuelta de los encabezados y de
   `clinical-html.ts`.
-- [ ] T012 El recorrido (descargar y revisar el ZIP como propietario y como profesional; sin botón en
+- [x] T012 El recorrido (descargar y revisar el ZIP como propietario y como profesional; sin botón en
   modo soporte), el `reporte.md` y los commits en `dev`.
