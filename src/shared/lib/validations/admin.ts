@@ -1,7 +1,9 @@
 // Copia de agenda-front/src/lib/validations/admin.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
+import { dayOfMonthISO } from "../time.ts";
 import { brandColorsSchema, businessCategorySchema, slugSchema, timezoneField } from "./business.ts";
-import { emailField, moneyField, optionalEmailField, optionalText, passwordField, phoneField, requiredText } from "./fields.ts";
+import { dateField, emailField, moneyField, optionalEmailField, optionalText, passwordField, phoneField, requiredText } from "./fields.ts";
+import { bankAccountsSchema } from "./payment.ts";
 import { weeklyScheduleSchema } from "./schedule.ts";
 import { teamInviteSchema } from "./team.ts";
 
@@ -110,3 +112,53 @@ export type ReferredByInput = z.infer<typeof referredBySchema>;
 /** Colores del panel de plataforma del super admin (spec 007); null vuelve a los de Agenda360. */
 export const panelColorsSchema = z.object({ colors: brandColorsSchema });
 export type PanelColorsInput = z.infer<typeof panelColorsSchema>;
+
+/* ------------------------------------- El cobro de las mensualidades (spec 029) -- */
+
+/** Una fecha que existe ("2026-02-31" no). */
+const realDate = dateField.refine((value) => new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value, "Selecciona una fecha");
+
+/**
+ * La mensualidad de un negocio, que fija el super admin: el monto en USD (0: sin cobros, como en el plan
+ * gratis o un negocio de cortesía), el día del mes en que paga y la fecha del primer cobro, que cae en ese
+ * día (o en el último de un mes que no lo tiene). Con mensualidad, el día y el primer cobro son
+ * obligatorios. Que el primer cobro no sea anterior a hoy lo comprueba la API, con la zona del negocio.
+ */
+export const businessBillingSchema = z
+  .object({
+    monthlyFee: z.coerce
+      .number<string | number>("Ingresa la mensualidad")
+      .min(0, "La mensualidad no puede ser negativa")
+      .max(10_000, "Mensualidad demasiado alta")
+      .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6, "Usa como mucho dos decimales"),
+    billingDay: z.number({ error: "Elige el día de pago" }).int("Elige el día de pago").min(1, "Elige un día del 1 al 31").max(31, "Elige un día del 1 al 31").nullable(),
+    billingStart: realDate.nullable(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.monthlyFee === 0) return;
+    if (data.billingDay === null) ctx.addIssue({ code: "custom", path: ["billingDay"], message: "Elige el día de pago" });
+    if (data.billingStart === null) {
+      ctx.addIssue({ code: "custom", path: ["billingStart"], message: "Elige la fecha del primer cobro" });
+    } else if (data.billingDay !== null && dayOfMonthISO(data.billingStart, data.billingDay) !== data.billingStart) {
+      ctx.addIssue({ code: "custom", path: ["billingStart"], message: `El primer cobro tiene que caer en su día de pago (el ${data.billingDay})` });
+    }
+  });
+
+/** El motivo de rechazar un comprobante o de anular un cobro: le llega al propietario por email. */
+export const billingReasonSchema = z.object({ reason: requiredText("El motivo", 3, 300) });
+
+/** «Pagado sin comprobante»: cómo llegó el pago (p. ej. «Efectivo»), sólo para el super admin. */
+export const billingPaidSchema = z.object({ note: optionalText(300).default("") });
+
+/** Las cuentas de Agenda360 para recibir las mensualidades: hasta 3, como las de las agendas. */
+export const platformBankAccountsSchema = z.object({ bankAccounts: bankAccountsSchema });
+
+/** El filtro de /admin → Cobros (ver AdminBillingFilter): por defecto, los comprobantes por revisar. */
+export const adminBillingFilterSchema = z
+  .enum(["in_review", "due", "overdue", "paid", "rejected", "void"], { error: "Filtro de cobros no válido" })
+  .default("in_review");
+
+export type BusinessBillingInput = z.infer<typeof businessBillingSchema>;
+export type BillingReasonInput = z.infer<typeof billingReasonSchema>;
+export type BillingPaidInput = z.input<typeof billingPaidSchema>;
+export type PlatformBankAccountsInput = z.infer<typeof platformBankAccountsSchema>;

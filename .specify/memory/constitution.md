@@ -57,8 +57,19 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   2026-10-19), si activa el interruptor de su agenda (apagado al principio): el paciente a medias,
   sólo las de los próximos 14 días, y se actualizan o cancelan con el mismo evento. La suscripción
   para iPhone/iPad y la conexión directa con Google siguen paradas.
-- Los negocios no ven planes ni precios (ni en el panel ni en la portada). La única excepción es el
-  descuento del programa de referidos en la tarjeta del propietario (2026-10-18).
+- Los datos del negocio (pacientes, citas, historias clínicas y archivos) los descargan el
+  propietario (todo) y cada profesional (lo suyo; las historias sólo con acceso clínico); nunca el
+  super admin, tampoco en modo soporte (spec 028, 2026-10-20).
+- Los negocios no ven planes ni precios (ni en el panel ni en la portada). Las excepciones: el
+  descuento del programa de referidos en la tarjeta del propietario (2026-10-18), y su propia
+  mensualidad (el monto, el día de pago y el estado de sus pagos), que ve sólo el propietario (spec 029,
+  2026-10-20).
+- Las mensualidades se cobran por transferencia (spec 029, 2026-10-20): el día de pago, al entrar, el
+  propietario ve la pantalla con el valor y las cuentas y sube el comprobante, que queda «En revisión»
+  hasta que el super admin lo marca pagado o lo rechaza con un motivo. Tiene 5 días de gracia con «Más
+  tarde»; después, la pantalla no se cierra hasta subirlo. Sólo se bloquea el panel del propietario: su
+  equipo y su página de reservas siguen funcionando. La factura del SRI y el cobro con tarjeta quedan
+  fuera por ahora.
 - Los pacientes se identifican por cédula (sólo números) dentro de cada negocio. La reserva
   online no reconoce al paciente por la cédula ni muestra sus datos: siempre pide nombre, email y
   teléfono.
@@ -172,8 +183,9 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   mensaje (2026-10-18).
 - Programa de referidos: cada negocio tiene su enlace. Por cada negocio recomendado que sigue activo
   a los 30 días, quien lo recomendó paga $1,50 menos en su siguiente mensualidad, una sola vez. El
-  super admin anota «Recomendado por» y marca el descuento como aplicado al cobrar; todo queda en la
-  actividad (2026-10-18).
+  super admin anota «Recomendado por». Con mensualidad (spec 029), el descuento se resta solo del
+  siguiente cobro y queda aplicado al pagarse; sin mensualidad, el super admin lo marca a mano. Todo
+  queda en la actividad (2026-10-18, 2026-10-20).
 
 ### IV. Se comprueba en local, nunca en producción
 
@@ -281,4 +293,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.23.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-19
+**Versión**: 1.25.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-20

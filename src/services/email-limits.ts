@@ -40,6 +40,11 @@ export const EMAIL_PRIORITY: Record<EmailType, EmailPriority> = {
   plan_change_rejected: "team",
   plan_changed: "team",
   business_created: "team",
+  // La mensualidad del propietario (spec 029): como los planes, sale siempre.
+  billing_reminder: "team",
+  billing_paid: "team",
+  billing_rejected: "team",
+  billing_voided: "team",
   welcome: "patient",
   booking_created: "patient",
   appointment_confirmed: "patient",

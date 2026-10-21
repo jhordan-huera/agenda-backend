@@ -1,6 +1,7 @@
 // Copia de agenda-front/src/lib/constants/business.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import type {
   BankAccountType,
+  BillingStatus,
   BookingSettings,
   ClientRequiredFields,
   DayOfWeek,
@@ -206,16 +207,47 @@ export function clientRequiredFieldsOf(business: { clientRequiredFields?: Client
 
 /**
  * El programa de referidos (spec 023): por cada negocio recomendado que sigue activo a los 30 días de
- * crearse, quien lo recomendó paga $1,50 (USD) menos en su siguiente mensualidad, una sola vez. Todavía
- * no hay cobro automático: el sistema lleva la cuenta y el dueño aplica el descuento al cobrar. Es la
- * única cifra de dinero que ve un negocio, en la tarjeta del propietario (constitución, principio III).
+ * crearse, quien lo recomendó paga $1,50 (USD) menos en su siguiente mensualidad, una sola vez. Desde la
+ * spec 029 el descuento va solo en el siguiente cobro y queda aplicado al pagarse. Con la mensualidad del
+ * propietario, es la única cifra de dinero que ve un negocio (constitución, principio III).
  */
 export const REFERRAL_DISCOUNT = 1.5;
 /** Días que el negocio recomendado tiene que seguir activo para que su recomendación «se quede». */
 export const REFERRAL_QUALIFY_DAYS = 30;
 
+/** «$1,50», «$9,99»: un monto en dólares como lo dicen la mensualidad, los referidos y /admin. */
+export const formatUsdAmount = (amount: number) => `$${amount.toFixed(2).replace(".", ",")}`;
+
 /** «$1,50», «$3,00»: el descuento como lo dicen la tarjeta del propietario y /admin. */
-export const formatReferralAmount = (amount: number) => `$${amount.toFixed(2).replace(".", ",")}`;
+export const formatReferralAmount = formatUsdAmount;
+
+/**
+ * El cobro de las mensualidades por transferencia (spec 029, 2026-10-20). En su día de pago, el propietario
+ * ve al entrar la pantalla con el monto y las cuentas, y sube el comprobante. Durante BILLING_GRACE_DAYS
+ * días (el día de pago es el primero) la pantalla tiene «Más tarde»; desde el siguiente ya no se cierra
+ * hasta subirlo. Sólo se bloquea el panel del propietario: su equipo y su página de reservas siguen.
+ */
+export const BILLING_GRACE_DAYS = 5;
+/** Días antes del día de pago en que le llega al propietario el email con el monto y las cuentas. */
+export const BILLING_REMINDER_DAYS = 3;
+/** Meses que se guardan los comprobantes de las mensualidades (contabilidad); después se borran solos. */
+export const BILLING_RECEIPT_RETENTION_MONTHS = 12;
+
+/** El estado de un cobro, como lo ven el propietario y /admin. */
+export const BILLING_STATUS_LABELS: Record<BillingStatus, string> = {
+  due: "Por pagar",
+  in_review: "En revisión",
+  paid: "Pagado",
+  rejected: "Rechazado",
+  void: "Anulado",
+};
+
+/** «$9,99 − $1,50 por 1 recomendación»: lo que se descuenta de la mensualidad de un cobro ("" sin descuento). */
+export function describeBillingDiscount(charge: { baseAmount: number; referralDiscount: number; referralCount: number }): string {
+  if (charge.referralDiscount <= 0) return "";
+  const recommendations = charge.referralCount === 1 ? "1 recomendación" : `${charge.referralCount} recomendaciones`;
+  return `${formatUsdAmount(charge.baseAmount)} − ${formatUsdAmount(charge.referralDiscount)} por ${recommendations}`;
+}
 
 /**
  * La historia clínica no se ve en modo soporte (spec 025, 2026-10-19): la API lo responde con este

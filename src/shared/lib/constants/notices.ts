@@ -20,13 +20,14 @@ export const BUSINESS_NOTICE_KINDS = [
 
 export type BusinessNoticeKind = (typeof BUSINESS_NOTICE_KINDS)[number];
 
-/** Los del super admin, en su campana de /admin. */
+/** Los del super admin, en su campana de /admin (el comprobante de una mensualidad, desde la spec 029). */
 export const PLATFORM_NOTICE_KINDS = [
   "new_business",
   "plan_request",
   "account_security",
   "login_attack",
   "reminders_sent",
+  "billing_receipt",
 ] as const satisfies readonly NoticeKind[];
 
 export type PlatformNoticeKind = (typeof PLATFORM_NOTICE_KINDS)[number];

@@ -1,7 +1,7 @@
 // Cron de recordatorios (scripts/cron.ts, directo contra la base, sin Vercel), aviso de ntfy e IP real por el proxy.
 import { execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { buildNotice, buildPushNotice, describePushLine, describeSentEmails } from "../scripts/cron.ts";
+import { buildBookingNotices, buildNotice, buildPushNotice, describeBillingLine, describePushLine, describeSentEmails } from "../scripts/cron.ts";
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { viaProxy as signedProxy } from "./helpers/proxy.mjs";
 
@@ -95,7 +95,10 @@ ok(
   "sin Gmail no envía nada: todo sigue en cola (recordatorios y sus copias)",
 );
 ok(
-  /Recordatorios: \d+ · invitaciones de calendario: \d+ · reservas por la página: \d+ · pacientes nuevos del panel: \d+ · citas del panel: \d+ · series del panel: \d+ · series canceladas: \d+ · cambios de estado: \d+ · cambios de cuenta: \d+ · importaciones: \d+ · enviados/.test(run.output) && !/@/.test(run.output),
+  /Recordatorios: \d+ · invitaciones de calendario: \d+ · reservas por la página: \d+ · pacientes nuevos del panel: \d+ · citas del panel: \d+ · series del panel: \d+ · series canceladas: \d+ · cambios de estado: \d+ · cambios de cuenta: \d+ · importaciones: \d+ · enviados/.test(run.output) &&
+    // El cobro de las mensualidades (spec 029): sólo cifras.
+    /· mensualidades: cobros \d+ · recordatorios \d+ · comprobantes \d+ \(borrados, más de 12 meses: \d+\)/.test(run.output) &&
+    !/@/.test(run.output),
   "el registro (público en GitHub) sólo lleva cifras, ningún email",
   run.output.slice(-300),
 );
@@ -274,6 +277,21 @@ ok(
   describePushLine({ ...base, push: pushReport({ sent: 1, failed: 2, removedDevices: 3 }) }) === " · avisos en la app: enviados 1 · fallidos 2 · aparatos dados de baja 3" &&
     describePushLine(base) === "",
   "la línea del registro: sólo cifras",
+);
+
+console.log("Las mensualidades en el registro y en ntfy (spec 029)");
+ok(
+  describeBillingLine({ ...base, billing: { charges: 2, reminders: 1, receipts: 3, receiptsPurged: null } }) ===
+    " · mensualidades: cobros 2 · recordatorios 1 · comprobantes 3 (borrados, más de 12 meses: sin almacenamiento)" && describeBillingLine(base) === "",
+  "la línea del registro: sólo cifras",
+);
+const billingNotice = { title: "Agenda360: comprobante de mensualidad", message: "Centro\nMensualidad de noviembre: $9,99", priority: 3, tags: ["receipt"], click: "/admin/billing" };
+const billingNotices = buildBookingNotices({ billing: { charges: 0, reminders: 0, receipts: 12, receiptsPurged: 0 }, billingReceiptNotices: Array.from({ length: 10 }, () => billingNotice) });
+ok(
+  billingNotices.length === 11 && /…y 2 comprobantes más de mensualidades por revisar/.test(billingNotices.at(-1)?.message ?? "") &&
+    billingNotices.every((notice) => !/Centro/.test(notice.title)),
+  "un ntfy por comprobante (hasta 10) y otro con cuántos faltan, sin el negocio en el título",
+  billingNotices.at(-1),
 );
 
 console.log("IP real por el proxy del frontend");

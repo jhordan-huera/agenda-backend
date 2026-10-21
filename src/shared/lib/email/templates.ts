@@ -1,9 +1,9 @@
 // Copia de agenda-front/src/lib/email/templates.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { APP_NAME } from "../constants/app.ts";
-import { BANK_ACCOUNT_TYPE_LABELS, describeTimezone } from "../constants/business.ts";
+import { BANK_ACCOUNT_TYPE_LABELS, BILLING_GRACE_DAYS, describeTimezone, formatUsdAmount } from "../constants/business.ts";
 import { capitalize, formatDate, formatLongDate, formatPrice, formatShortDate, formatTimeRange, joinNames } from "../format.ts";
 import { describeHomeVisit, getDirectionsUrl, getPlaceMapsUrl, hasMapPoint } from "../maps.ts";
-import type { BankAccount, HomeVisitAddress, ISODate } from "../../types/index.ts";
+import type { BankAccount, BillingPaidMethod, HomeVisitAddress, ISODate } from "../../types/index.ts";
 import { composeEmail, type EmailBlock, type EmailContent, type EmailMessage } from "./layout.ts";
 
 /**
@@ -106,6 +106,24 @@ export interface CalendarInviteEmailData {
   place: string;
   /** «Ver en Agenda360»: la cita en la agenda del panel. */
   agendaUrl: string;
+}
+
+/**
+ * Un cobro de la mensualidad en los emails al propietario (spec 029): el negocio, el día de pago (de él
+ * sale el mes: «Tu mensualidad de noviembre») y lo que paga, con la mensualidad y el descuento de referidos
+ * si lo hay. Son de la plataforma: los ve sólo el propietario, nunca su equipo.
+ */
+export interface BillingEmailData {
+  firstName: string;
+  businessName: string;
+  dueDate: ISODate;
+  /** Lo que se paga: `baseAmount − referralDiscount`. */
+  amount: number;
+  baseAmount: number;
+  referralDiscount: number;
+  referralCount: number;
+  /** El panel: al entrar, la pantalla de pago se abre sola. */
+  panelUrl: string;
 }
 
 /* ------------------------------------------------------------------ Piezas -- */
@@ -248,6 +266,36 @@ function payment(data: AppointmentEmailData): EmailBlock[] {
     { kind: "button", label: "Enviar el comprobante", url },
     { kind: "note", text: "Cuando transfieras, sube ahí la foto o el PDF del comprobante (o envíalo por WhatsApp al negocio)." },
   ];
+}
+
+/** «noviembre»: el mes de un cobro de la mensualidad, por su día de pago. */
+const billingMonth = (data: Pick<BillingEmailData, "dueDate">) => formatDate(data.dueDate, "MMMM");
+/** «14 de noviembre» */
+const billingDay = (data: Pick<BillingEmailData, "dueDate">) => formatDate(data.dueDate, "d 'de' MMMM");
+
+/** El monto de un cobro: lo que se paga y, con descuento de referidos, la mensualidad y el descuento. */
+function billingAmountBlock(data: BillingEmailData, title?: string): EmailBlock {
+  const rows: Extract<EmailBlock, { kind: "details" }>["rows"] =
+    data.referralDiscount > 0
+      ? [
+          { label: "Mensualidad", value: formatUsdAmount(data.baseAmount) },
+          {
+            label: data.referralCount === 1 ? "Descuento por 1 recomendación" : `Descuento por ${data.referralCount} recomendaciones`,
+            value: `− ${formatUsdAmount(data.referralDiscount)}`,
+          },
+          { label: "Total a pagar", value: formatUsdAmount(data.amount) },
+        ]
+      : [{ label: "Monto", value: formatUsdAmount(data.amount) }];
+  return { kind: "details", title, rows };
+}
+
+/** Las cuentas de Agenda360 para transferir la mensualidad (vale cualquiera); sin cuentas, a quién pedirlas. */
+function billingAccounts(bankAccounts: BankAccount[], supportContact: string): EmailBlock[] {
+  if (bankAccounts.length === 0) {
+    return [{ kind: "text", text: `Escríbenos a ${supportContact} y te enviamos los datos para transferir.` }];
+  }
+  if (bankAccounts.length === 1) return [{ kind: "details", title: "Cuenta para transferir", rows: bankAccountRows(bankAccounts[0]) }];
+  return bankAccounts.map((account, index): EmailBlock => ({ kind: "details", title: `Cuenta ${index + 1}`, rows: bankAccountRows(account) }));
 }
 
 /**
@@ -931,6 +979,97 @@ export const emailTemplates = {
       ],
     });
   },
+
+  /**
+   * La mensualidad vence en tres días (spec 029): el monto y las cuentas para transferir, y que el día de
+   * pago, al entrar al panel, se abre la pantalla para subir el comprobante.
+   */
+  billingReminder: (data: BillingEmailData & { bankAccounts: BankAccount[]; supportContact: string }): EmailContent =>
+    platformEmail({
+      subject: `Tu mensualidad de ${APP_NAME} vence el ${billingDay(data)}`,
+      preheader: `${formatUsdAmount(data.amount)} por transferencia: las cuentas y cómo enviar el comprobante.`,
+      title: `Tu mensualidad de ${billingMonth(data)} vence el ${billingDay(data)}`,
+      greeting: `Hola ${data.firstName}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: `El ${billingDay(data)} vence la mensualidad de ${data.businessName}. Transfiere a ${
+            data.bankAccounts.length > 1 ? "cualquiera de estas cuentas" : "esta cuenta"
+          } y sube el comprobante en tu panel: ese día, al entrar, se abre la pantalla para enviarlo.`,
+        },
+        billingAmountBlock(data),
+        ...billingAccounts(data.bankAccounts, data.supportContact),
+        { kind: "button", label: "Abrir mi panel", url: data.panelUrl },
+        {
+          kind: "note",
+          text: `Tienes ${BILLING_GRACE_DAYS} días desde el día de pago para enviarlo. Tu equipo y tu página de reservas siguen funcionando igual.`,
+        },
+      ],
+    }),
+
+  /** El super admin confirmó el pago de la mensualidad (con el comprobante o por otra vía). */
+  billingPaid: (data: BillingEmailData & { method: BillingPaidMethod }): EmailContent =>
+    platformEmail({
+      subject: "Recibimos tu pago, gracias",
+      preheader: `Confirmamos el pago de tu mensualidad de ${billingMonth(data)}.`,
+      title: "Recibimos tu pago, gracias",
+      greeting: `Hola ${data.firstName}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: `Confirmamos el pago de la mensualidad de ${billingMonth(data)} de ${data.businessName}${
+            data.method === "transfer" ? ": revisamos tu comprobante y la transferencia llegó bien." : "."
+          }`,
+        },
+        billingAmountBlock(data, "Tu pago"),
+        { kind: "button", label: "Abrir mi panel", url: data.panelUrl },
+      ],
+    }),
+
+  /**
+   * El super admin rechazó el comprobante, con el motivo: al entrar al panel se vuelve a abrir la pantalla
+   * de pago, con los días de gracia que le queden.
+   */
+  billingRejected: (data: BillingEmailData & { reason: string; graceDaysLeft: number; supportContact: string }): EmailContent =>
+    platformEmail({
+      subject: `No pudimos confirmar el pago de tu mensualidad de ${billingMonth(data)}`,
+      preheader: `Motivo: ${data.reason}`,
+      title: `No pudimos confirmar el pago de tu mensualidad de ${billingMonth(data)}`,
+      greeting: `Hola ${data.firstName}:`,
+      blocks: [
+        { kind: "text", text: `Revisamos el comprobante de la mensualidad de ${data.businessName} y no pudimos confirmar el pago.` },
+        { kind: "callout", tone: "warning", text: `Motivo: ${data.reason}` },
+        {
+          kind: "text",
+          text:
+            data.graceDaysLeft > 0
+              ? `Revisa la transferencia y vuelve a subir el comprobante desde tu panel: te ${
+                  data.graceDaysLeft === 1 ? "queda 1 día" : `quedan ${data.graceDaysLeft} días`
+                }.`
+              : "Revisa la transferencia y vuelve a subir el comprobante desde tu panel para seguir usándolo. Tu equipo y tu página de reservas siguen funcionando.",
+        },
+        billingAmountBlock(data),
+        { kind: "button", label: "Subir el comprobante", url: data.panelUrl },
+        { kind: "note", text: `Si tienes dudas, escríbenos a ${data.supportContact}.` },
+      ],
+    }),
+
+  /** El super admin anuló el cobro de un mes, con el motivo: ya no hay que pagarlo. */
+  billingVoided: (data: BillingEmailData & { reason: string }): EmailContent =>
+    platformEmail({
+      subject: `Anulamos el cobro de tu mensualidad de ${billingMonth(data)}`,
+      preheader: "Ya no tienes que pagarlo.",
+      title: `Anulamos el cobro de tu mensualidad de ${billingMonth(data)}`,
+      greeting: `Hola ${data.firstName}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: `Anulamos el cobro de la mensualidad de ${billingMonth(data)} de ${data.businessName} (${formatUsdAmount(data.amount)}): ya no tienes que pagarlo.`,
+        },
+        { kind: "callout", tone: "info", text: `Motivo: ${data.reason}` },
+        { kind: "button", label: "Abrir mi panel", url: data.panelUrl },
+      ],
+    }),
 
   appointmentReminder: (data: AppointmentEmailData, when: "hoy" | "mañana" | null): EmailContent =>
     clientEmail(data, {

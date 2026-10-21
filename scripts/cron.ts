@@ -19,6 +19,8 @@
  * variables nuevas. El aviso de la mañana y el aviso al super admin de los recordatorios enviados (spec
  * 021), tampoco. La foto diaria del tamaño de la base (spec 024), tampoco. Las invitaciones de calendario
  * de las citas que entran en la ventana de 14 días (spec 027), tampoco: salen con la misma cuenta de Gmail.
+ * El cobro de las mensualidades (spec 029: el cobro de cada mes, el email de los tres días antes, el aviso
+ * de cada comprobante y el borrado de los de más de 12 meses), tampoco.
  *
  * Prueba local: node --env-file=.env scripts/cron.ts
  */
@@ -49,6 +51,10 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   professional_new_appointment: ["Aviso de cita nueva (al profesional)", "Avisos de cita nueva (al profesional)"],
   appointment_copy: ["Copia al profesional", "Copias al profesional"],
   calendar_invite: ["Invitación de calendario (al profesional)", "Invitaciones de calendario (al profesional)"],
+  billing_reminder: ["Recordatorio de la mensualidad (al propietario)", "Recordatorios de la mensualidad (al propietario)"],
+  billing_paid: ["Mensualidad pagada (al propietario)", "Mensualidades pagadas (al propietario)"],
+  billing_rejected: ["Comprobante de mensualidad rechazado (al propietario)", "Comprobantes de mensualidad rechazados (al propietario)"],
+  billing_voided: ["Cobro de mensualidad anulado (al propietario)", "Cobros de mensualidad anulados (al propietario)"],
   professional_daily_agenda: ["Agenda del día (al profesional)", "Agendas del día (al profesional)"],
   payment_receipt_received: ["Comprobante de pago (al negocio)", "Comprobantes de pago (al negocio)"],
   patient_cancelled: ["Aviso de cancelación del paciente (al negocio)", "Avisos de cancelación del paciente (al negocio)"],
@@ -279,6 +285,19 @@ export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
       click: "/admin/businesses",
     });
   }
+  // Los comprobantes de mensualidades (spec 029): uno por comprobante, con el negocio y el monto.
+  const billingNotices = report.billingReceiptNotices ?? [];
+  notices.push(...billingNotices);
+  const restBilling = (report.billing?.receipts ?? 0) - billingNotices.length;
+  if (restBilling > 0) {
+    notices.push({
+      title: "Agenda360: más comprobantes de mensualidades",
+      message: `…y ${plural(restBilling, "comprobante más", "comprobantes más")} de mensualidades por revisar (detalle en Cobros).`,
+      priority: 3,
+      tags: ["receipt"],
+      click: "/admin/billing",
+    });
+  }
   return notices;
 }
 
@@ -366,6 +385,18 @@ export function describePushLine(report: ScheduledTasksReport, problem: string |
   if (!report.push) return "";
   const { sent, failed, removedDevices } = report.push;
   return ` · avisos en la app: enviados ${sent} · fallidos ${failed} · aparatos dados de baja ${removedDevices}${problem ? ` (${problem})` : ""}`;
+}
+
+/**
+ * "· mensualidades: cobros N · recordatorios N · comprobantes N (borrados, más de 12 meses: N)" (spec 029).
+ * Sólo cifras: el registro es público.
+ */
+export function describeBillingLine(report: ScheduledTasksReport): string {
+  if (!report.billing) return "";
+  const { charges, reminders, receipts, receiptsPurged } = report.billing;
+  return ` · mensualidades: cobros ${charges} · recordatorios ${reminders} · comprobantes ${receipts} (borrados, más de 12 meses: ${
+    receiptsPurged ?? "sin almacenamiento"
+  })`;
 }
 
 /**
@@ -469,6 +500,7 @@ async function main(): Promise<void> {
         `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ` +
         `emails sin contenido (más de ${EMAIL_CONTENT_DAYS} días): ${report.emailContentPurged} · ` +
         `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"}` +
+        `${describeBillingLine(report)}` +
         `${describePanelLine(report)}` +
         `${describePushLine(report, config.webPushProblem ? `sin envío: ${config.webPushProblem}` : null)}` +
         `${describeRemindersLine(report)}` +

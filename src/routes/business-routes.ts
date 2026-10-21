@@ -4,6 +4,7 @@ import { handle, limitRequests, queryParam } from "../http/handlers.ts";
 import { requireSuperAdminTwoFactor } from "../http/session.ts";
 import { businessService, subscriptionService, teamService, userService } from "../services/account-service.ts";
 import { auditLogService, notificationService } from "../services/activity-service.ts";
+import { billingService } from "../services/billing-service.ts";
 import { appointmentSeriesService } from "../services/appointment-series-service.ts";
 import { appointmentsToCloseService } from "../services/appointments-to-close.ts";
 import { clinicalAttachmentService } from "../services/clinical-attachment-service.ts";
@@ -143,6 +144,34 @@ businessRoutes.delete(
 businessRoutes.get(
   "/:businessId/referrals",
   handle((req) => referralService.getForBusiness(req.ctx, req.params.businessId)),
+);
+
+// La mensualidad del propietario (spec 029): sólo el propietario (`billing.manage`); el super admin en modo
+// soporte la ve, pero no sube el comprobante. Leerla crea el cobro del mes si ya llegó su día de pago (así la
+// pantalla de pago no espera al cron). Sin caché, como toda la API (http/no-store.ts).
+const billingReceiptLimit = limitRequests({
+  name: "comprobantes-mensualidad",
+  windowMinutes: 15,
+  max: 20,
+  message: "Demasiados comprobantes seguidos. Espera unos minutos o envíalo por WhatsApp al soporte.",
+});
+businessRoutes.get(
+  "/:businessId/billing",
+  handle((req) => billingService.get(req.ctx, req.params.businessId)),
+);
+businessRoutes.post(
+  "/:businessId/billing/charges/:chargeId/receipt",
+  billingReceiptLimit,
+  handle((req) => billingService.requestUpload(req.ctx, req.params.businessId, req.params.chargeId, req.body)),
+);
+businessRoutes.post(
+  "/:businessId/billing/charges/:chargeId/receipt/:receiptId/complete",
+  billingReceiptLimit,
+  handle((req) => billingService.completeUpload(req.ctx, req.params.businessId, req.params.chargeId, req.params.receiptId)),
+);
+businessRoutes.get(
+  "/:businessId/billing/charges/:chargeId/receipt",
+  handle((req) => billingService.receiptUrl(req.ctx, req.params.businessId, req.params.chargeId)),
 );
 
 // Suscripción

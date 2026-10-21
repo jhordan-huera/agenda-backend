@@ -4,7 +4,16 @@ import { accountChangeNotice, findAccountChanges } from "../services/account-ale
 import { refreshAnalytics, type AnalyticsRefresh } from "../services/analytics-service.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
 import {
+  billableBusinessIds,
+  deleteStalePendingBillingReceipts,
+  ensureCharge,
+  purgeOldBillingReceipts,
+  queueBillingReminder,
+} from "../services/billing-service.ts";
+import {
+  billingReceiptNotice,
   clientImportNotice,
+  findBillingReceipts,
   findClientImports,
   findOnlineBookings,
   findPanelAppointments,
@@ -100,13 +109,25 @@ export async function queueCalendarInvites(): Promise<QueuedReminders> {
   );
 }
 
+/**
+ * El cobro de las mensualidades (spec 029), en cada pasada: el cobro del mes de cada negocio que ya llegó a
+ * su día de pago y el email de los tres días antes, cada negocio en su transacción. `at`: el momento (las
+ * pruebas lo mueven). Devuelve cuántos cobros y recordatorios, y en cuántos negocios falló.
+ */
+export async function runMonthlyBilling(at: Date = new Date()): Promise<{ charges: number; reminders: number; failures: number }> {
+  const ids = await billableBusinessIds(pool);
+  const charges = await forEachBusiness(ids, "mensualidades", (db, id) => ensureCharge(db, id, at));
+  const reminders = await forEachBusiness(ids, "recordatorio de la mensualidad", (db, id) => queueBillingReminder(db, id, at));
+  return { charges: charges.queued, reminders: reminders.queued, failures: charges.failures + reminders.failures };
+}
+
 /** Resumen de una ejecución del cron (scripts/cron.ts). */
 export interface ScheduledTasksReport {
   /** Recordatorios puestos en cola en esta ejecución. */
   reminders: number;
   /**
-   * Negocios en los que falló preparar los recordatorios, la agenda del día o las invitaciones de calendario
-   * (detalle en el registro).
+   * Negocios en los que falló preparar los recordatorios, la agenda del día, las invitaciones de calendario
+   * o las mensualidades (detalle en el registro).
    */
   reminderFailures: number;
   /**
@@ -148,6 +169,14 @@ export interface ScheduledTasksReport {
   clientImports?: number;
   /** El aviso de cada una (hasta MAX_IMPORT_NOTICES), con la cifra y quién la hizo, sin datos de pacientes. */
   importNotices?: BookingNotice[];
+  /**
+   * El cobro de las mensualidades (spec 029): los cobros creados en esta pasada, los recordatorios de los tres
+   * días antes, los comprobantes que llegaron desde la ejecución anterior y los de más de 12 meses que se
+   * borraron (null: sin almacenamiento). Sólo cifras: el registro es público.
+   */
+  billing?: { charges: number; reminders: number; receipts: number; receiptsPurged: number | null };
+  /** El aviso de cada comprobante de mensualidad (hasta MAX_BILLING_RECEIPT_NOTICES), con el negocio y el monto. */
+  billingReceiptNotices?: BookingNotice[];
   /** Cambios de seguridad en cuentas de super admin desde la ejecución anterior (spec 009). */
   accountChanges?: number;
   /** El aviso de cada uno (hasta MAX_ACCOUNT_NOTICES), con la cuenta enmascarada. */
@@ -272,14 +301,18 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const reminders = await queueAllReminders();
   // Antes del envío: así las invitaciones de la ventana salen en esta misma pasada.
   const calendarInvites = await queueCalendarInvites();
+  // Las mensualidades (spec 029), también antes del envío: el recordatorio de los tres días antes sale ya.
+  const billing = await runMonthlyBilling();
   const emails = await processEmailQueue({ maxBatches: MAX_EMAIL_BATCHES, deadline: started + EMAIL_BUDGET_MS });
   await deleteExpiredSessions();
   await deleteStalePendingAttachments();
   await deleteStalePendingReceipts();
+  await deleteStalePendingBillingReceipts();
   const security = await findLoginAttacks(previous?.ranAt ?? null);
   const purged = await one<{ deleted: number }>(pool, "select purge_audit_logs() as deleted");
   const emailContentPurged = await purgeOldEmailContent();
   const receiptsPurged = await purgeOldReceipts();
+  const billingReceiptsPurged = await purgeOldBillingReceipts();
   const unusedImagesDeleted = await deleteUnusedImageUploads();
   const rateLimitsPurged = await deleteExpiredRateLimits();
   // Corte en "ahora": lo enviado hasta aquí cuenta en esta ejecución y no en la siguiente.
@@ -321,6 +354,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const statusChanges = await findStatusChanges(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const accountChanges = await findAccountChanges(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   const clientImports = await findClientImports(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
+  const billingReceipts = await findBillingReceipts(pool, previous?.ranAt ?? null, totals?.at ?? new Date().toISOString());
   // Avisos en el celular (spec 013), después de los de ntfy: citas por cerrar, el resumen de las 8 y los
   // del super admin; después, el envío de la cola y su limpieza.
   const push = await runPushJobs({
@@ -346,7 +380,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   });
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
-    reminderFailures: reminders.failures + calendarInvites.failures,
+    reminderFailures: reminders.failures + calendarInvites.failures + billing.failures,
     calendarInvites: calendarInvites.queued,
     emails,
     sentSinceLastRun: totals?.sent ?? 0,
@@ -369,6 +403,13 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     statusNotices: statusChanges.changes.map(statusChangeNotice),
     clientImports: clientImports.total,
     importNotices: clientImports.imports.map(clientImportNotice),
+    billing: {
+      charges: billing.charges,
+      reminders: billing.reminders,
+      receipts: billingReceipts.total,
+      receiptsPurged: billingReceiptsPurged,
+    },
+    billingReceiptNotices: billingReceipts.receipts.map(billingReceiptNotice),
     accountChanges: accountChanges.total,
     accountNotices: accountChanges.changes.map(accountChangeNotice),
     since: previous?.ranAt ?? null,

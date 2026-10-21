@@ -150,7 +150,7 @@ r = await activate(ricardo, ricardoA);
 ok(r.status === 200 && Array.isArray(r.body.mutedKinds) && r.body.mutedKinds.length === 0 && r.body.createdAt, "activa su aparato con todos los tipos encendidos", r.body);
 ok(Object.keys(r.body).sort().join() === "createdAt,mutedKinds", "la respuesta nunca devuelve la dirección ni las claves", r.body);
 r = await admin("GET", "/push/config");
-ok(r.status === 200 && JSON.stringify(r.body.kinds) === JSON.stringify(PLATFORM_PUSH_KINDS), "el super admin recibe sus cinco tipos", r.body);
+ok(r.status === 200 && JSON.stringify(r.body.kinds) === JSON.stringify(PLATFORM_PUSH_KINDS), "el super admin recibe sus seis tipos (con los comprobantes de mensualidades, spec 029)", r.body);
 const adminDevice = push.device();
 ok((await activate(admin, adminDevice)).status === 200, "y activa el suyo");
 // El rol Profesional con su agenda sí (spec 017): ver «El resumen de las 8 en el celular de cada profesional».
