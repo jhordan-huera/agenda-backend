@@ -17,6 +17,7 @@ import {
   billingPaidSchema,
   billingReasonSchema,
   businessBillingSchema,
+  proposedBilling,
   platformBankAccountsSchema,
 } from "../shared/lib/validations/admin.ts";
 import { RECEIPT_MAX_BYTES, RECEIPT_UPLOAD_ATTEMPTS, receiptInputSchema } from "../shared/lib/validations/payment.ts";
@@ -130,11 +131,13 @@ interface BillingTarget {
   monthlyFee: number;
   billingDay: number | null;
   billingStart: ISODate | null;
+  /** El día en que empezó su plan actual, en la zona del negocio: de él sale la mensualidad automática. */
+  planStart: ISODate;
 }
 
 const TARGET_SQL = `select b.id as "businessId", b.name as "businessName", b.timezone, b.status, b.owner_id as "ownerId",
                            s.id as "subscriptionId", s.plan, s.monthly_fee as "monthlyFee", s.billing_day as "billingDay",
-                           s.billing_start as "billingStart"
+                           s.billing_start as "billingStart", (s.plan_since at time zone b.timezone)::date as "planStart"
                       from businesses b join subscriptions s on s.business_id = b.id`;
 
 /** Con `lock`, bloquea la suscripción: los cobros de un negocio se crean de uno en uno (cron y lectura a la vez). */
@@ -630,11 +633,17 @@ export const adminBillingService = {
    */
   async setBusinessBilling(ctx: RequestContext, businessId: string, input: unknown): Promise<AdminBusinessBilling> {
     const actor = authorizeSuperAdmin(ctx);
-    const data = parseInput(businessBillingSchema, input);
+    const parsed = parseInput(businessBillingSchema, input);
     return transaction(async (db) => {
       const before = await findTarget(db, businessId, true);
       if (!before) throw new AppError("not_found", "Negocio no encontrado.");
       const today = todayIn(before.timezone, new Date());
+      // Sin día de pago ni primer cobro, los dos salen del día en que empezó su plan (pedido del dueño del
+      // producto, 2026-10-20): creado el 8 de septiembre, paga el 8 de cada mes desde el 8 de octubre.
+      const data =
+        parsed.monthlyFee > 0 && parsed.billingDay === null && parsed.billingStart === null
+          ? { ...parsed, ...proposedBilling(before.planStart, today) }
+          : parsed;
       if (data.monthlyFee > 0 && data.billingStart !== null && data.billingStart !== before.billingStart && data.billingStart < today) {
         throw new AppError("validation", "La fecha del primer cobro no puede ser anterior a hoy.");
       }

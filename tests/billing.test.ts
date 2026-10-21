@@ -10,7 +10,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { businessInput } from "./helpers/business.mjs";
 import { checks, count, fakeNtfy, login, runCron, sql, BASE } from "./helpers/harness.ts";
-import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
+import { addDaysISO, addMonthsISO, dayOfMonthISO, getZonedNow } from "../src/shared/lib/time.ts";
 import type {
   AdminBillingList,
   AdminBusinessDetail,
@@ -172,6 +172,36 @@ console.log("La mensualidad");
 }
 
 /* ----------------------------------------------------------------- Quién ---- */
+
+console.log("La mensualidad automática: desde el día en que empezó su plan");
+{
+  // Sin día de pago ni primer cobro, la API los saca de `plan_since` (pedido del dueño del producto,
+  // 2026-10-20): creado el 8 de septiembre, paga el 8 de cada mes desde el 8 de octubre.
+  const startedAt = (interval: string) => {
+    sql(`update subscriptions set plan = 'pro', plan_since = now() - interval '${interval}', monthly_fee = 0, billing_day = null, billing_start = null where business_id = '${FISIO}'`);
+    return sql(`select (s.plan_since at time zone b.timezone)::date from subscriptions s join businesses b on b.id = s.business_id where b.id = '${FISIO}'`);
+  };
+  const now = today();
+  let started = startedAt("10 days");
+  let r = await admin("PUT", `/admin/businesses/${FISIO}/billing`, { monthlyFee: 12, billingDay: null, billingStart: null });
+  const monthLater = dayOfMonthISO(addMonthsISO(started, 1), Number(started.slice(8)));
+  ok(
+    r.status === 200 && r.body.billingDay === Number(started.slice(8)) && r.body.billingStart === monthLater,
+    "empezó hace 10 días: paga el mismo día de cada mes, y el primer cobro al cumplirse el mes",
+    [started, r.body],
+  );
+  started = startedAt("75 days");
+  r = await admin("PUT", `/admin/businesses/${FISIO}/billing`, { monthlyFee: 12, billingDay: null, billingStart: null });
+  const day = Number(started.slice(8));
+  const thisMonth = dayOfMonthISO(now, day);
+  const next = thisMonth >= now ? thisMonth : dayOfMonthISO(addMonthsISO(now, 1), day);
+  ok(
+    r.status === 200 && r.body.billingDay === day && r.body.billingStart === next,
+    "empezó hace 75 días: el mismo día, y el primer cobro el siguiente desde hoy (nunca uno ya pasado)",
+    [started, r.body, next],
+  );
+  sql(`update subscriptions set monthly_fee = 0, billing_day = null, billing_start = null where business_id = '${FISIO}'`);
+}
 
 console.log("Quién ve la mensualidad");
 {
