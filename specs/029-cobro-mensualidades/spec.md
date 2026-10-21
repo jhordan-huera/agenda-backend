@@ -163,3 +163,47 @@ sube el comprobante y sigue usando el sistema.
   los planes ni los precios.
 - **La beta:** lleva la pantalla con datos de prueba, para las presentaciones (valor por defecto, aprobado
   con la spec el 2026-10-20). Va en una fase propia al final.
+
+## Ampliación: los precios automáticos (2026-10-20)
+
+El dueño del producto, el mismo día: «el plan Pro y Business son de 14,99 y 29,99, entonces todo esto
+debe salir automático en los sistemas, y con la campaña de referidos automáticamente se le resta 1,50».
+
+**Sus decisiones (2026-10-20):**
+1. **Los precios de los planes,** editables en /admin → Planes:
+   - Free, $0 (sin cobros);
+   - **Pro, $14,99**;
+   - **Business, $29,99 con 3 agendas incluidas y $8 por cada agenda más.** Las agendas que se cuentan
+     son las «Agendas contratadas» de su ficha; sin tope, las agendas activas.
+2. **Precio especial opcional:** en la ficha del negocio se puede poner otro monto (0 = cortesía, sin
+   cobros). Si se quita, vuelve al precio de su plan.
+3. **Los negocios que ya existen** con Pro o Business toman su precio y su día de pago (el día en que
+   empezó su plan) al publicarse. Su primer cobro es su próximo día de pago, nunca uno ya pasado, con el
+   email de aviso tres días antes.
+
+### Historia 5 - La mensualidad se calcula sola (Prioridad: P1)
+
+**Escenarios de aceptación**:
+
+1. **Dado** un negocio con Pro o Business sin precio especial, **entonces** su mensualidad es la de su
+   plan. En Business se suman $8 por cada agenda sobre las 3 incluidas: con 5, $45,99.
+2. **Dado** un negocio de pago sin día de pago, porque es nuevo, cambió desde Free o existía antes,
+   **entonces** el sistema le pone el día en que empezó su plan y su primer cobro un mes después, o su
+   próximo día de pago si ése ya pasó.
+3. **Dado** un cambio de plan o de agendas, **entonces** el precio nuevo vale desde el siguiente cobro:
+   los ya creados no cambian.
+   - Al pasar a Free, no hay más cobros.
+   - Al volver de Free a un plan de pago, el día de pago se calcula de nuevo desde ese cambio.
+4. **Dado** un precio especial, **entonces** vale ése, y la ficha lo dice («Precio especial: $20,00»).
+   Sin él, dice el del plan («Mensualidad: $45,99, Business con 5 agendas»).
+5. **Dado** /admin → Planes, **entonces** el super admin cambia los precios, y valen desde el siguiente
+   cobro de cada negocio. Queda en la actividad.
+6. **Dado** el cobro de cada mes, **entonces** al precio se le restan $1,50 por cada recomendación
+   ganada, como antes.
+7. **Dado** el propietario, **entonces** sigue viendo sólo su total y su descuento, nunca los precios de
+   los planes.
+
+- **RF-009**: Los precios de los planes DEBEN guardarse en el sistema, editables por el super admin y
+  nunca públicos ni visibles para los negocios.
+- **RF-010**: La mensualidad de cada negocio DEBE salir de su plan y sus agendas, salvo un precio
+  especial. El día de pago y el primer cobro DEBEN ponerse solos desde el día en que empezó su plan.

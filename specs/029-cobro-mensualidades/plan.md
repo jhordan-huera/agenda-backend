@@ -176,3 +176,51 @@ oscuro:
 1. **La migración 049,** como paso aparte, antes del backend.
 2. **El backend y después el front.** La beta, aparte.
 3. **Después:** en /admin, poner tus cuentas y la mensualidad de cada negocio, con su día de pago.
+
+## Ampliación: los precios automáticos (2026-10-20)
+
+1. **La migración 050, `050_plan_prices.sql`** (la 049 ya está aplicada en producción):
+   - **en `platform_settings`:** `pro_price` (14.99), `business_price` (29.99),
+     `business_included_agendas` (3) y `business_extra_agenda_price` (8), con sus checks. Nunca van en la
+     lectura pública;
+   - **`subscriptions.monthly_fee`** pasa a ser el **precio especial**:
+     - acepta null y deja de tener default; null quiere decir el precio de su plan;
+     - los 0 que haya pasan a null;
+     - se ajusta el check de la 049, para que el día de pago y el primer cobro no sean obligatorios
+       con null (los pone el sistema).
+2. **El cálculo,** compartido (`front/src/lib`):
+   - `planMonthlyPrice(plan, agendas, prices)`: Free 0; Pro el suyo; Business el suyo más el extra por
+     cada agenda sobre las incluidas;
+   - `effectiveMonthlyFee(subscription, agendas, prices)`: el precio especial si lo hay, si no el del
+     plan.
+3. **El día de pago automático** (`billing-service.ts`), con `ensureBillingSchedule`:
+   - para cada negocio de pago sin `billing_day`, pone `proposedBilling(planStart, today)`, el que ya
+     existe;
+   - lo llaman el cron (en cada pasada, antes de crear los cobros) y la lectura del propietario y de la
+     ficha. Así los negocios que ya existen y los nuevos se ajustan solos;
+   - queda en la actividad: «Puso la mensualidad automática de X: el 8 de cada mes, desde el 8 de
+     noviembre».
+   - al cambiar el plan desde Free (`applyPlanChange`), `billing_day` y `billing_start` vuelven a null,
+     y los pone de nuevo `ensureBillingSchedule`.
+4. **El cobro** (`ensureCharges`): su `base_amount` es `effectiveMonthlyFee` al crearse. Las agendas
+   salen de `max_professionals` o, sin tope, de las agendas activas. Con 0 no hay cobro.
+5. **/admin:**
+   - **Planes** (`admin-plans-page.tsx`): los cuatro valores, con su ejemplo de Business («5 agendas:
+     $45,99»). Rutas `GET` y `PUT /admin/plan-prices`, con la actividad;
+   - **la ficha:** «Mensualidad: $45,99 (Business con 5 agendas)», o «Precio especial», con «Poner
+     precio especial» y «Quitar», y el día de pago y el primer cobro;
+   - `AdminBusinessBilling` suma `planPrice`, `customFee` y `effectiveFee`.
+6. **Constitución:** los precios de los planes están en /admin (no en el código) y los negocios no los
+   ven; la mensualidad sale sola del plan y las agendas, con el precio especial opcional.
+
+**Pruebas,** en `billing.test.ts`:
+- Pro → $14,99; Business con 3, 4 y 5 agendas → $29,99, $37,99 y $45,99; sin tope, las agendas
+  activas;
+- el precio especial y quitarlo;
+- cambiar los precios en Planes (sólo el super admin, a la actividad) vale desde el siguiente cobro;
+- el día de pago automático para un negocio existente (por `plan_since`), y al volver de Free;
+- los referidos restan del precio del plan;
+- los precios no salen en `/public/platform-settings` ni para el propietario;
+- la migración, en la base de pruebas.
+
+**Publicación:** la migración 050 antes del backend. Los PR #53 y #39 se actualizan con esto.
