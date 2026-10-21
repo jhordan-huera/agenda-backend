@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev · **Fecha**: 2026-10-20
+**Estado**: Publicada (2026-10-21, PR backend #53 y front #39) · **Fecha**: 2026-10-20
 
 **Repos**: los dos (la beta no lo lleva) · **Migración**: No
 

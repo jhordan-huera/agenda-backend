@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev · **Fecha**: 2026-10-21
+**Estado**: Publicada (2026-10-21, PR backend #53 y front #39) · **Fecha**: 2026-10-21
 
 **Repos**: los dos y la beta (con datos de ejemplo) · **Migraciones**: Sí: `049_monthly_billing.sql` (ya
 aplicada en producción) y `050_plan_prices.sql`
