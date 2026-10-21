@@ -1218,7 +1218,7 @@ export interface PlatformStats {
   };
   /**
    * El cobro de las mensualidades (spec 029): los comprobantes por revisar y los cobros atrasados (por pagar
-   * y pasada la gracia). Una API anterior no lo trae.
+   * desde hace BILLING_OVERDUE_DAYS días o más). Una API anterior no lo trae.
    */
   billing?: { inReview: number; overdue: number };
 }
@@ -1366,9 +1366,10 @@ export interface BusinessBilling {
   nextDueDate: ISODate | null;
   /** El cobro pendiente más antiguo (por pagar o rechazado): el que abre la pantalla de pago. */
   pending: BillingCharge | null;
-  /** Días de gracia que le quedan al pendiente: 5 en su día de pago y 0 desde el sexto (o sin pendiente). */
-  graceDaysLeft: number;
-  /** El pendiente pasó la gracia: la pantalla de pago no se cierra hasta subir el comprobante. */
+  /**
+   * Hay un pendiente: desde su día de pago, la pantalla de pago no se cierra hasta subir el comprobante (sin
+   * «Más tarde» ni días de gracia, desde el 2026-10-20). La API no bloquea nada: lo hace la pantalla.
+   */
   blocked: boolean;
   /** Las cuentas de Agenda360 para transferir (las pone el super admin en /admin → Configuración). */
   bankAccounts: BankAccount[];
@@ -1391,16 +1392,20 @@ export interface AdminBusinessBilling {
 }
 
 /**
- * Los filtros de /admin → Cobros: cada cobro está en uno solo. Los por pagar se separan por la gracia: «Por
- * pagar» (dentro de los 5 días) y «Atrasados» (pasados); los rechazados van aparte, con su motivo.
+ * Los filtros de /admin → Cobros: cada cobro está en uno solo. Los por pagar se separan por los días desde
+ * su día de pago (BILLING_OVERDUE_DAYS, sólo para el super admin: el propietario no tiene gracia): «Por
+ * pagar» (menos de 5) y «Atrasados» (5 o más); los rechazados van aparte, con su motivo.
  */
 export type AdminBillingFilter = "in_review" | "due" | "overdue" | "paid" | "rejected" | "void";
 
 /** Un cobro en /admin → Cobros. */
 export interface AdminBillingCharge extends BillingCharge {
   business: { id: string; name: string };
-  /** Días de gracia que le quedan (0 si ya pasó o si no está pendiente). */
-  graceDaysLeft: number;
+  /**
+   * Días que le faltan a un cobro por pagar para salir como «Atrasado»: 5 en su día de pago, 1 el quinto
+   * día y 0 desde el sexto (0 también si no está por pagar). Sólo para el super admin.
+   */
+  overdueInDays: number;
   /** Lo que escribió el super admin al marcarlo pagado sin comprobante (sólo lo ve él). */
   paidNote: string | null;
   /** Quién lo marcó pagado, lo rechazó o lo anuló (null: nadie todavía, o ya no existe la cuenta). */

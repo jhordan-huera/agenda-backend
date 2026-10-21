@@ -258,7 +258,8 @@ console.log("Las mensualidades (spec 029)");
   let overview = await stats();
   ok(overview.billing?.inReview === 0 && overview.billing.overdue === 0, "sin cobros, 0 comprobantes por revisar y 0 atrasados", overview.billing);
   // Un cobro en revisión, uno atrasado (su día de pago fue hace 5 días, en la zona del negocio: es el sexto)
-  // y uno por pagar todavía en la gracia (hace 4 días: es el quinto).
+  // y uno todavía «Por pagar» (hace 4 días: es el quinto). Los 5 días son sólo del super admin: el
+  // propietario no tiene gracia.
   const insert = (status: string, daysAgo: number) =>
     sql(`insert into billing_charges (business_id, due_date, base_amount, amount, status)
          values ('${clinicId}', (now() at time zone 'America/Guayaquil')::date - ${daysAgo}, 9.99, 9.99, '${status}')`);
@@ -266,7 +267,7 @@ console.log("Las mensualidades (spec 029)");
   insert("due", 5);
   insert("due", 4);
   overview = await stats();
-  ok(overview.billing?.inReview === 1 && overview.billing.overdue === 1, "cuenta 1 comprobante por revisar y 1 atrasado (no el que sigue en su gracia)", overview.billing);
+  ok(overview.billing?.inReview === 1 && overview.billing.overdue === 1, "cuenta 1 comprobante por revisar y 1 atrasado (no el que sigue «Por pagar»)", overview.billing);
   sql(`delete from billing_charges where business_id = '${clinicId}'`);
 }
 

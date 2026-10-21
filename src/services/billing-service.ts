@@ -3,7 +3,7 @@ import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import {
-  BILLING_GRACE_DAYS,
+  BILLING_OVERDUE_DAYS,
   BILLING_RECEIPT_RETENTION_MONTHS,
   BILLING_REMINDER_DAYS,
   REFERRAL_DISCOUNT,
@@ -54,13 +54,16 @@ import { applyRewards, availableRewardIds } from "./referral-service.ts";
  *   negocio: lo crean el cron en cada pasada y la lectura del propietario, para que la pantalla no espere
  *   al cron. Lleva la mensualidad de ese momento menos el descuento de las recomendaciones ganadas y sin
  *   aplicar que no use otro cobro abierto (REFERRAL_DISCOUNT cada una, sin pasar de la mensualidad). Sólo
- *   se crea dentro de sus días de gracia: un mes en que el negocio estuvo suspendido o sin propietario no
- *   se cobra después.
+ *   se crea en sus primeros BILLING_OVERDUE_DAYS días: un mes en que el negocio estuvo suspendido o sin
+ *   propietario no se cobra después.
  * - **El propietario** ve la pantalla de pago desde el día de pago y sube el comprobante (como los de los
  *   pacientes: foto o PDF de hasta 10 MB, al bucket privado de comprobantes, en la carpeta del negocio).
- *   El cobro pasa a «En revisión» y el super admin recibe el aviso en su campana, en el celular y, desde
- *   el cron, por ntfy. La API no bloquea nada: la pantalla decide con `graceDaysLeft` y `blocked`, así su
- *   equipo y su página de reservas siguen funcionando.
+ *   No hay «Más tarde» ni días de gracia (pedido del dueño del producto, 2026-10-20): mientras haya un
+ *   cobro por pagar o rechazado, la pantalla no se cierra. El cobro pasa a «En revisión» y el super admin
+ *   recibe el aviso en su campana, en el celular y, desde el cron, por ntfy. La API no bloquea nada: la
+ *   pantalla decide con `blocked`, así su equipo y su página de reservas siguen funcionando.
+ * - **Los atrasados** son sólo del super admin: en /admin → Cobros, un cobro por pagar pasa de «Por pagar» a
+ *   «Atrasados» a los BILLING_OVERDUE_DAYS días de su día de pago, y el Inicio de /admin los cuenta.
  * - **El super admin** lo marca pagado (los descuentos usados quedan aplicados), lo rechaza con un motivo
  *   (vuelve a pedir el comprobante), lo marca pagado sin comprobante o lo anula. Cada cambio le llega al
  *   propietario por email.
@@ -110,9 +113,6 @@ function nextDueFrom(from: ISODate, day: number, start: ISODate): ISODate {
   const due = dayOfMonthISO(base, day);
   return due >= base ? due : dayOfMonthISO(addMonthsISO(base, 1), day);
 }
-
-/** Días de gracia que le quedan a un cobro: BILLING_GRACE_DAYS en su día de pago (el primero) y 0 desde el sexto. */
-const graceLeft = (dueDate: ISODate, today: ISODate) => Math.max(0, Math.min(BILLING_GRACE_DAYS, BILLING_GRACE_DAYS - daysBetween(dueDate, today)));
 
 /** «noviembre de 2026»: el mes de un cobro, para la actividad. */
 const monthLabel = (dueDate: ISODate) => formatDate(dueDate, "MMMM 'de' yyyy");
@@ -192,17 +192,17 @@ async function chargeAmounts(db: Db, businessId: string, monthlyFee: number): Pr
 
 /**
  * Crea el cobro del mes de un negocio si llegó su día de pago (RF-002), una sola vez (unique por negocio y
- * día de pago, y la suscripción bloqueada). Sólo dentro de sus días de gracia: un mes que el negocio pasó
- * suspendido o sin propietario, o un primer cobro que ya quedó atrás, no se cobra después. Si el descuento
- * cubre la mensualidad entera, nace pagado y sus recomendaciones quedan aplicadas. `at`: el momento (las
- * pruebas lo mueven). Devuelve 1 si lo creó. No va a la actividad: pasa solo.
+ * día de pago, y la suscripción bloqueada). Sólo en sus primeros BILLING_OVERDUE_DAYS días: un mes que el
+ * negocio pasó suspendido o sin propietario, o un primer cobro que ya quedó atrás, no se cobra después. Si
+ * el descuento cubre la mensualidad entera, nace pagado y sus recomendaciones quedan aplicadas. `at`: el
+ * momento (las pruebas lo mueven). Devuelve 1 si lo creó. No va a la actividad: pasa solo.
  */
 export async function ensureCharge(db: Db, businessId: string, at: Date = new Date()): Promise<number> {
   const target = await findTarget(db, businessId, true);
   if (!target || !isBillable(target)) return 0;
   const today = todayIn(target.timezone, at);
   const due = lastDueDate(today, target.billingDay, target.billingStart);
-  if (!due || daysBetween(due, today) >= BILLING_GRACE_DAYS) return 0;
+  if (!due || daysBetween(due, today) >= BILLING_OVERDUE_DAYS) return 0;
   if (await one(db, "select 1 from billing_charges where business_id = $1 and due_date = $2", [businessId, due])) return 0;
   const amounts = await chargeAmounts(db, businessId, target.monthlyFee);
   const covered = amounts.amount === 0;
@@ -298,14 +298,13 @@ async function billingState(db: Db, target: BillingTarget, at: Date): Promise<Bu
     [target.businessId, AWAITING_RECEIPT],
   );
   const today = todayIn(target.timezone, at);
-  const graceDaysLeft = pending ? graceLeft(pending.dueDate, today) : 0;
   return {
     monthlyFee: target.monthlyFee,
     billingDay: target.billingDay,
     nextDueDate: await nextUnbilledDue(db, target, today),
     pending,
-    graceDaysLeft,
-    blocked: Boolean(pending) && graceDaysLeft === 0,
+    // Sin gracia: un pendiente ya es de su día de pago o de antes (el cobro nace ese día), y bloquea.
+    blocked: pending !== null,
     bankAccounts: await getPlatformBankAccounts(db),
     charges,
     receiptsEnabled: Boolean(receiptStorage),
@@ -338,7 +337,7 @@ export async function adminBusinessBilling(db: Db, businessId: string, at: Date 
   };
 }
 
-/** Las cifras del Inicio de /admin: los comprobantes por revisar y los cobros atrasados (por pagar y sin gracia). */
+/** Las cifras del Inicio de /admin: los comprobantes por revisar y los atrasados (como «Atrasados» en Cobros). */
 export async function billingCounts(db: Db): Promise<{ inReview: number; overdue: number }> {
   const row = await one<{ inReview: number; overdue: number }>(
     db,
@@ -346,7 +345,7 @@ export async function billingCounts(db: Db): Promise<{ inReview: number; overdue
             count(*) filter (where c.status = 'due' and (now() at time zone b.timezone)::date - c.due_date >= $1)::int as overdue
        from billing_charges c join businesses b on b.id = c.business_id
       where c.status in ('in_review', 'due')`,
-    [BILLING_GRACE_DAYS],
+    [BILLING_OVERDUE_DAYS],
   );
   return { inReview: row?.inReview ?? 0, overdue: row?.overdue ?? 0 };
 }
@@ -374,7 +373,6 @@ interface ChargeRow {
   id: string;
   businessId: string;
   businessName: string;
-  timezone: string;
   dueDate: ISODate;
   baseAmount: number;
   referralDiscount: number;
@@ -391,7 +389,7 @@ async function findCharge(db: Db, chargeId: string, options: { businessId?: stri
   const charge = isUuid(chargeId)
     ? await one<ChargeRow>(
         db,
-        `select c.id, c.business_id as "businessId", b.name as "businessName", b.timezone, c.due_date as "dueDate",
+        `select c.id, c.business_id as "businessId", b.name as "businessName", c.due_date as "dueDate",
                 c.base_amount as "baseAmount", c.referral_discount as "referralDiscount", c.amount,
                 c.referral_ids::text[] as "referralIds", c.status
            from billing_charges c join businesses b on b.id = c.business_id
@@ -439,9 +437,9 @@ async function removeFiles(paths: string[]): Promise<void> {
 /** /api/businesses/:businessId/billing (spec 029): la mensualidad del propietario y su comprobante. */
 export const billingService = {
   /**
-   * La mensualidad, el próximo pago, el historial, el cobro pendiente más antiguo (con los días de gracia
-   * que le quedan y si ya bloquea la pantalla) y las cuentas. Antes crea el cobro del mes si ya llegó su
-   * día de pago, para que la pantalla no espere al cron.
+   * La mensualidad, el próximo pago, el historial, el cobro pendiente más antiguo (que bloquea la pantalla
+   * hasta subir el comprobante) y las cuentas. Antes crea el cobro del mes si ya llegó su día de pago, para
+   * que la pantalla no espere al cron.
    */
   async get(ctx: RequestContext, businessId: string, at: Date = new Date()): Promise<BusinessBilling> {
     await authorizeBilling(pool, ctx, businessId);
@@ -612,10 +610,14 @@ interface AdminChargeRow extends AdminBillingCharge {
   daysSince: number;
 }
 
+/**
+ * Cada cobro, en un filtro. Los por pagar se separan por los días desde su día de pago, sólo para el super
+ * admin (el propietario no tiene gracia): «Por pagar» antes de BILLING_OVERDUE_DAYS y «Atrasados» desde ahí.
+ */
 const FILTER_SQL: Record<AdminBillingFilter, string> = {
   in_review: "c.status = 'in_review'",
-  due: `c.status = 'due' and (now() at time zone b.timezone)::date - c.due_date < ${BILLING_GRACE_DAYS}`,
-  overdue: `c.status = 'due' and (now() at time zone b.timezone)::date - c.due_date >= ${BILLING_GRACE_DAYS}`,
+  due: `c.status = 'due' and (now() at time zone b.timezone)::date - c.due_date < ${BILLING_OVERDUE_DAYS}`,
+  overdue: `c.status = 'due' and (now() at time zone b.timezone)::date - c.due_date >= ${BILLING_OVERDUE_DAYS}`,
   paid: "c.status = 'paid'",
   rejected: "c.status = 'rejected'",
   void: "c.status = 'void'",
@@ -710,8 +712,8 @@ export const adminBillingService = {
     return {
       charges: rows.map(({ daysSince, ...charge }) => ({
         ...charge,
-        // Como graceLeft: los días que le quedan a un cobro que espera el comprobante.
-        graceDaysLeft: AWAITING_RECEIPT.includes(charge.status) ? Math.max(0, Math.min(BILLING_GRACE_DAYS, BILLING_GRACE_DAYS - daysSince)) : 0,
+        // Los días que le faltan a un cobro por pagar para salir en «Atrasados» (como FILTER_SQL).
+        overdueInDays: charge.status === "due" ? Math.max(0, Math.min(BILLING_OVERDUE_DAYS, BILLING_OVERDUE_DAYS - daysSince)) : 0,
       })),
       counts: counts!,
     };
@@ -745,7 +747,7 @@ export const adminBillingService = {
 
   /**
    * «Rechazar», con el motivo (RF-005): al propietario le llega por email y, al entrar, se le vuelve a abrir
-   * la pantalla de pago con los días de gracia que le queden.
+   * la pantalla de pago, que no se cierra hasta subir otro comprobante.
    */
   async reject(ctx: RequestContext, chargeId: string, input: unknown): Promise<void> {
     const actor = authorizeSuperAdmin(ctx);
@@ -759,10 +761,7 @@ export const adminBillingService = {
         values: [reason],
       });
       const supportContact = formatSupportContact(await getPlatformSettings(db));
-      const graceDaysLeft = graceLeft(charge.dueDate, todayIn(charge.timezone, new Date()));
-      await emailOwner(db, charge, "billing_rejected", (data) =>
-        emailTemplates.billingRejected({ ...data, reason, graceDaysLeft, supportContact }),
-      );
+      await emailOwner(db, charge, "billing_rejected", (data) => emailTemplates.billingRejected({ ...data, reason, supportContact }));
       await logAudit(db, {
         businessId: null,
         actor,

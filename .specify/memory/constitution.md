@@ -66,10 +66,10 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   2026-10-20).
 - Las mensualidades se cobran por transferencia (spec 029, 2026-10-20): el día de pago, al entrar, el
   propietario ve la pantalla con el valor y las cuentas y sube el comprobante, que queda «En revisión»
-  hasta que el super admin lo marca pagado o lo rechaza con un motivo. Tiene 5 días de gracia con «Más
-  tarde»; después, la pantalla no se cierra hasta subirlo. Sólo se bloquea el panel del propietario: su
-  equipo y su página de reservas siguen funcionando. La factura del SRI y el cobro con tarjeta quedan
-  fuera por ahora.
+  hasta que el super admin lo marca pagado o lo rechaza con un motivo. Desde el día de pago, la pantalla
+  no se cierra hasta subir el comprobante: no hay «Más tarde» ni días de gracia. Sólo se bloquea el panel
+  del propietario: su equipo y su página de reservas siguen funcionando. La factura del SRI y el cobro
+  con tarjeta quedan fuera por ahora.
 - Los pacientes se identifican por cédula (sólo números) dentro de cada negocio. La reserva
   online no reconoce al paciente por la cédula ni muestra sus datos: siempre pide nombre, email y
   teléfono.

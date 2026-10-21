@@ -222,12 +222,16 @@ export const formatUsdAmount = (amount: number) => `$${amount.toFixed(2).replace
 export const formatReferralAmount = formatUsdAmount;
 
 /**
- * El cobro de las mensualidades por transferencia (spec 029, 2026-10-20). En su día de pago, el propietario
- * ve al entrar la pantalla con el monto y las cuentas, y sube el comprobante. Durante BILLING_GRACE_DAYS
- * días (el día de pago es el primero) la pantalla tiene «Más tarde»; desde el siguiente ya no se cierra
- * hasta subirlo. Sólo se bloquea el panel del propietario: su equipo y su página de reservas siguen.
+ * El cobro de las mensualidades por transferencia (spec 029, 2026-10-20). Desde su día de pago, el
+ * propietario ve al entrar la pantalla con el monto y las cuentas, y no se cierra hasta subir el comprobante:
+ * no hay «Más tarde» ni días de gracia. Sólo se bloquea el panel del propietario: su equipo y su página de
+ * reservas siguen.
+ *
+ * BILLING_OVERDUE_DAYS es sólo del super admin: los días desde el día de pago (que es el primero) tras los
+ * que un cobro por pagar sale como «Atrasado» en /admin → Cobros y en su Inicio. Es también la ventana en
+ * que se crea el cobro del mes: un mes que el negocio pasó suspendido o sin propietario no se cobra después.
  */
-export const BILLING_GRACE_DAYS = 5;
+export const BILLING_OVERDUE_DAYS = 5;
 /** Días antes del día de pago en que le llega al propietario el email con el monto y las cuentas. */
 export const BILLING_REMINDER_DAYS = 3;
 /** Meses que se guardan los comprobantes de las mensualidades (contabilidad); después se borran solos. */

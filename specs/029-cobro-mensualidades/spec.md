@@ -20,14 +20,21 @@ transferencia:
 > comprobar que la transferencia se haya hecho y el estado pasa a pagado».
 
 **Decisiones del dueño del producto (2026-10-20):**
-1. **Si no sube el comprobante:** durante **5 días de gracia** la pantalla se abre al entrar, con
-   «Más tarde». **Desde el día 6** ya no se puede cerrar: sólo queda subir el comprobante. Su equipo y
-   su página de reservas siguen funcionando.
+1. **Si no sube el comprobante:** la pantalla es **obligatoria desde el día de pago**, sin «Más tarde»
+   ni días de gracia. Mientras haya un cobro sin comprobante (por pagar o rechazado), se abre al entrar
+   y no se cierra hasta subirlo: sólo queda «Cerrar sesión». Le dice claro que tiene que subirlo para
+   seguir usando el panel. Su equipo y su página de reservas siguen funcionando.
+
+   **Cambió el 2026-10-20**, después de aprobar la spec. Antes eran 5 días de gracia con «Más tarde»,
+   y desde el día 6 la pantalla ya no se cerraba. **Los 5 días quedan sólo para el super admin:** en
+   /admin → Cobros, un cobro por pagar sale en «Por pagar» los primeros 5 días desde su día de pago y en
+   «Atrasados» desde ahí, y el Inicio de /admin cuenta los atrasados. Son también la ventana en que se
+   crea el cobro del mes.
 2. **El día de pago** es el día del mes en que empezó su plan de pago (por ejemplo el 14). El super
    admin lo puede cambiar.
 3. **Si la transferencia no llegó o el monto no cuadra,** el super admin la **rechaza con un motivo**.
-   Al propietario le llega un email, y al entrar se le vuelve a abrir la pantalla con los días de
-   gracia que le queden.
+   Al propietario le llega un email, y al entrar se le vuelve a abrir la pantalla, que no se cierra
+   hasta subir otro comprobante.
 4. **El propietario ve su mensualidad:** su monto y su fecha, nunca la lista de planes ni los precios.
    Cambia la decisión vigente de que «los negocios no ven planes ni precios».
 
@@ -62,14 +69,18 @@ sube el comprobante y sigue usando el sistema.
    - el monto, y el descuento de referidos si lo hay («$9,99 − $1,50 por 1 recomendación = $8,49»);
    - las cuentas para transferir;
    - **«Subir comprobante»** (foto o PDF);
-   - **«Más tarde»**, con «Te quedan 5 días».
+   - el aviso de que **es obligatorio:** «Para seguir usando el panel, tienes que subir el comprobante
+     de tu transferencia. Tu equipo y tu página de reservas siguen funcionando.»
+
+   No tiene «Más tarde»: sólo «Cerrar sesión».
 3. **Dado** que sube el comprobante, **entonces** el cobro pasa a **«En revisión»**, la pantalla se
    cierra y puede usar el sistema con normalidad. Al super admin le llega un aviso por ntfy y en su
    campana.
-4. **Dado** que toca «Más tarde» dentro de los 5 días de gracia, **entonces** usa el sistema, y la
-   pantalla vuelve a abrirse en su siguiente inicio de sesión.
-5. **Dado** el día 6 sin comprobante, **entonces** la pantalla ya no tiene «Más tarde». El propietario
-   no usa el panel hasta subirlo. Su equipo y su página de reservas siguen funcionando.
+4. **Dado** que no sube el comprobante, **entonces** no usa el panel: la pantalla no se cierra, tampoco
+   al ir a otra página ni al volver a entrar. Su equipo y su página de reservas siguen funcionando.
+5. **Dado** que pasan 5 días desde el día de pago sin comprobante, **entonces** para el propietario
+   nada cambia (la pantalla ya era obligatoria). Sólo en /admin → Cobros el cobro pasa de «Por pagar» a
+   «Atrasados».
 6. **Dado** Configuración → Negocio, **entonces** el propietario ve su **mensualidad**: el monto, el
    próximo día de pago y el historial de sus pagos con su estado («Pagado», «En revisión»,
    «Rechazado»).
@@ -79,8 +90,8 @@ sube el comprobante y sigue usando el sistema.
 **Escenarios de aceptación**:
 
 1. **Dado** /admin → **Cobros**, **entonces** el super admin ve los cobros del mes filtrados por
-   estado: **En revisión**, **Por pagar** (dentro de la gracia), **Atrasados** (pasada la gracia),
-   **Pagados** y **Rechazados**. En cada uno ve el negocio, el periodo, el monto y la fecha.
+   estado: **En revisión**, **Por pagar** (menos de 5 días desde el día de pago), **Atrasados** (5 o
+   más), **Pagados** y **Rechazados**. En cada uno ve el negocio, el periodo, el monto y la fecha.
 2. **Dado** un cobro en revisión, **entonces** abre el comprobante y lo marca:
    - **«Pagado»:** el estado cambia, al propietario le llega «Recibimos tu pago, gracias», y los
      descuentos de referidos usados quedan aplicados;
@@ -113,11 +124,11 @@ sube el comprobante y sigue usando el sistema.
   no hay cobros.
 - **RF-002**: El sistema DEBE crear el cobro de cada mes en su día de pago, con el monto menos los
   descuentos de referidos ganados y sin aplicar.
-- **RF-003**: Al entrar, el propietario DEBE ver la pantalla de pago desde el día de pago:
-  - con «Más tarde» durante 5 días de gracia;
-  - sin él desde el sexto, hasta subir el comprobante.
+- **RF-003**: Al entrar, el propietario DEBE ver la pantalla de pago desde el día de pago, sin «Más
+  tarde» ni días de gracia: no se cierra hasta subir el comprobante (2026-10-20).
 
-  Su equipo y su página de reservas NO DEBEN bloquearse.
+  Su equipo y su página de reservas NO DEBEN bloquearse. Los 5 días son sólo del super admin: un cobro
+  por pagar sale en «Atrasados» de /admin a los 5 días de su día de pago.
 - **RF-004**: Al subir el comprobante, el cobro DEBE pasar a «En revisión» y el propietario DEBE poder
   usar el sistema.
 - **RF-005**: El super admin DEBE poder revisar, marcar «Pagado» o «Rechazar» con motivo, y marcar
@@ -136,7 +147,7 @@ sube el comprobante y sigue usando el sistema.
   entra.
 - **CE-002**: El super admin ve en una sola pantalla quién pagó, quién está en revisión y quién está
   atrasado, y confirma un pago en dos toques.
-- **CE-003**: Pasados los 5 días sin comprobante, el panel del propietario queda bloqueado en la
+- **CE-003**: Desde el día de pago sin comprobante, el panel del propietario queda bloqueado en la
   pantalla de pago, y su página de reservas sigue recibiendo citas. Lo comprueban las pruebas.
 - **CE-004**: Las pruebas pasan y la pantalla se ve bien en los dos modos y a 390 px.
 

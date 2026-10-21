@@ -2,10 +2,10 @@
 // actividad), las cuentas de la plataforma (nunca en la configuración pública), el cobro de cada mes (su día
 // de pago en la zona del negocio, el 31 que cae el 30, una sola vez, nunca con mensualidad 0, en el plan
 // gratis, suspendido o sin propietario), el descuento de referidos (sin reusar, aplicado al pagarse, libre
-// al anular), el recordatorio de tres días antes, el estado del propietario (la gracia y el bloqueo, moviendo
-// las fechas con sql), el comprobante (a «En revisión», con la campana y el ntfy del super admin), aprobar,
-// rechazar, pagado sin comprobante y anular (cada uno con su email y su actividad), quién ve qué y la purga
-// de los comprobantes de más de 12 meses.
+// al anular), el recordatorio de tres días antes, el estado del propietario (bloqueado desde el día de pago,
+// sin gracia) y «Por pagar» y «Atrasados» en /admin (moviendo las fechas con sql), el comprobante (a «En
+// revisión», con la campana y el ntfy del super admin), aprobar, rechazar, pagado sin comprobante y anular
+// (cada uno con su email y su actividad), quién ve qué y la purga de los comprobantes de más de 12 meses.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { businessInput } from "./helpers/business.mjs";
@@ -165,8 +165,8 @@ console.log("La mensualidad");
   ok(state.bankAccounts.length === 2 && state.receiptsEnabled, "con las cuentas para transferir", state.bankAccounts);
   ok(
     Object.keys(state).sort().join(",") ===
-      "bankAccounts,billingDay,blocked,charges,graceDaysLeft,monthlyFee,nextDueDate,pending,receiptsEnabled",
-    "sólo lo suyo: nunca planes ni precios",
+      "bankAccounts,billingDay,blocked,charges,monthlyFee,nextDueDate,pending,receiptsEnabled",
+    "sólo lo suyo: nunca planes ni precios (ni días de gracia: no tiene)",
     Object.keys(state),
   );
 }
@@ -239,6 +239,11 @@ console.log("El recordatorio de tres días antes");
     "«Tu mensualidad de Agenda360 vence el…», con el monto y las cuentas, sin negocio (sólo lo ve el propietario)",
     email.slice(0, 400),
   );
+  ok(
+    email.includes("al entrar a tu panel, tendrás que subirlo para seguir usándolo") && !/días desde el día de pago|Más tarde/.test(email),
+    "dice que ese día tendrá que subir el comprobante para seguir usando el panel (sin días de gracia)",
+    email,
+  );
   await tasks.runMonthlyBilling();
   ok(emails("billing_reminder") === before + 1, "una sola vez, aunque el cron pase otra vez");
   const outbox = await andrea("GET", `${B}/notifications`);
@@ -253,7 +258,7 @@ console.log("El recordatorio de tres días antes");
 
 /* ------------------------------------------------- El estado del propietario ---- */
 
-console.log("El día de pago, la gracia y el bloqueo");
+console.log("El día de pago y el bloqueo (sin gracia); «Por pagar» y «Atrasados» en /admin");
 let chargeId = "";
 {
   const day = Number(today().slice(8));
@@ -262,8 +267,8 @@ let chargeId = "";
   let state = await ownerBilling();
   chargeId = state.pending?.id ?? "";
   ok(
-    state.pending?.dueDate === today() && state.pending.amount === 9.99 && state.pending.status === "due" && state.graceDaysLeft === 5 && !state.blocked,
-    "su día de pago: al entrar, el cobro del mes ya está (sin esperar al cron), con 5 días de gracia",
+    state.pending?.dueDate === today() && state.pending.amount === 9.99 && state.pending.status === "due" && state.blocked,
+    "su día de pago: al entrar, el cobro del mes ya está (sin esperar al cron) y bloquea, sin «Más tarde» ni gracia",
     state,
   );
   ok(count(`select count(*) from billing_charges where business_id = '${CENTRO}'`) === 1, "un solo cobro");
@@ -277,18 +282,31 @@ let chargeId = "";
     sql(`update billing_charges set due_date = '${due}' where id = '${chargeId}'`);
     sql(`update subscriptions set billing_day = ${Number(due.slice(8))}, billing_start = '${due}' where business_id = '${CENTRO}'`);
   };
+  /** Dónde lo ve el super admin en /admin → Cobros, con los días que le faltan para «Atrasados». */
+  const inAdmin = async () => {
+    const [due, overdue] = [await adminList("due"), await adminList("overdue")];
+    const row = [...due.charges, ...overdue.charges].find((charge) => charge.id === chargeId);
+    const where = due.charges.some((charge) => charge.id === chargeId) ? "due" : overdue.charges.some((charge) => charge.id === chargeId) ? "overdue" : "";
+    return { where, overdueInDays: row?.overdueInDays, counts: due.counts, home: (await stats()).billing };
+  };
+  let seen = await inAdmin();
+  ok(
+    seen.where === "due" && seen.overdueInDays === 5 && seen.home?.overdue === 0,
+    "el super admin lo ve en «Por pagar» (5 días para «Atrasados»), y el Inicio no cuenta atrasados",
+    seen,
+  );
   moveDue(4);
   state = await ownerBilling();
-  ok(state.graceDaysLeft === 1 && !state.blocked, "el quinto día: le queda 1 día, todavía con «Más tarde»", state);
-  let list = await adminList("due");
-  ok(list.charges.some((charge) => charge.id === chargeId && charge.graceDaysLeft === 1), "en /admin → Cobros, «Por pagar»", list.counts);
+  ok(state.blocked && state.pending?.id === chargeId, "el quinto día: sigue bloqueado", state);
+  seen = await inAdmin();
+  ok(seen.where === "due" && seen.overdueInDays === 1 && seen.home?.overdue === 0, "en /admin, todavía «Por pagar» (pasa a «Atrasados» mañana)", seen);
   moveDue(5);
   state = await ownerBilling();
-  ok(state.graceDaysLeft === 0 && state.blocked && state.pending?.id === chargeId, "el sexto día, sin comprobante: bloqueado", state);
+  ok(state.blocked && state.pending?.id === chargeId, "el sexto día, igual: bloqueado", state);
   ok(count(`select count(*) from billing_charges where business_id = '${CENTRO}'`) === 1, "y sigue siendo un solo cobro");
-  list = await adminList("overdue");
-  ok(list.charges.some((charge) => charge.id === chargeId) && list.counts.overdue >= 1, "en «Atrasados»", list.counts);
-  ok((await stats()).billing?.overdue === 1, "el Inicio de /admin cuenta 1 atrasado", (await stats()).billing);
+  seen = await inAdmin();
+  ok(seen.where === "overdue" && seen.overdueInDays === 0 && seen.counts.overdue >= 1, "a los 5 días, en «Atrasados» (y ya no en «Por pagar»)", seen);
+  ok(seen.home?.overdue === 1, "el Inicio de /admin cuenta 1 atrasado", seen.home);
 
   // CE-003: sólo la pantalla del propietario se bloquea; la API, su equipo y su página de reservas siguen.
   r = await andrea("GET", `${B}/clients`);
@@ -395,12 +413,17 @@ console.log("Rechazar");
     "con el motivo",
     email.slice(0, 300),
   );
+  ok(
+    email.includes("al entrar a tu panel, tendrás que volver a subir el comprobante para seguir usándolo") && !/te quedan? \d+ d[ií]as?|Más tarde/.test(email),
+    "y que al entrar tendrá que volver a subirlo (sin días de gracia)",
+    email,
+  );
   const audit = lastAudit("platform.billing_charge_rejected");
   ok(audit.startsWith("sin negocio | Admin") && audit.includes("No llegó la transferencia"), "queda en la actividad, con quién lo hizo", audit);
   const state = await ownerBilling();
   ok(
     state.pending?.id === chargeId && state.pending.status === "rejected" && state.pending.rejectionReason === "No llegó la transferencia" && state.blocked,
-    "al entrar, se le vuelve a abrir la pantalla, con el motivo (y pasada la gracia, sin «Más tarde»)",
+    "al entrar, se le vuelve a abrir la pantalla, con el motivo, y no se cierra hasta subir otro",
     state,
   );
   r = await admin("POST", `/admin/billing/charges/${chargeId}/reject`, { reason: "Otra vez" });
@@ -529,7 +552,7 @@ console.log("El cobro de cada mes");
   sql(`update businesses set status = 'suspended' where id = '${FISIO}'`);
   ok((await ensureAt(FISIO, "2030-12-31T17:00:00Z")) === 0, "suspendido, no genera cobros");
   sql(`update businesses set status = 'active' where id = '${FISIO}'`);
-  ok((await ensureAt(FISIO, "2031-01-06T17:00:00Z")) === 0, "reactivado pasada la gracia, ese mes no se cobra después");
+  ok((await ensureAt(FISIO, "2031-01-06T17:00:00Z")) === 0, "reactivado a los 6 días del día de pago, ese mes no se cobra después");
   sql(`update subscriptions set monthly_fee = 0 where business_id = '${FISIO}'`);
   ok((await ensureAt(FISIO, "2031-01-31T17:00:00Z")) === 0, "con mensualidad 0, nada");
   sql(`update subscriptions set monthly_fee = 9.99, plan = 'free' where business_id = '${FISIO}'`);
