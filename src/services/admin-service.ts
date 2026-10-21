@@ -454,8 +454,9 @@ export const adminService = {
   async getBusiness(ctx: RequestContext, businessId: string): Promise<AdminBusinessDetail | null> {
     authorizeSuperAdmin(ctx);
     if (!isUuid(businessId)) return null;
-    // El resumen, el equipo, la actividad, su parte de la analítica y sus referidos a la vez (no dependen entre sí).
-    const [[summary], members, recentActivity, analytics, referrals] = await Promise.all([
+    // El resumen, el equipo, la actividad, su parte de la analítica, sus referidos y su última descarga a la
+    // vez (no dependen entre sí).
+    const [[summary], members, recentActivity, analytics, referrals, lastExport] = await Promise.all([
       summarizeBusinesses(pool, businessId),
       listTeamMembers(pool, businessId),
       // Sin los eventos de la historia clínica (spec 025): llevan pacientes, formatos y nombres de archivos.
@@ -471,9 +472,16 @@ export const adminService = {
       businessAnalytics(businessId),
       // Quién lo recomendó y a quién recomendó (spec 023).
       adminReferralsOf(pool, businessId),
+      // «Eliminar negocio» recuerda la descarga de los datos (spec 028): la última, según la actividad. Sólo
+      // la fecha: nada de lo que se llevó.
+      one<{ at: string | null }>(
+        pool,
+        "select max(created_at) as at from audit_logs where business_id = $1 and action = 'business.data_exported'",
+        [businessId],
+      ),
     ]);
     if (!summary) return null;
-    return { ...summary, members, recentActivity, analytics, referrals };
+    return { ...summary, members, recentActivity, analytics, referrals, lastDataExportAt: lastExport?.at ?? null };
   },
 
   /**

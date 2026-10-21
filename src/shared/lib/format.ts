@@ -88,6 +88,11 @@ export function plural(count: number, singular: string, pluralForm: string): str
   return `${count} ${count === 1 ? singular : pluralForm}`;
 }
 
+/** «5.000»: las cifras de los mensajes, con el punto de los miles. */
+export function formatCount(count: number): string {
+  return String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
 /** Nombres en una frase: "Ana", "Ana y Carlos", "Ana, Carlos y Luis" (los pacientes de una cita). */
 export function joinNames(names: readonly string[]): string {
   if (names.length <= 1) return names[0] ?? "";

@@ -1016,6 +1016,92 @@ export interface ClinicalRecord {
   attachmentAccess: "available" | "upgrade" | "unavailable";
 }
 
+/* -------------------------------------- Descargar los datos del negocio (spec 028) -- */
+
+/**
+ * Qué se lleva quien descarga: el propietario, todo el negocio (`business`); el rol Profesional, lo de
+ * su agenda (`agenda`): sus pacientes (con la regla de «sólo sus pacientes», aunque el negocio esté en
+ * «todos»), sus citas y, con acceso clínico, las historias de esos pacientes. Nadie más descarga: ni el
+ * administrador, ni la recepción, ni el super admin, tampoco en modo soporte.
+ */
+export type DataExportScope = "business" | "agenda";
+
+/**
+ * ¿Lleva las historias clínicas y sus archivos? `no_access`: el profesional no tiene acceso clínico;
+ * `disabled`: la historia clínica no está activada en el negocio.
+ */
+export type DataExportClinical = "included" | "no_access" | "disabled";
+
+/** GET …/export: con qué empieza cada descarga. Pedirlo la deja en la actividad (una entrada por descarga). */
+export interface DataExportSummary {
+  scope: DataExportScope;
+  business: { name: string; slug: string; timezone: string; currency: string; address: string; phone: string };
+  /** Quién descarga: va al pie de cada historia. */
+  exportedBy: string;
+  /** Cuándo empezó: la fecha del ZIP y del LEEME. */
+  exportedAt: ISODateTime;
+  clinical: DataExportClinical;
+  /** Lo que trae; las historias y los archivos, 0 si no lleva lo clínico. */
+  counts: { clients: number; appointments: number; clinicalRecords: number; attachments: number };
+}
+
+/** Una parte de la descarga. `nextCursor`: con qué pedir la siguiente (null: era la última). */
+export interface DataExportPage<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
+/** Un paciente de pacientes.xlsx, con todos sus datos: el email y el teléfono completos (son del negocio). */
+export interface DataExportClient {
+  id: string;
+  name: string;
+  documentId: string;
+  email: string;
+  phone: string;
+  address: string;
+  notes: string;
+  isActive: boolean;
+  /** «Por verificar» (spec 009): una reserva online con la cédula de otro paciente, aún sin unir. */
+  pendingVerification: boolean;
+  createdAt: ISODateTime;
+}
+
+/** Una cita de citas.xlsx. */
+export interface DataExportAppointment {
+  id: string;
+  date: ISODate;
+  startTime: TimeString;
+  endTime: TimeString;
+  status: AppointmentStatus;
+  /** El paciente principal primero y luego los demás de la sesión. */
+  clients: string[];
+  service: string;
+  professional: string;
+  /** En el local, a domicilio o por videollamada. */
+  modality: ServiceMode;
+  /** La dirección de la visita a domicilio ("" si no es a domicilio). */
+  homeAddress: string;
+  price: number;
+  paid: boolean;
+  notes: string;
+}
+
+/** La historia clínica de un paciente, como «Imprimir / PDF». */
+export interface DataExportClinicalRecord {
+  client: Pick<Client, "id" | "name" | "documentId" | "email" | "phone" | "address">;
+  profile: ClinicalProfile | null;
+  /** De la más antigua a la más reciente, con el servicio de su cita (null: sin cita o sin servicio). */
+  notes: (ClinicalNote & { serviceName: string | null })[];
+  /** Los archivos ya subidos, del más antiguo al más reciente. */
+  attachments: ClinicalAttachment[];
+}
+
+/** Una parte de las historias: unos pocos pacientes y las versiones de formato de sus evoluciones. */
+export interface DataExportClinicalPage extends DataExportPage<DataExportClinicalRecord> {
+  /** Las versiones de formato con que se escribieron sus evoluciones (por id). */
+  templateVersions: Record<string, ClinicalTemplateVersion>;
+}
+
 /* ------------------------------------------------------- Cambios de plan ---- */
 
 export type PlanRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
@@ -1145,6 +1231,11 @@ export interface AdminBusinessDetail extends AdminBusinessSummary {
   analytics: AdminBusinessAnalytics | null;
   /** El programa de referidos (spec 023): quién lo recomendó y a quién recomendó. Una API anterior no lo trae. */
   referrals?: AdminBusinessReferrals;
+  /**
+   * La última vez que el propietario o un profesional descargó sus datos (spec 028), según la actividad;
+   * null: ninguna. Una API anterior no lo trae.
+   */
+  lastDataExportAt?: ISODateTime | null;
 }
 
 /* ------------------------------------------------ Programa de referidos (spec 023) -- */

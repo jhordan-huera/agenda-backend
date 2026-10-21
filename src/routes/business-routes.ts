@@ -1,4 +1,4 @@
-import express, { Router } from "express";
+import express, { Router, type RequestHandler } from "express";
 import { clientIp } from "../http/client-ip.ts";
 import { handle, limitRequests, queryParam } from "../http/handlers.ts";
 import { requireSuperAdminTwoFactor } from "../http/session.ts";
@@ -11,6 +11,7 @@ import { clinicalService } from "../services/clinical-service.ts";
 import { clinicalTemplateService } from "../services/clinical-template-service.ts";
 import { clientImportService } from "../services/client-import-service.ts";
 import { requireUser } from "../services/context.ts";
+import { dataExportService } from "../services/data-export-service.ts";
 import {
   appointmentService,
   blockedTimeService,
@@ -213,6 +214,51 @@ businessRoutes.delete(
 businessRoutes.post(
   "/:businessId/clients/:clientId/confirm-claim",
   handle((req) => clientService.confirmClaim(req.ctx, req.params.businessId, req.params.clientId, req.body)),
+);
+
+// Descargar los datos del negocio (spec 028): el propietario, todo; el rol Profesional, lo de su agenda (y
+// las historias sólo con acceso clínico). Nadie más, ni el super admin en modo soporte: lo comprueba el
+// servicio. El resumen deja la descarga en la actividad; las partes son cortas (lejos del tope de 6 MB de
+// Lambda), sin caché y con un límite por conexión que comparten todas estas rutas.
+const exportNoStore: RequestHandler = (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+};
+const exportLimit = limitRequests({
+  name: "descarga-datos",
+  windowMinutes: 15,
+  max: 600,
+  message: "Demasiadas descargas seguidas. Espera unos minutos y vuelve a intentarlo.",
+});
+businessRoutes.get(
+  "/:businessId/export",
+  exportNoStore,
+  exportLimit,
+  handle((req) => dataExportService.summary(req.ctx, req.params.businessId)),
+);
+businessRoutes.get(
+  "/:businessId/export/clients",
+  exportNoStore,
+  exportLimit,
+  handle((req) => dataExportService.clients(req.ctx, req.params.businessId, queryParam(req, "cursor"))),
+);
+businessRoutes.get(
+  "/:businessId/export/appointments",
+  exportNoStore,
+  exportLimit,
+  handle((req) => dataExportService.appointments(req.ctx, req.params.businessId, queryParam(req, "cursor"))),
+);
+businessRoutes.get(
+  "/:businessId/export/clinical",
+  exportNoStore,
+  exportLimit,
+  handle((req) => dataExportService.clinical(req.ctx, req.params.businessId, queryParam(req, "cursor"))),
+);
+businessRoutes.post(
+  "/:businessId/export/attachments/:attachmentId",
+  exportNoStore,
+  exportLimit,
+  handle((req) => dataExportService.attachmentUrl(req.ctx, req.params.businessId, req.params.attachmentId)),
 );
 
 // Historia clínica (propietario y miembros autorizados; el super admin en modo soporte, sólo los formatos)

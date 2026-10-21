@@ -24,7 +24,8 @@ const EXTENSIONS: Record<string, string> = {
   "application/pdf": "pdf",
 };
 
-function requireStorage(): FileStorage {
+/** El almacenamiento de los archivos, o `unavailable` si no está configurado (también para la descarga, spec 028). */
+export function requireStorage(): FileStorage {
   if (!fileStorage) {
     throw new AppError("unavailable", "El almacenamiento de archivos no está configurado. Escribe a soporte.");
   }

@@ -224,6 +224,13 @@ export const formatReferralAmount = (amount: number) => `$${amount.toFixed(2).re
 export const CLINICAL_SUPPORT_BLOCKED_MESSAGE =
   "Por privacidad, el soporte de Agenda360 no tiene acceso a la historia clínica de los pacientes.";
 
+/**
+ * Descargar los datos del negocio (spec 028, 2026-10-20): sólo el propietario (todo el negocio) y cada
+ * profesional (lo suyo). La API responde con este mensaje al super admin, también en modo soporte, al
+ * administrador y a la recepción.
+ */
+export const DATA_EXPORT_BLOCKED_MESSAGE = "Por privacidad, sólo el propietario y cada profesional descargan sus datos.";
+
 /** Horario sugerido en el onboarding: lunes a viernes 08:00–17:00, sábado 09:00–13:00, domingo cerrado. */
 export const DEFAULT_WEEKLY_SCHEDULE: { dayOfWeek: DayOfWeek; isActive: boolean; intervals: TimeRange[] }[] =
   WEEK_DAYS.map(({ value }) => ({
