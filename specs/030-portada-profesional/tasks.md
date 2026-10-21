@@ -31,4 +31,4 @@ beta el 2026-10-21.
 ## Fase 3: La beta y el cierre
 
 - [x] T005 `beta/`: la misma portada y el mismo acceso (antes, una copia de `src`), y `npm run build`.
-- [ ] T006 `reporte.md` y el commit en `dev` del front.
+- [x] T006 `reporte.md` y el commit en `dev` del front.
