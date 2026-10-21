@@ -243,7 +243,8 @@ adminRoutes.put(
   "/businesses/:businessId/multi-client-appointments",
   handle((req) => adminService.setMultiClientAppointments(req.ctx, req.params.businessId, req.body?.enabled)),
 );
-// La mensualidad del negocio (spec 029): { monthlyFee, billingDay, billingStart }. Devuelve la de la ficha.
+// La mensualidad del negocio (spec 029): { customFee (el precio especial; null: el de su plan), billingDay,
+// billingStart }. Devuelve la de la ficha.
 adminRoutes.put(
   "/businesses/:businessId/billing",
   handle((req) => adminBillingService.setBusinessBilling(req.ctx, req.params.businessId, req.body)),
@@ -287,6 +288,16 @@ adminRoutes.post(
 adminRoutes.get(
   "/billing/charges/:chargeId/receipt",
   handle((req) => adminBillingService.receiptUrl(req.ctx, req.params.chargeId)),
+);
+// Los precios de los planes (spec 029, ampliación del 2026-10-20): { proPrice, businessPrice,
+// businessIncludedAgendas, businessExtraAgendaPrice }. Como las cuentas, nunca en /public/platform-settings.
+adminRoutes.get(
+  "/plan-prices",
+  handle((req) => adminBillingService.getPlanPrices(req.ctx)),
+);
+adminRoutes.put(
+  "/plan-prices",
+  handle((req) => adminBillingService.setPlanPrices(req.ctx, req.body)),
 );
 // Las cuentas de Agenda360 para recibir las mensualidades: nunca en /public/platform-settings (que va en la CDN).
 adminRoutes.get(

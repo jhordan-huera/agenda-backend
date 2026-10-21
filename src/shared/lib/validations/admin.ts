@@ -119,23 +119,37 @@ export type PanelColorsInput = z.infer<typeof panelColorsSchema>;
 const realDate = dateField.refine((value) => new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value, "Selecciona una fecha");
 
 /**
- * La mensualidad de un negocio, que fija el super admin: el monto en USD (0: sin cobros, como en el plan
- * gratis o un negocio de cortesía), el día del mes en que paga y la fecha del primer cobro, que cae en ese
- * día (o en el último de un mes que no lo tiene). Con mensualidad, el día y el primer cobro son
- * obligatorios. Que el primer cobro no sea anterior a hoy lo comprueba la API, con la zona del negocio.
+ * Un monto en USD que hay que escribir (vacío no cuenta como $0: z.coerce convierte "" en 0), de 0 a
+ * $10.000 y con dos decimales como mucho: los precios de los planes y el precio especial de un negocio.
+ */
+const usdAmount = (what: string) =>
+  z
+    .custom<string | number>((value) => typeof value === "number" || (typeof value === "string" && value.trim() !== ""), `Escribe ${what}`)
+    .pipe(
+      z.coerce
+        .number<string | number>(`Escribe ${what}`)
+        .min(0, "No puede ser negativo")
+        .max(10_000, "Monto demasiado alto")
+        .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6, "Usa como mucho dos decimales"),
+    );
+
+/**
+ * La mensualidad de un negocio en su ficha, que fija el super admin (spec 029; el precio especial, desde la
+ * ampliación del 2026-10-20):
+ * - `customFee`, el precio especial: null, el de su plan con sus agendas (lo normal); 0, cortesía (sin
+ *   cobros); otro monto, ése;
+ * - el día del mes en que paga y la fecha del primer cobro, que cae en ese día (o en el último de un mes que
+ *   no lo tiene). Van los dos o ninguno: sin ellos, la API los pone sola desde el día en que empezó su plan.
+ *
+ * Que el primer cobro no sea anterior a hoy lo comprueba la API, con la zona del negocio.
  */
 export const businessBillingSchema = z
   .object({
-    monthlyFee: z.coerce
-      .number<string | number>("Ingresa la mensualidad")
-      .min(0, "La mensualidad no puede ser negativa")
-      .max(10_000, "Mensualidad demasiado alta")
-      .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6, "Usa como mucho dos decimales"),
+    customFee: usdAmount("el precio especial").nullable(),
     billingDay: z.number({ error: "Elige el día de pago" }).int("Elige el día de pago").min(1, "Elige un día del 1 al 31").max(31, "Elige un día del 1 al 31").nullable(),
     billingStart: realDate.nullable(),
   })
   .superRefine((data, ctx) => {
-    if (data.monthlyFee === 0) return;
     // Sin los dos, la API los pone sola desde el día en que empezó su plan (ver proposedBilling).
     if (data.billingDay === null && data.billingStart === null) return;
     if (data.billingDay === null) ctx.addIssue({ code: "custom", path: ["billingDay"], message: "Elige el día de pago" });
@@ -145,6 +159,21 @@ export const businessBillingSchema = z
       ctx.addIssue({ code: "custom", path: ["billingStart"], message: `El primer cobro tiene que caer en su día de pago (el ${data.billingDay})` });
     }
   });
+
+/**
+ * Los precios de los planes, en /admin → Planes (spec 029, ampliación del 2026-10-20): Pro; Business con sus
+ * agendas incluidas, y lo que suma cada agenda más. Valen desde el siguiente cobro de cada negocio.
+ */
+export const planPricesSchema = z.object({
+  proPrice: usdAmount("el precio de Pro"),
+  businessPrice: usdAmount("el precio de Business"),
+  businessIncludedAgendas: z.coerce
+    .number<string | number>("Escribe las agendas incluidas")
+    .int("Usa un número entero")
+    .min(1, "Mínimo una agenda")
+    .max(200, "Máximo 200 agendas"),
+  businessExtraAgendaPrice: usdAmount("el precio de cada agenda más"),
+});
 
 /**
  * La mensualidad, automática (spec 029, pedido del dueño del producto el 2026-10-20): el día de pago es el
@@ -174,6 +203,7 @@ export const adminBillingFilterSchema = z
   .default("in_review");
 
 export type BusinessBillingInput = z.infer<typeof businessBillingSchema>;
+export type PlanPricesInput = z.infer<typeof planPricesSchema>;
 export type BillingReasonInput = z.infer<typeof billingReasonSchema>;
 export type BillingPaidInput = z.input<typeof billingPaidSchema>;
 export type PlatformBankAccountsInput = z.infer<typeof platformBankAccountsSchema>;

@@ -70,6 +70,12 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   no se cierra hasta subir el comprobante: no hay «Más tarde» ni días de gracia. Sólo se bloquea el panel
   del propietario: su equipo y su página de reservas siguen funcionando. La factura del SRI y el cobro
   con tarjeta quedan fuera por ahora.
+- Los precios de los planes están en /admin → Planes, no en el código, y los cambia el super admin (los
+  de partida: Pro $14,99; Business $29,99 con 3 agendas y $8 por cada agenda más, las contratadas o, sin
+  tope, las activas; Free sin cobros). La mensualidad de cada negocio sale sola de su plan y sus agendas,
+  salvo un precio especial opcional en su ficha (0 = cortesía), y su día de pago, del día en que empezó su
+  plan. Un cambio vale desde el siguiente cobro. Los negocios nunca ven esos precios: el propietario sólo
+  ve su total y su descuento (spec 029, 2026-10-20).
 - Los pacientes se identifican por cédula (sólo números) dentro de cada negocio. La reserva
   online no reconoce al paciente por la cédula ni muestra sus datos: siempre pide nombre, email y
   teléfono.
@@ -293,4 +299,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.25.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-20
+**Versión**: 1.26.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-21

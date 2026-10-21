@@ -14,10 +14,11 @@ export function periodEndFor(planId: PlanId): string | null {
 }
 
 /**
- * Cambio de plan (sin cobro hasta integrar pagos). Lo usa el super admin desde el panel de
- * plataforma: en la ficha del negocio o al aprobar una solicitud. Guarda desde cuándo está en el
- * plan (plan_since, spec 015) sólo si el plan cambia. Con pagos reales lo aplicaría el webhook del
- * proveedor (Stripe).
+ * Cambio de plan. Lo usa el super admin desde el panel de plataforma: en la ficha del negocio o al aprobar
+ * una solicitud. Guarda desde cuándo está en el plan (plan_since, spec 015) sólo si el plan cambia. La
+ * mensualidad (spec 029) sale sola del plan nuevo desde el siguiente cobro; al pasar de Free a un plan de
+ * pago, el día de pago y el primer cobro vuelven a null y ensureBillingSchedule los pone otra vez desde el
+ * cambio (su primer cobro, al mes). Entre planes de pago, el día de pago se mantiene.
  */
 export async function applyPlanChange(
   db: Db,
@@ -65,7 +66,9 @@ export async function applyPlanChange(
   const updated = (await one<Subscription>(
     db,
     `update subscriptions set plan = $2, status = 'active', current_period_end = $3,
-            plan_since = case when plan = $2 then plan_since else now() end
+            plan_since = case when plan = $2 then plan_since else now() end,
+            billing_day = case when plan = 'free' and $2 <> 'free' then null else billing_day end,
+            billing_start = case when plan = 'free' and $2 <> 'free' then null else billing_start end
       where id = $1
       returning ${subscriptionColumns()}`,
     [subscription.id, plan.id, periodEndFor(plan.id)],

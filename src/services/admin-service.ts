@@ -58,7 +58,7 @@ import { createUserAccount, hashPassword, isEmailRegistered } from "./accounts.t
 import { emailQuotaStatus } from "./email-limits.ts";
 import { ADMIN_AUDIT_QUERY, parseAuditFilters, queryAuditLogs } from "./activity-service.ts";
 import { businessAnalytics } from "./analytics-service.ts";
-import { adminBusinessBilling, billingCounts } from "./billing-service.ts";
+import { adminBusinessBilling, billingCounts, ensureBillingSchedule } from "./billing-service.ts";
 import { findTeamMember, listTeamMembers } from "./account-service.ts";
 import { logAudit } from "./audit.ts";
 import { insertBusiness, isSlugTaken } from "./business-factory.ts";
@@ -483,8 +483,12 @@ export const adminService = {
         "select max(created_at) as at from audit_logs where business_id = $1 and action = 'business.data_exported'",
         [businessId],
       ),
-      // La mensualidad (spec 029): va aparte de `subscription`, que también la ve el equipo del negocio.
-      adminBusinessBilling(pool, businessId),
+      // La mensualidad (spec 029): va aparte de `subscription`, que también la ve el equipo del negocio. Si le
+      // falta el día de pago, se lo pone el sistema (ampliación del 2026-10-20), en la misma transacción.
+      transaction(async (db) => {
+        await ensureBillingSchedule(db, businessId);
+        return adminBusinessBilling(db, businessId);
+      }),
     ]);
     if (!summary) return null;
     return {

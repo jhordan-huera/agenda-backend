@@ -1,21 +1,28 @@
-// El cobro de las mensualidades por transferencia (spec 029): la mensualidad (sólo el super admin, con su
-// actividad), las cuentas de la plataforma (nunca en la configuración pública), el cobro de cada mes (su día
-// de pago en la zona del negocio, el 31 que cae el 30, una sola vez, nunca con mensualidad 0, en el plan
-// gratis, suspendido o sin propietario), el descuento de referidos (sin reusar, aplicado al pagarse, libre
-// al anular), el recordatorio de tres días antes, el estado del propietario (bloqueado desde el día de pago,
-// sin gracia) y «Por pagar» y «Atrasados» en /admin (moviendo las fechas con sql), el comprobante (a «En
-// revisión», con la campana y el ntfy del super admin), aprobar, rechazar, pagado sin comprobante y anular
-// (cada uno con su email y su actividad), quién ve qué y la purga de los comprobantes de más de 12 meses.
+// El cobro de las mensualidades por transferencia (spec 029): los precios de los planes (sólo el super admin,
+// con su actividad, nunca para los negocios ni en la configuración pública), la mensualidad automática (Pro y
+// Business con sus agendas, sin tope las activas, el día de pago desde el día en que empezó su plan: en la
+// ficha, en la lectura del propietario, en el cron y al volver de Free), el precio especial (poner, quitar y
+// cortesía), las cuentas de la plataforma (nunca en la configuración pública), el cobro de cada mes (su día
+// de pago en la zona del negocio, el 31 que cae el 30, una sola vez, con la mensualidad de ese momento, nunca
+// en cortesía, en el plan gratis, suspendido o sin propietario), el descuento de referidos (sin reusar,
+// aplicado al pagarse, libre al anular, también sobre el precio del plan), el recordatorio de tres días antes,
+// el estado del propietario (bloqueado desde el día de pago, sin gracia) y «Por pagar» y «Atrasados» en
+// /admin (moviendo las fechas con sql), el comprobante (a «En revisión», con la campana y el ntfy del super
+// admin), aprobar, rechazar, pagado sin comprobante y anular (cada uno con su email y su actividad), quién ve
+// qué y la purga de los comprobantes de más de 12 meses.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { businessInput } from "./helpers/business.mjs";
 import { checks, count, fakeNtfy, login, runCron, sql, BASE } from "./helpers/harness.ts";
 import { addDaysISO, addMonthsISO, dayOfMonthISO, getZonedNow } from "../src/shared/lib/time.ts";
+import { proposedBilling } from "../src/shared/lib/validations/admin.ts";
 import type {
   AdminBillingList,
+  AdminBusinessBilling,
   AdminBusinessDetail,
   BusinessBilling,
   PanelNoticePage,
+  PlanPrices,
   PlatformStats,
   ReferralReward,
 } from "../src/shared/types/index.ts";
@@ -67,6 +74,21 @@ const chargeOf = (businessId: string, due: string) =>
   sql(`select id || ' ' || base_amount || ' ' || referral_discount || ' ' || amount || ' ' || cardinality(referral_ids) || ' ' || status
          from billing_charges where business_id = '${businessId}' and due_date = '${due}'`);
 
+/** La mensualidad en la ficha de /admin: al leerla, el sistema le pone el día de pago si le falta. */
+const ficha = async (businessId: string) => ((await admin("GET", `/admin/businesses/${businessId}`)).body as AdminBusinessDetail).billing as AdminBusinessBilling;
+/** El día en que empezó su plan, en la zona del negocio. */
+const planStartOf = (businessId: string) =>
+  sql(`select (s.plan_since at time zone b.timezone)::date from subscriptions s join businesses b on b.id = s.business_id where b.id = '${businessId}'`);
+/** El día de pago automático: el de proposedBilling, con el primer cobro a tres días de hoy como pronto (el aviso). */
+const automatic = (planStart: string) => proposedBilling(planStart, addDaysISO(today(), 3));
+
+/** Los de la migración 050. */
+const DEFAULT_PRICES: PlanPrices = { proPrice: 14.99, businessPrice: 29.99, businessIncludedAgendas: 3, businessExtraAgendaPrice: 8 };
+const setPrices = async (prices: PlanPrices) => {
+  const r = await admin("PUT", "/admin/plan-prices", prices);
+  if (r.status !== 200) throw new Error(`No se pudieron poner los precios: ${JSON.stringify(r.body)}`);
+};
+
 const ACCOUNTS = [
   { bank: "Banco Pichincha", accountType: "savings", number: "2200123456", holder: "Agenda360 S.A.S.", holderId: "1790012345001" },
   { bank: "Produbanco", accountType: "checking", number: "1005566778", holder: "Agenda360 S.A.S.", holderId: "" },
@@ -107,47 +129,366 @@ console.log("Las cuentas de la plataforma");
   ok(!text.includes("2200123456") && !text.includes("Pichincha"), "ni un número ni un banco", text);
 }
 
-/* ------------------------------------------------------------ La mensualidad ---- */
+/* ------------------------------------------------------- Los precios de los planes ---- */
 
-console.log("La mensualidad");
+console.log("Los precios de los planes (/admin → Planes)");
 {
-  let detail = (await admin("GET", `/admin/businesses/${CENTRO}`)).body as AdminBusinessDetail;
+  let r = await owner("GET", "/admin/plan-prices");
+  ok(r.status === 403, "un propietario no los lee", r.status);
+  r = await owner("PUT", "/admin/plan-prices", { ...DEFAULT_PRICES, proPrice: 1 });
+  ok(r.status === 403, "ni los cambia", r.status);
+  r = await admin("GET", "/admin/plan-prices");
   ok(
-    detail.billing?.monthlyFee === 0 && detail.billing.billingDay === null && detail.billing.nextDueDate === null && detail.billing.openCharges === 0,
-    "al principio, sin mensualidad",
-    detail.billing,
+    r.status === 200 && JSON.stringify(r.body) === JSON.stringify(DEFAULT_PRICES),
+    "los de la migración: Pro $14,99; Business $29,99 con 3 agendas y $8 por cada agenda más",
+    r.body,
   );
+  ok(r.headers.get("cache-control") === "no-store", "sin caché", r.headers.get("cache-control"));
+  for (const [input, label] of [
+    [{ ...DEFAULT_PRICES, proPrice: -1 }, "un precio negativo"],
+    [{ ...DEFAULT_PRICES, businessPrice: 29.999 }, "más de dos decimales"],
+    [{ ...DEFAULT_PRICES, businessExtraAgendaPrice: "" }, "un precio vacío"],
+    [{ ...DEFAULT_PRICES, businessIncludedAgendas: 0 }, "Business sin agendas incluidas"],
+    [{ ...DEFAULT_PRICES, businessIncludedAgendas: 2.5 }, "agendas que no son enteras"],
+  ] as const) {
+    r = await admin("PUT", "/admin/plan-prices", input);
+    ok(r.status === 400, `${label} → 400`, r.body);
+  }
+  const before = audits("platform.plan_prices_changed");
+  r = await admin("PUT", "/admin/plan-prices", DEFAULT_PRICES);
+  ok(r.status === 200 && audits("platform.plan_prices_changed") === before, "los mismos otra vez no anotan nada", r.body);
+  r = await admin("PUT", "/admin/plan-prices", { ...DEFAULT_PRICES, proPrice: 15.49, businessExtraAgendaPrice: 9 });
+  ok(r.status === 200 && r.body.proPrice === 15.49 && r.body.businessExtraAgendaPrice === 9, "el super admin los cambia", r.body);
+  ok((await admin("GET", "/admin/plan-prices")).body.proPrice === 15.49, "y quedan guardados");
+  ok(audits("platform.plan_prices_changed") === before + 1, "queda en la actividad");
+  const audit = lastAudit("platform.plan_prices_changed");
+  ok(
+    audit.startsWith("sin negocio | Admin") &&
+      audit.includes("Cambió los precios de los planes: Pro $15,49 · Business $29,99 con 3 agendas y $9,00 por cada agenda más") &&
+      audit.includes('"label": "Pro"') &&
+      audit.includes('"before": "$14,99"') &&
+      audit.includes('"after": "$15,49"') &&
+      audit.includes('"label": "Cada agenda más de Business"') &&
+      !audit.includes("Agendas incluidas"),
+    "en la de la plataforma, con lo que cambió (y sólo eso)",
+    audit,
+  );
+  await setPrices(DEFAULT_PRICES);
+}
+
+/* ---------------------------------------------------- La mensualidad automática ---- */
+
+console.log("La mensualidad automática: el precio de su plan y el día en que empezó");
+{
+  ok(
+    sql(`select coalesce(monthly_fee::text, 'null') || ' ' || coalesce(billing_day::text, 'null') from subscriptions where business_id = '${CENTRO}'`) ===
+      "null null",
+    "un negocio que ya existía, después de la migración: sin precio especial ni día de pago",
+  );
+  const schedules = audits("platform.billing_schedule_set");
+  const started = planStartOf(CENTRO);
+  const expected = automatic(started);
+  let billing = await ficha(CENTRO);
+  ok(billing.monthlyFee === 14.99 && billing.planPrice === 14.99 && billing.customFee === null, "Pro: $14,99, el de su plan", billing);
+  ok(
+    billing.billingDay === Number(started.slice(8)) &&
+      billing.billingStart === dayOfMonthISO(addMonthsISO(started, 1), Number(started.slice(8))) &&
+      billing.billingStart === expected.billingStart &&
+      billing.nextDueDate === billing.billingStart,
+    "al abrir su ficha, el sistema le pone el día en que empezó su plan, con el primer cobro al cumplirse el mes",
+    [started, billing],
+  );
+  ok(audits("platform.billing_schedule_set") === schedules + 1, "queda en la actividad");
+  const audit = lastAudit("platform.billing_schedule_set");
+  ok(
+    audit.startsWith(
+      `sin negocio | Agenda360 | Puso la mensualidad automática de ${centroName} ($14,99): el ${billing.billingDay} de cada mes, desde el `,
+    ) && audit.includes('"label": "Día de pago"'),
+    "en la de la plataforma, con «Agenda360» como autor y lo que cambió",
+    audit,
+  );
+  await ficha(CENTRO);
+  ok(audits("platform.billing_schedule_set") === schedules + 1, "abrir la ficha otra vez no lo vuelve a poner");
+  const state = await ownerBilling();
+  ok(
+    state.monthlyFee === 14.99 && state.billingDay === billing.billingDay && state.nextDueDate === billing.billingStart && state.pending === null,
+    "el propietario ve su total y su próximo pago, todavía sin cobro",
+    state,
+  );
+
+  // Business: $29,99 con 3 agendas y $8 por cada agenda más (las «Agendas contratadas»).
+  for (const [agendas, fee] of [
+    [3, 29.99],
+    [4, 37.99],
+    [5, 45.99],
+  ] as const) {
+    const r = await admin("PUT", `/admin/businesses/${DENTAL}/max-professionals`, { maxProfessionals: agendas });
+    billing = await ficha(DENTAL);
+    ok(
+      r.status === 200 && billing.monthlyFee === fee && billing.planPrice === fee && billing.agendas === agendas,
+      `Business con ${agendas} agendas: ${fee}`,
+      billing,
+    );
+  }
+  // Sin tope, las agendas activas. Con una sola incluida se ve en el monto: cada activa de más suma.
+  await admin("PUT", `/admin/businesses/${DENTAL}/max-professionals`, { maxProfessionals: null });
+  const active = count(`select count(*) from professionals where business_id = '${DENTAL}' and is_active`);
+  await setPrices({ ...DEFAULT_PRICES, businessIncludedAgendas: 1 });
+  billing = await ficha(DENTAL);
+  ok(
+    active >= 2 && billing.agendas === active && billing.monthlyFee === Math.round((29.99 + (active - 1) * 8) * 100) / 100,
+    `sin tope, cuenta las agendas activas (${active})`,
+    [active, billing],
+  );
+  const paused = sql(
+    `update professionals set is_active = false where id = (select id from professionals where business_id = '${DENTAL}' and is_active order by sort_order desc limit 1) returning id`,
+  ).split("\n")[0];
+  billing = await ficha(DENTAL);
+  ok(billing.agendas === active - 1 && billing.monthlyFee === Math.round((29.99 + (active - 2) * 8) * 100) / 100, "una agenda menos, $8 menos", billing);
+  sql(`update professionals set is_active = true where id = '${paused}'`);
+  await setPrices(DEFAULT_PRICES);
+  await admin("PUT", `/admin/businesses/${DENTAL}/max-professionals`, { maxProfessionals: 3 });
+}
+
+/* ------------------------------------------- Los precios no salen para los negocios ---- */
+
+console.log("Los precios de los planes nunca salen para los negocios");
+{
+  // Unos precios que no se confunden con otra cifra: el de Pro sólo lo puede ver el Centro (es su total) y el
+  // de Business sólo la Clínica. Ninguno ve los de los demás, ni de dónde sale el suyo.
+  await setPrices({ proPrice: 14.37, businessPrice: 29.73, businessIncludedAgendas: 3, businessExtraAgendaPrice: 8.61 });
+  const KEYS = ["proPrice", "businessPrice", "businessIncludedAgendas", "businessExtraAgendaPrice", "planPrice", "customFee"];
+  const paths = (id: string) => [
+    "/auth/session",
+    `/businesses/${id}`,
+    `/businesses/${id}/subscription`,
+    `/businesses/${id}/subscription/usage`,
+    `/businesses/${id}/billing`,
+    `/businesses/${id}/referrals`,
+    `/businesses/${id}/notifications`,
+  ];
+  for (const [browser, id, others, label] of [
+    [owner, CENTRO, ["29.73", "29,73", "8.61", "8,61"], "el propietario del Centro (Pro)"],
+    [ricardo, DENTAL, ["14.37", "14,37", "8.61", "8,61"], "el de la Clínica (Business)"],
+    [andrea, CENTRO, ["14.37", "14,37", "29.73", "29,73", "8.61", "8,61"], "una administradora"],
+  ] as const) {
+    const found: string[] = [];
+    for (const path of paths(id)) {
+      const text = JSON.stringify((await browser("GET", path)).body ?? "");
+      found.push(...[...others, ...KEYS].filter((value) => text.includes(value)).map((value) => `${path}: ${value}`));
+    }
+    ok(found.length === 0, `${label}: ninguna de sus respuestas trae los precios de los planes`, found);
+  }
+  ok((await ownerBilling()).monthlyFee === 14.37, "el propietario del Centro sólo ve su total");
+  ok(((await ricardo("GET", `/businesses/${DENTAL}/billing`)).body as BusinessBilling).monthlyFee === 29.73, "y el de la Clínica, el suyo");
+  for (const path of ["/public/platform-settings", "/public/businesses/jhordan", "/public/businesses/dental-sonrisa"]) {
+    const text = await (await fetch(`${BASE}${path}`)).text();
+    ok(!["14.37", "29.73", "8.61", ...KEYS].some((value) => text.includes(value)), `${path} no los trae`, text.slice(0, 300));
+  }
+  await setPrices(DEFAULT_PRICES);
+}
+
+/* ------------------------------------------------------ El monto de cada cobro ---- */
+
+console.log("El cobro lleva la mensualidad de ese momento");
+{
+  await admin("PUT", `/admin/businesses/${DENTAL}/max-professionals`, { maxProfessionals: 5 });
+  // Su día de pago, hoy (las fechas se mueven con sql).
+  sql(`update subscriptions set billing_day = ${Number(today().slice(8))}, billing_start = '${today()}' where business_id = '${DENTAL}'`);
+  ok((await ensureAt(DENTAL, new Date().toISOString())) === 1, "llega su día de pago: se crea el cobro");
+  ok(chargeOf(DENTAL, today()).endsWith(" 45.99 0.00 45.99 0 due"), "con el precio de su plan y sus agendas: Business con 5, $45,99", chargeOf(DENTAL, today()));
+  await admin("PUT", `/admin/businesses/${DENTAL}/max-professionals`, { maxProfessionals: 3 });
+  ok(chargeOf(DENTAL, today()).endsWith(" 45.99 0.00 45.99 0 due"), "bajar las agendas no cambia el cobro ya creado");
+  ok((await ficha(DENTAL)).monthlyFee === 29.99, "el siguiente ya lleva $29,99");
+  // La Clínica, de cortesía desde aquí: el resto de las pruebas no cuenta con sus cobros.
+  sql(`delete from billing_charges where business_id = '${DENTAL}'`);
+  sql(`update subscriptions set monthly_fee = 0 where business_id = '${DENTAL}'`);
+}
+
+/* ------------------------------------------------------- El día de pago automático ---- */
+
+console.log("El día de pago automático: la lectura del propietario, el cron y la ficha");
+{
+  const tomas = await login("tomas@demo.com"); // Propietario de FisioActiva (plan Pro).
+  const startedAt = (interval: string) => {
+    sql(
+      `update subscriptions set plan = 'pro', plan_since = now() - interval '${interval}', monthly_fee = null, billing_day = null, billing_start = null where business_id = '${FISIO}'`,
+    );
+    return planStartOf(FISIO);
+  };
+  const fisio = () => sql(`select billing_day || ' ' || billing_start from subscriptions where business_id = '${FISIO}'`);
+  const schedules = audits("platform.billing_schedule_set");
+
+  let started = startedAt("10 days");
+  const state = (await tomas("GET", `/businesses/${FISIO}/billing`)).body as BusinessBilling;
+  const monthLater = dayOfMonthISO(addMonthsISO(started, 1), Number(started.slice(8)));
+  ok(
+    state.monthlyFee === 14.99 && state.billingDay === Number(started.slice(8)) && state.nextDueDate === monthLater,
+    "empezó hace 10 días: al entrar el propietario, paga el mismo día de cada mes desde que se cumple el mes",
+    [started, state],
+  );
+  ok(audits("platform.billing_schedule_set") === schedules + 1, "queda en la actividad");
+
+  // Los negocios que ya existían al publicarse: los pone el cron, en su pasada.
+  started = startedAt("75 days");
+  const run = await tasks.runMonthlyBilling();
+  const expected = automatic(started);
+  ok(run.schedules >= 1 && fisio() === `${expected.billingDay} ${expected.billingStart}`, "empezó hace 75 días: el cron le pone el mismo día", [started, fisio()]);
+  ok(
+    expected.billingStart >= addDaysISO(today(), 3) && count(`select count(*) from billing_charges where business_id = '${FISIO}'`) === 0,
+    "y su primer cobro, el siguiente desde hoy: nunca uno ya pasado",
+    expected,
+  );
+  ok((await tasks.runMonthlyBilling()).schedules === 0 && audits("platform.billing_schedule_set") === schedules + 2, "otra pasada no lo vuelve a poner");
+
+  // Su día de pago cae mañana: el primer cobro, al mes siguiente, para que le llegue antes el aviso de tres días.
   const tomorrow = addDaysISO(today(), 1);
   const day = Number(tomorrow.slice(8));
-  let r = await owner("PUT", `/admin/businesses/${CENTRO}/billing`, { monthlyFee: 9.99, billingDay: day, billingStart: tomorrow });
-  ok(r.status === 403, "sólo el super admin la pone", r.status);
-  r = await admin("PUT", `/admin/businesses/${CENTRO}/billing`, { monthlyFee: 9.99, billingDay: null, billingStart: tomorrow });
-  ok(r.status === 400 && /día de pago/.test(r.body.error.message), "con mensualidad, sin día de pago → 400", r.body);
-  r = await admin("PUT", `/admin/businesses/${CENTRO}/billing`, { monthlyFee: 9.99, billingDay: day === 28 ? 27 : 28, billingStart: tomorrow });
-  ok(r.status === 400 && /tiene que caer en su día de pago/.test(r.body.error.message), "un primer cobro fuera del día de pago → 400", r.body);
+  // El mismo día de un mes anterior que lo tenga (el 31 no está en todos).
+  let months = 1;
+  while (Number(dayOfMonthISO(addMonthsISO(tomorrow, -months), day).slice(8)) !== day) months++;
+  const earlier = dayOfMonthISO(addMonthsISO(tomorrow, -months), day);
+  sql(
+    `update subscriptions set plan_since = ('${earlier} 12:00'::timestamp at time zone '${TZ}'), monthly_fee = null, billing_day = null, billing_start = null where business_id = '${FISIO}'`,
+  );
+  await tasks.runMonthlyBilling();
+  const nextMonth = dayOfMonthISO(addMonthsISO(tomorrow, 1), day);
+  ok(
+    fisio() === `${day} ${nextMonth}` &&
+      count(`select count(*) from notifications where dedupe_key = 'billing-reminder:${FISIO}:${tomorrow}'`) === 0,
+    "empezó un día como mañana: su primer cobro no es mañana (sin aviso) sino el mes siguiente",
+    [earlier, fisio()],
+  );
+
+  // En la ficha, sin día de pago ni primer cobro, la API los pone como el sistema.
+  started = startedAt("10 days");
+  const r = await admin("PUT", `/admin/businesses/${FISIO}/billing`, { customFee: null, billingDay: null, billingStart: null });
+  ok(
+    r.status === 200 && r.body.billingDay === Number(started.slice(8)) && r.body.billingStart === automatic(started).billingStart,
+    "el super admin los deja vacíos: la API los pone desde el día en que empezó su plan",
+    [started, r.body],
+  );
+}
+
+/* ---------------------------------------------------- Al cambiar de plan ---- */
+
+console.log("El día de pago al cambiar de plan");
+{
+  const NUTRI = idOf("nutrivida");
+  const changePlan = (plan: string) => admin("PUT", `/admin/businesses/${NUTRI}/plan`, { plan });
+  const now = today();
+  const day = Number(now.slice(8));
+  const monthLater = dayOfMonthISO(addMonthsISO(now, 1), day);
+  let billing = await ficha(NUTRI);
+  ok(billing.monthlyFee === 0 && billing.billingDay === null && billing.nextDueDate === null, "en Free: sin mensualidad ni día de pago", billing);
+
+  let r = await changePlan("pro");
+  billing = await ficha(NUTRI);
+  ok(
+    r.status === 200 && billing.monthlyFee === 14.99 && billing.billingDay === day && billing.billingStart === monthLater,
+    "de Free a Pro: $14,99, el día del cambio de cada mes, desde que se cumple el mes",
+    billing,
+  );
+  ok(lastAudit("platform.billing_schedule_set").includes("Puso la mensualidad automática de NutriVida"), "queda en la actividad", lastAudit("platform.billing_schedule_set"));
+
+  // Un día de pago de antes (otro día y otra fecha), para ver qué se mantiene y qué se calcula de nuevo.
+  const oldDay = day === 3 ? 4 : 3;
+  const oldStart = dayOfMonthISO(addMonthsISO(now, 2), oldDay);
+  sql(`update subscriptions set billing_day = ${oldDay}, billing_start = '${oldStart}' where business_id = '${NUTRI}'`);
+  r = await changePlan("business");
+  billing = await ficha(NUTRI);
+  ok(
+    r.status === 200 && billing.monthlyFee === 29.99 && billing.billingDay === oldDay && billing.billingStart === oldStart,
+    "de Pro a Business: el precio del plan nuevo, y el día de pago se mantiene",
+    billing,
+  );
+  r = await changePlan("free");
+  billing = await ficha(NUTRI);
+  ok(r.status === 200 && billing.monthlyFee === 0 && billing.nextDueDate === null, "a Free: sin cobros", billing);
+  r = await changePlan("pro");
+  billing = await ficha(NUTRI);
+  ok(
+    r.status === 200 && billing.billingDay === day && billing.billingStart === monthLater,
+    "al volver de Free, el día de pago se calcula de nuevo desde ese cambio",
+    billing,
+  );
+  await changePlan("free");
+}
+
+/* ------------------------------------------------------------ El precio especial ---- */
+
+console.log("El precio especial");
+{
+  const auto = await ficha(CENTRO);
+  const schedule = { billingDay: auto.billingDay, billingStart: auto.billingStart };
+  const put = (input: unknown) => admin("PUT", `/admin/businesses/${CENTRO}/billing`, input);
+  let r = await owner("PUT", `/admin/businesses/${CENTRO}/billing`, { customFee: 20, ...schedule });
+  ok(r.status === 403, "sólo el super admin lo pone", r.status);
+  const tomorrow = addDaysISO(today(), 1);
+  const day = Number(tomorrow.slice(8));
   const yesterday = addDaysISO(today(), -1);
-  r = await admin("PUT", `/admin/businesses/${CENTRO}/billing`, { monthlyFee: 9.99, billingDay: Number(yesterday.slice(8)), billingStart: yesterday });
-  ok(r.status === 400 && /anterior a hoy/.test(r.body.error.message), "un primer cobro anterior a hoy → 400", r.body);
-  r = await admin("PUT", `/admin/businesses/${CENTRO}/billing`, { monthlyFee: 9.999, billingDay: day, billingStart: tomorrow });
-  ok(r.status === 400, "más de dos decimales → 400", r.body);
-  ok(count(`select count(*) from subscriptions where business_id = '${CENTRO}' and monthly_fee > 0`) === 0, "y no se guarda nada");
+  for (const [input, pattern, label] of [
+    [{ customFee: -1, ...schedule }, /negativo/, "un precio negativo"],
+    [{ customFee: 9.999, ...schedule }, /dos decimales/, "más de dos decimales"],
+    [{ customFee: "", ...schedule }, /precio especial/, "un precio vacío"],
+    [{ customFee: null, billingDay: day, billingStart: null }, /primer cobro/, "un día de pago sin el primer cobro"],
+    [{ customFee: null, billingDay: day === 28 ? 27 : 28, billingStart: tomorrow }, /tiene que caer en su día de pago/, "un primer cobro fuera del día de pago"],
+    [{ customFee: null, billingDay: Number(yesterday.slice(8)), billingStart: yesterday }, /anterior a hoy/, "un primer cobro anterior a hoy"],
+  ] as const) {
+    r = await put(input);
+    ok(r.status === 400 && pattern.test(r.body.error.message), `${label} → 400`, r.body);
+  }
+  ok(
+    sql(`select coalesce(monthly_fee::text, 'null') || ' ' || billing_day || ' ' || billing_start from subscriptions where business_id = '${CENTRO}'`) ===
+      `null ${auto.billingDay} ${auto.billingStart}`,
+    "y no se guarda nada",
+  );
 
   const before = audits("platform.billing_fee_changed");
-  r = await admin("PUT", `/admin/businesses/${CENTRO}/billing`, { monthlyFee: 9.99, billingDay: day, billingStart: tomorrow });
-  ok(r.status === 200 && r.body.monthlyFee === 9.99 && r.body.billingDay === day && r.body.billingStart === tomorrow, "el super admin la pone", r.body);
-  ok(r.body.nextDueDate === tomorrow && r.body.openCharges === 0, "el próximo día de pago es el primer cobro", r.body);
+  r = await put({ customFee: 20, ...schedule });
+  ok(r.status === 200 && r.body.monthlyFee === 20 && r.body.customFee === 20 && r.body.planPrice === 14.99, "con precio especial, se cobra ése", r.body);
   ok(audits("platform.billing_fee_changed") === before + 1, "queda en la actividad");
-  const audit = lastAudit("platform.billing_fee_changed");
+  let audit = lastAudit("platform.billing_fee_changed");
   ok(
-    audit.startsWith("sin negocio | ") && audit.includes(`Puso la mensualidad de ${centroName} en $9,99`) && audit.includes('"after": "$9,99"'),
+    audit.startsWith(`sin negocio | Admin`) &&
+      audit.includes(`Puso a ${centroName} el precio especial de $20,00 | `) &&
+      audit.includes('"before": "El de su plan"') &&
+      audit.includes('"after": "$20,00"') &&
+      !audit.includes("Día de pago"),
     "en la de la plataforma (sin el negocio: sus administradores no la ven), con lo que cambió",
     audit,
   );
-  r = await admin("PUT", `/admin/businesses/${CENTRO}/billing`, { monthlyFee: 9.99, billingDay: day, billingStart: tomorrow });
+  r = await put({ customFee: 20, ...schedule });
   ok(r.status === 200 && audits("platform.billing_fee_changed") === before + 1, "lo mismo otra vez no anota nada");
-  detail = (await admin("GET", `/admin/businesses/${CENTRO}`)).body as AdminBusinessDetail;
+  ok((await ownerBilling()).monthlyFee === 20, "el propietario ve su total: $20,00");
+
+  r = await put({ customFee: null, ...schedule });
+  ok(r.status === 200 && r.body.monthlyFee === 14.99 && r.body.customFee === null, "«Quitar»: vuelve al precio de su plan", r.body);
+  audit = lastAudit("platform.billing_fee_changed");
+  ok(audit.includes(`Quitó el precio especial de ${centroName}: vuelve al de su plan (Pro, $14,99)`), "queda en la actividad", audit);
+
+  r = await put({ customFee: 0, ...schedule });
+  ok(r.status === 200 && r.body.monthlyFee === 0 && r.body.nextDueDate === null, "0: cortesía, sin cobros", r.body);
+  ok(lastAudit("platform.billing_fee_changed").includes(`Puso a ${centroName} en cortesía: sin cobros`), "queda en la actividad", lastAudit("platform.billing_fee_changed"));
+  let state = await ownerBilling();
+  ok(state.monthlyFee === 0 && state.nextDueDate === null && state.billingDay === null, "el propietario ya no tiene mensualidad", state);
+  sql(`update subscriptions set billing_day = ${Number(today().slice(8))}, billing_start = '${today()}' where business_id = '${CENTRO}'`);
+  ok((await ensureAt(CENTRO, new Date().toISOString())) === 0, "aunque llegue su día de pago, no hay cobro");
+  sql(`update subscriptions set billing_day = ${auto.billingDay}, billing_start = '${auto.billingStart}' where business_id = '${CENTRO}'`);
+
+  // Lo que siguen las pruebas: $9,99 desde mañana.
+  r = await put({ customFee: 9.99, billingDay: day, billingStart: tomorrow });
+  ok(r.status === 200 && r.body.monthlyFee === 9.99 && r.body.billingDay === day && r.body.billingStart === tomorrow, "un precio especial con otro día de pago", r.body);
+  ok(r.body.nextDueDate === tomorrow && r.body.openCharges === 0, "el próximo día de pago es el primer cobro", r.body);
+  audit = lastAudit("platform.billing_fee_changed");
+  ok(
+    audit.includes(`Puso a ${centroName} el precio especial de $9,99; el ${day} de cada mes desde el `) && audit.includes('"label": "Primer cobro"'),
+    "la actividad dice el precio y el día",
+    audit,
+  );
+  const detail = (await admin("GET", `/admin/businesses/${CENTRO}`)).body as AdminBusinessDetail;
   ok(detail.billing?.monthlyFee === 9.99 && detail.billing.nextDueDate === tomorrow, "la ficha la muestra", detail.billing);
-  ok(!("monthlyFee" in (detail.subscription ?? {})), "y no va en la suscripción", detail.subscription);
+  ok(!("monthlyFee" in (detail.subscription ?? {})) && !("customFee" in (detail.subscription ?? {})), "y no va en la suscripción", detail.subscription);
 
   const subscription = await andrea("GET", `${B}/subscription`);
   ok(
@@ -156,7 +497,7 @@ console.log("La mensualidad");
     subscription.body,
   );
 
-  const state = await ownerBilling();
+  state = await ownerBilling();
   ok(
     state.monthlyFee === 9.99 && state.billingDay === day && state.nextDueDate === tomorrow && state.pending === null && !state.blocked,
     "el propietario ve su mensualidad y su próximo pago, todavía sin cobro",
@@ -164,44 +505,13 @@ console.log("La mensualidad");
   );
   ok(state.bankAccounts.length === 2 && state.receiptsEnabled, "con las cuentas para transferir", state.bankAccounts);
   ok(
-    Object.keys(state).sort().join(",") ===
-      "bankAccounts,billingDay,blocked,charges,monthlyFee,nextDueDate,pending,receiptsEnabled",
+    Object.keys(state).sort().join(",") === "bankAccounts,billingDay,blocked,charges,monthlyFee,nextDueDate,pending,receiptsEnabled",
     "sólo lo suyo: nunca planes ni precios (ni días de gracia: no tiene)",
     Object.keys(state),
   );
 }
 
 /* ----------------------------------------------------------------- Quién ---- */
-
-console.log("La mensualidad automática: desde el día en que empezó su plan");
-{
-  // Sin día de pago ni primer cobro, la API los saca de `plan_since` (pedido del dueño del producto,
-  // 2026-10-20): creado el 8 de septiembre, paga el 8 de cada mes desde el 8 de octubre.
-  const startedAt = (interval: string) => {
-    sql(`update subscriptions set plan = 'pro', plan_since = now() - interval '${interval}', monthly_fee = 0, billing_day = null, billing_start = null where business_id = '${FISIO}'`);
-    return sql(`select (s.plan_since at time zone b.timezone)::date from subscriptions s join businesses b on b.id = s.business_id where b.id = '${FISIO}'`);
-  };
-  const now = today();
-  let started = startedAt("10 days");
-  let r = await admin("PUT", `/admin/businesses/${FISIO}/billing`, { monthlyFee: 12, billingDay: null, billingStart: null });
-  const monthLater = dayOfMonthISO(addMonthsISO(started, 1), Number(started.slice(8)));
-  ok(
-    r.status === 200 && r.body.billingDay === Number(started.slice(8)) && r.body.billingStart === monthLater,
-    "empezó hace 10 días: paga el mismo día de cada mes, y el primer cobro al cumplirse el mes",
-    [started, r.body],
-  );
-  started = startedAt("75 days");
-  r = await admin("PUT", `/admin/businesses/${FISIO}/billing`, { monthlyFee: 12, billingDay: null, billingStart: null });
-  const day = Number(started.slice(8));
-  const thisMonth = dayOfMonthISO(now, day);
-  const next = thisMonth >= now ? thisMonth : dayOfMonthISO(addMonthsISO(now, 1), day);
-  ok(
-    r.status === 200 && r.body.billingDay === day && r.body.billingStart === next,
-    "empezó hace 75 días: el mismo día, y el primer cobro el siguiente desde hoy (nunca uno ya pasado)",
-    [started, r.body, next],
-  );
-  sql(`update subscriptions set monthly_fee = 0, billing_day = null, billing_start = null where business_id = '${FISIO}'`);
-}
 
 console.log("Quién ve la mensualidad");
 {
@@ -262,7 +572,7 @@ console.log("El día de pago y el bloqueo (sin gracia); «Por pagar» y «Atrasa
 let chargeId = "";
 {
   const day = Number(today().slice(8));
-  let r = await admin("PUT", `/admin/businesses/${CENTRO}/billing`, { monthlyFee: 9.99, billingDay: day, billingStart: today() });
+  let r = await admin("PUT", `/admin/businesses/${CENTRO}/billing`, { customFee: 9.99, billingDay: day, billingStart: today() });
   ok(r.status === 200, "el primer cobro pasa a hoy (hoy sí se puede)", r.body);
   let state = await ownerBilling();
   chargeId = state.pending?.id ?? "";
@@ -623,6 +933,43 @@ console.log("El recordatorio, tres días antes y una sola vez");
   ok((await reminderAt(FISIO, "2031-06-27T18:00:00Z")) === 0 && (await reminderAt(FISIO, "2031-06-28T17:00:00Z")) === 0, "una sola vez");
   const email = sql(`select coalesce(business_id::text, 'sin negocio') || ' | ' || to_email || ' | ' || subject from notifications where dedupe_key = '${key}'`);
   ok(email === "sin negocio | tomas@demo.com | Tu mensualidad de Agenda360 vence el 30 de junio", "al propietario, con su día de pago (el 31 cae el 30)", email);
+}
+
+/* ------------------------------------- Los precios del plan en los cobros (con `at`) ---- */
+
+console.log("Los precios de los planes en los cobros: desde el siguiente");
+{
+  sql(`update subscriptions set plan = 'pro', monthly_fee = null, max_professionals = null, billing_day = 15, billing_start = '2032-01-15' where business_id = '${FISIO}'`);
+  ok(
+    (await ensureAt(FISIO, "2032-01-15T17:00:00Z")) === 1 && chargeOf(FISIO, "2032-01-15").endsWith(" 14.99 0.00 14.99 0 due"),
+    "sin precio especial, el cobro lleva el de su plan: Pro, $14,99",
+    chargeOf(FISIO, "2032-01-15"),
+  );
+  await setPrices({ ...DEFAULT_PRICES, proPrice: 15.99 });
+  ok(chargeOf(FISIO, "2032-01-15").endsWith(" 14.99 0.00 14.99 0 due"), "cambiar el precio de Pro no cambia el cobro ya creado");
+  ok(
+    (await ensureAt(FISIO, "2032-02-15T17:00:00Z")) === 1 && chargeOf(FISIO, "2032-02-15").endsWith(" 15.99 0.00 15.99 0 due"),
+    "el siguiente ya lleva el precio nuevo",
+    chargeOf(FISIO, "2032-02-15"),
+  );
+  sql(`update subscriptions set plan = 'business', max_professionals = 5 where business_id = '${FISIO}'`);
+  ok(
+    (await ensureAt(FISIO, "2032-03-15T17:00:00Z")) === 1 && chargeOf(FISIO, "2032-03-15").endsWith(" 45.99 0.00 45.99 0 due"),
+    "pasa a Business con 5 agendas: el siguiente, $45,99",
+    chargeOf(FISIO, "2032-03-15"),
+  );
+
+  // Los referidos restan del precio del plan, como de cualquier mensualidad.
+  const r = await admin("POST", "/admin/businesses", businessInput({ name: "Recomendado Precio", slug: "recomendado-precio", referredBy: FISIO }));
+  sql(`update businesses set created_at = now() - interval '40 days' where id = '${r.body.business.id}'`);
+  ok(
+    (await ensureAt(FISIO, "2032-04-15T17:00:00Z")) === 1 && chargeOf(FISIO, "2032-04-15").endsWith(" 45.99 1.50 44.49 1 due"),
+    "con una recomendación ganada: $45,99 − $1,50 = $44,49",
+    chargeOf(FISIO, "2032-04-15"),
+  );
+  sql(`update subscriptions set plan = 'free' where business_id = '${FISIO}'`);
+  ok((await ensureAt(FISIO, "2032-05-15T17:00:00Z")) === 0, "en Free, no hay más cobros");
+  await setPrices(DEFAULT_PRICES);
 }
 
 /* ------------------------------------------------------------------ La purga ---- */

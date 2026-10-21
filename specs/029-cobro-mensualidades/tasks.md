@@ -74,3 +74,25 @@ archivos.
 ## Fase 6: Cierre
 
 - [ ] T012 `reporte.md` y los commits en `dev` de cada repo.
+
+## Fase 7: Ampliación, los precios automáticos (2026-10-20)
+
+Según la sección «Ampliación» del plan. La beta no se toca en esta fase.
+
+- [x] T013 `back/db/migrations/050_plan_prices.sql`: los cuatro precios en `platform_settings` (14,99,
+  29,99, 3 y 8, con sus checks); `subscriptions.monthly_fee` pasa a ser el precio especial (null, sin
+  default; los 0 a null, sin su día de pago); el check de la 049 pasa a «el día de pago y el primer cobro,
+  los dos o ninguno». Probada también sobre una base con la 049 aplicada y mensualidades.
+- [x] T014 Código compartido (`front/src`, luego `sync:shared`): `PlanPrices`, `planMonthlyPrice`,
+  `effectiveMonthlyFee` y `describePlanPrice` en `plans.ts`; `customFee` en `businessBillingSchema`;
+  `planPricesSchema`; `AdminBusinessBilling` con `planPrice`, `customFee` y `agendas`.
+- [x] T015 `back/`: `ensureBillingSchedule` (el cron antes de los cobros, la lectura del propietario y la
+  ficha, con su actividad como «Agenda360»); el monto del cobro con `effectiveMonthlyFee`; el precio
+  especial en `setBusinessBilling`; `GET` y `PUT /admin/plan-prices`, con su actividad; al pasar de Free a
+  un plan de pago, el día de pago vuelve a null (`applyPlanChange`). Constitución 1.26.0 en los dos repos.
+- [x] T016 `front/`: la ficha («Mensualidad: $45,99 (Business con 5 agendas)», «Poner precio especial» y
+  «Quitar», el día de pago y el primer cobro automáticos) y /admin → Planes («Precios de las
+  mensualidades», con el ejemplo calculado).
+- [x] T017 `back/tests/billing.test.ts` con lo del plan; `npm run typecheck` y la suite completa. En el
+  front, build, lint y `check:contrast`, y el recorrido en Chromium a 1440 px y WebKit a 390 px, claro y
+  oscuro.

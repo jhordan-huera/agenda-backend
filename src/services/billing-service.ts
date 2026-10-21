@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
-import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
+import { APP_NAME, DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import {
   BILLING_OVERDUE_DAYS,
   BILLING_RECEIPT_RETENTION_MONTHS,
@@ -9,6 +9,7 @@ import {
   REFERRAL_DISCOUNT,
   formatUsdAmount,
 } from "../shared/lib/constants/business.ts";
+import { describePlanPrice, effectiveMonthlyFee, planMonthlyPrice } from "../shared/lib/constants/plans.ts";
 import { emailTemplates, type BillingEmailData } from "../shared/lib/email/templates.ts";
 import { formatDate, formatSupportContact } from "../shared/lib/format.ts";
 import { addDaysISO, addMonthsISO, dayOfMonthISO, daysBetween, getZonedNow } from "../shared/lib/time.ts";
@@ -17,6 +18,7 @@ import {
   billingPaidSchema,
   billingReasonSchema,
   businessBillingSchema,
+  planPricesSchema,
   proposedBilling,
   platformBankAccountsSchema,
 } from "../shared/lib/validations/admin.ts";
@@ -36,20 +38,25 @@ import type {
   BusinessStatus,
   ISODate,
   PlanId,
+  PlanPrices,
 } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
 import { authorize, authorizeSuperAdmin, parseInput, type Actor, type AuditActor, type RequestContext } from "./context.ts";
 import { receiptStorage, type FileStorage } from "./file-storage.ts";
 import { appOrigin, queueEmail } from "./notifications.ts";
-import { getPlatformBankAccounts, getPlatformSettings } from "./platform-settings.ts";
+import { countActiveProfessionals } from "./plan-limits.ts";
+import { getPlanPrices, getPlatformBankAccounts, getPlatformSettings } from "./platform-settings.ts";
 import { notifyBillingReceipt } from "./push-notices.ts";
 import { applyRewards, availableRewardIds } from "./referral-service.ts";
 
 /**
  * El cobro de las mensualidades por transferencia (spec 029, migración 049).
  *
- * - **La mensualidad** la fija el super admin en la ficha del negocio: el monto, el día del mes en que paga
- *   y la fecha del primer cobro. Con 0 (o en el plan gratis) no hay cobros.
+ * - **La mensualidad** sale sola de su plan y sus agendas (ampliación del 2026-10-20, migración 050): los
+ *   precios de los planes los pone el super admin en /admin → Planes, y en la ficha del negocio le puede
+ *   poner un precio especial (0 = cortesía, sin cobros). En el plan gratis no hay cobros. El día de pago y el
+ *   primer cobro también salen solos, del día en que empezó su plan (ensureBillingSchedule), y el super admin
+ *   los puede cambiar en la ficha.
  * - **El cobro del mes** se crea en su día de pago (en los meses cortos, el último día), en la zona del
  *   negocio: lo crean el cron en cada pasada y la lectura del propietario, para que la pantalla no espere
  *   al cron. Lleva la mensualidad de ese momento menos el descuento de las recomendaciones ganadas y sin
@@ -69,7 +76,8 @@ import { applyRewards, availableRewardIds } from "./referral-service.ts";
  *   propietario por email.
  * - **La actividad:** todo va a la de la plataforma (`platform.billing_*`, sin negocio), también lo que hace
  *   el propietario: la del negocio la ven sus administradores, y la mensualidad sólo el propietario
- *   (constitución, principio III). Lo que pasa solo (crear el cobro, el recordatorio, la purga) no se anota.
+ *   (constitución, principio III). De lo que pasa solo, sólo se anota el día de pago automático (cambia los
+ *   datos del negocio, como «Agenda360»); crear el cobro, el recordatorio y la purga no se anotan.
  */
 
 /** Los cobros que esperan algo del propietario o del super admin. */
@@ -128,7 +136,10 @@ interface BillingTarget {
   ownerId: string | null;
   subscriptionId: string;
   plan: PlanId;
-  monthlyFee: number;
+  /** Su precio especial (null: el de su plan; 0: cortesía, sin cobros). */
+  customFee: number | null;
+  /** Las «Agendas contratadas» (null: sin tope): las que cuenta el precio de Business. */
+  maxProfessionals: number | null;
   billingDay: number | null;
   billingStart: ISODate | null;
   /** El día en que empezó su plan actual, en la zona del negocio: de él sale la mensualidad automática. */
@@ -136,7 +147,8 @@ interface BillingTarget {
 }
 
 const TARGET_SQL = `select b.id as "businessId", b.name as "businessName", b.timezone, b.status, b.owner_id as "ownerId",
-                           s.id as "subscriptionId", s.plan, s.monthly_fee as "monthlyFee", s.billing_day as "billingDay",
+                           s.id as "subscriptionId", s.plan, s.monthly_fee as "customFee",
+                           s.max_professionals as "maxProfessionals", s.billing_day as "billingDay",
                            s.billing_start as "billingStart", (s.plan_since at time zone b.timezone)::date as "planStart"
                       from businesses b join subscriptions s on s.business_id = b.id`;
 
@@ -146,16 +158,20 @@ async function findTarget(db: Db, businessId: string, lock = false): Promise<Bil
   return one<BillingTarget>(db, `${TARGET_SQL} where b.id = $1 ${lock ? "for update of s" : ""}`, [businessId]);
 }
 
-/** Tiene mensualidad (no en el plan gratis), con su día de pago y su primer cobro. */
-const hasFee = (target: BillingTarget): target is BillingTarget & { billingDay: number; billingStart: ISODate } =>
-  target.plan !== "free" && target.monthlyFee > 0 && target.billingDay !== null && target.billingStart !== null;
+/**
+ * Puede tener cobros: un plan de pago sin cortesía, con su día de pago y su primer cobro. El monto se calcula
+ * aparte (feeOf): con los precios de los planes en 0, tampoco hay cobros.
+ */
+const hasSchedule = (target: BillingTarget): target is BillingTarget & { billingDay: number; billingStart: ISODate } =>
+  target.plan !== "free" && target.customFee !== 0 && target.billingDay !== null && target.billingStart !== null;
 
 /** Genera cobros: con mensualidad, activo y con propietario. */
 const isBillable = (target: BillingTarget): target is BillingTarget & { billingDay: number; billingStart: ISODate } =>
-  hasFee(target) && target.status === "active" && target.ownerId !== null;
+  hasSchedule(target) && target.status === "active" && target.ownerId !== null;
 
 /** SQL de isBillable (alias `b` y `s`), para el cron. */
-const BILLABLE_SQL = `b.status = 'active' and b.owner_id is not null and s.plan <> 'free' and s.monthly_fee > 0
+const BILLABLE_SQL = `b.status = 'active' and b.owner_id is not null and s.plan <> 'free'
+                      and (s.monthly_fee is null or s.monthly_fee > 0)
                       and s.billing_day is not null and s.billing_start is not null`;
 
 /** Los negocios que generan cobros, para el cron. */
@@ -165,6 +181,32 @@ export async function billableBusinessIds(db: Db): Promise<string[]> {
     `select b.id from businesses b join subscriptions s on s.business_id = b.id where ${BILLABLE_SQL} order by b.id`,
   );
   return rows.map((row) => row.id);
+}
+
+/* ------------------------------------------------------------ El monto -- */
+
+/** La mensualidad de un negocio hoy: lo que se le cobra, el precio de su plan y las agendas que cuenta. */
+interface Fee {
+  /** effectiveMonthlyFee: su precio especial o el de su plan (0: sin cobros). */
+  monthlyFee: number;
+  /** planMonthlyPrice: el de su plan con sus agendas, aunque tenga un precio especial. */
+  planPrice: number;
+  /** Las agendas que cuenta Business: las contratadas o, sin tope, las activas (1 en los demás planes). */
+  agendas: number;
+}
+
+/**
+ * La mensualidad de un negocio con los precios de los planes de este momento. Las agendas sólo se cuentan en
+ * Business: las «Agendas contratadas» o, sin tope, las activas.
+ */
+async function feeOf(db: Db, target: Pick<BillingTarget, "businessId" | "plan" | "customFee" | "maxProfessionals">): Promise<Fee> {
+  const planPrices = await getPlanPrices(db);
+  const agendas = target.plan !== "business" ? 1 : (target.maxProfessionals ?? (await countActiveProfessionals(db, target.businessId)));
+  return {
+    monthlyFee: effectiveMonthlyFee(target, agendas, planPrices),
+    planPrice: planMonthlyPrice(target.plan, agendas, planPrices),
+    agendas,
+  };
 }
 
 /** Lo que paga un cobro: la mensualidad, el descuento de las recomendaciones libres y las que usa. */
@@ -188,14 +230,83 @@ async function chargeAmounts(db: Db, businessId: string, monthlyFee: number): Pr
   return { baseAmount: feeCents / 100, referralDiscount: discountCents / 100, amount: (feeCents - discountCents) / 100, referralIds };
 }
 
+/* -------------------------------------------------- El día de pago automático -- */
+
+/** «$9,99», «El de su plan», «Cortesía ($0,00)»: el precio especial, para la actividad. */
+const customFeeLabel = (fee: number | null) => (fee === null ? "El de su plan" : fee === 0 ? "Cortesía ($0,00)" : formatUsdAmount(fee));
+const dayLabel = (day: number | null) => (day === null ? "Sin día" : `El ${day} de cada mes`);
+const startLabel = (start: ISODate | null) => (start === null ? "Sin fecha" : formatDate(start, "d 'de' MMMM 'de' yyyy"));
+
+/**
+ * El día de pago y el primer cobro automáticos: los de proposedBilling (el día del mes en que empezó su plan,
+ * y el primer cobro al cumplirse el mes o, si ya pasó, el siguiente día de pago), con el primer cobro a
+ * BILLING_REMINDER_DAYS días de hoy como pronto: así el email de aviso de los tres días antes llega siempre
+ * antes del primer cobro. A un negocio nuevo o que vuelve de Free no le cambia nada (su primer cobro es a un
+ * mes); a uno que ya existía y cuyo día de pago cae en los próximos tres días, su primer cobro le queda en el
+ * mes siguiente, nunca en uno ya pasado ni sin aviso.
+ */
+function automaticBilling(planStart: ISODate, today: ISODate): { billingDay: number; billingStart: ISODate } {
+  return proposedBilling(planStart, addDaysISO(today, BILLING_REMINDER_DAYS));
+}
+
+/**
+ * El día de pago automático (spec 029, ampliación del 2026-10-20, RF-010). A un negocio de pago con
+ * mensualidad y sin día de pago (nuevo, que volvió de Free o que ya existía al publicarse los precios) le pone
+ * su día de pago y su primer cobro (automaticBilling). Idempotente: con el día ya puesto no hace nada, y la
+ * condición va en el mismo update, así dos lecturas a la vez no lo ponen dos veces. Corre en la transacción de
+ * quien lo llama: el cron (antes de crear los cobros), la lectura del propietario y la ficha de /admin. Queda en
+ * la actividad de la plataforma, con «Agenda360» como autor. `at`: el momento (las pruebas lo mueven).
+ * Devuelve 1 si lo puso.
+ */
+export async function ensureBillingSchedule(db: Db, businessId: string, at: Date = new Date()): Promise<number> {
+  const target = await findTarget(db, businessId);
+  if (!target || target.billingDay !== null || target.plan === "free" || target.customFee === 0) return 0;
+  const fee = await feeOf(db, target);
+  if (fee.monthlyFee <= 0) return 0;
+  const { billingDay, billingStart } = automaticBilling(target.planStart, todayIn(target.timezone, at));
+  const updated = await one<{ id: string }>(
+    db,
+    "update subscriptions set billing_day = $2, billing_start = $3 where id = $1 and billing_day is null returning id",
+    [target.subscriptionId, billingDay, billingStart],
+  );
+  if (!updated) return 0;
+  await logAudit(db, {
+    businessId: null,
+    actor: null,
+    actorName: APP_NAME,
+    action: "platform.billing_schedule_set",
+    entityType: "subscription",
+    entityId: target.subscriptionId,
+    summary: `Puso la mensualidad automática de ${target.businessName} (${formatUsdAmount(fee.monthlyFee)}): el ${billingDay} de cada mes, desde el ${startLabel(billingStart)}`,
+    changes: [
+      { label: "Día de pago", before: dayLabel(null), after: dayLabel(billingDay) },
+      { label: "Primer cobro", before: startLabel(null), after: startLabel(billingStart) },
+    ],
+  });
+  return 1;
+}
+
+/** Los negocios de pago con mensualidad y sin día de pago, para el cron (ensureBillingSchedule decide). */
+export async function unscheduledBusinessIds(db: Db): Promise<string[]> {
+  const rows = await many<{ id: string }>(
+    db,
+    `select s.business_id as id from subscriptions s
+      where s.plan <> 'free' and s.billing_day is null and (s.monthly_fee is null or s.monthly_fee > 0)
+      order by s.business_id`,
+  );
+  return rows.map((row) => row.id);
+}
+
 /* --------------------------------------------------------------- Los cobros -- */
 
 /**
  * Crea el cobro del mes de un negocio si llegó su día de pago (RF-002), una sola vez (unique por negocio y
  * día de pago, y la suscripción bloqueada). Sólo en sus primeros BILLING_OVERDUE_DAYS días: un mes que el
- * negocio pasó suspendido o sin propietario, o un primer cobro que ya quedó atrás, no se cobra después. Si
- * el descuento cubre la mensualidad entera, nace pagado y sus recomendaciones quedan aplicadas. `at`: el
- * momento (las pruebas lo mueven). Devuelve 1 si lo creó. No va a la actividad: pasa solo.
+ * negocio pasó suspendido o sin propietario, o un primer cobro que ya quedó atrás, no se cobra después. Su
+ * monto es la mensualidad de ese momento (effectiveMonthlyFee, con los precios de los planes y las agendas
+ * de hoy): un cambio de precio, de plan o de agendas vale desde el siguiente cobro, y los ya creados no
+ * cambian. Si el descuento cubre la mensualidad entera, nace pagado y sus recomendaciones quedan aplicadas.
+ * `at`: el momento (las pruebas lo mueven). Devuelve 1 si lo creó. No va a la actividad: pasa solo.
  */
 export async function ensureCharge(db: Db, businessId: string, at: Date = new Date()): Promise<number> {
   const target = await findTarget(db, businessId, true);
@@ -204,7 +315,9 @@ export async function ensureCharge(db: Db, businessId: string, at: Date = new Da
   const due = lastDueDate(today, target.billingDay, target.billingStart);
   if (!due || daysBetween(due, today) >= BILLING_OVERDUE_DAYS) return 0;
   if (await one(db, "select 1 from billing_charges where business_id = $1 and due_date = $2", [businessId, due])) return 0;
-  const amounts = await chargeAmounts(db, businessId, target.monthlyFee);
+  const { monthlyFee } = await feeOf(db, target);
+  if (monthlyFee <= 0) return 0;
+  const amounts = await chargeAmounts(db, businessId, monthlyFee);
   const covered = amounts.amount === 0;
   const created = await one<{ id: string }>(
     db,
@@ -246,7 +359,10 @@ export async function queueBillingReminder(db: Db, businessId: string, at: Date 
   if (await one(db, "select 1 from notifications where dedupe_key = $1", [dedupeKey])) return 0;
   const owner = await findOwner(db, businessId);
   if (!owner) return 0;
-  const amounts = await chargeAmounts(db, businessId, target.monthlyFee);
+  // Con la mensualidad de hoy: si cambia antes del día de pago, el cobro lleva la nueva.
+  const { monthlyFee } = await feeOf(db, target);
+  if (monthlyFee <= 0) return 0;
+  const amounts = await chargeAmounts(db, businessId, monthlyFee);
   // Las recomendaciones todavía no se reservan: el cobro las toma en su día de pago.
   const queued = await queueEmail(db, {
     businessId: null,
@@ -298,10 +414,12 @@ async function billingState(db: Db, target: BillingTarget, at: Date): Promise<Bu
     [target.businessId, AWAITING_RECEIPT],
   );
   const today = todayIn(target.timezone, at);
+  const fee = await feeOf(db, target);
   return {
-    monthlyFee: target.monthlyFee,
-    billingDay: target.billingDay,
-    nextDueDate: await nextUnbilledDue(db, target, today),
+    // Sólo su total: nunca el precio de su plan ni de dónde sale (constitución, principio III).
+    monthlyFee: fee.monthlyFee,
+    billingDay: fee.monthlyFee > 0 ? target.billingDay : null,
+    nextDueDate: await nextUnbilledDue(db, target, today, fee.monthlyFee),
     pending,
     // Sin gracia: un pendiente ya es de su día de pago o de antes (el cobro nace ese día), y bloquea.
     blocked: pending !== null,
@@ -311,15 +429,19 @@ async function billingState(db: Db, target: BillingTarget, at: Date): Promise<Bu
   };
 }
 
-/** El próximo día de pago que todavía no tiene su cobro (null: sin mensualidad). */
-async function nextUnbilledDue(db: Db, target: BillingTarget, today: ISODate): Promise<ISODate | null> {
-  if (!hasFee(target)) return null;
+/** El próximo día de pago que todavía no tiene su cobro (null: sin mensualidad o todavía sin día de pago). */
+async function nextUnbilledDue(db: Db, target: BillingTarget, today: ISODate, monthlyFee: number): Promise<ISODate | null> {
+  if (!hasSchedule(target) || monthlyFee <= 0) return null;
   const due = nextDueFrom(today, target.billingDay, target.billingStart);
   const billed = await one(db, "select 1 from billing_charges where business_id = $1 and due_date = $2", [target.businessId, due]);
   return billed ? nextDueFrom(addDaysISO(due, 1), target.billingDay, target.billingStart) : due;
 }
 
-/** La mensualidad de un negocio en su ficha de /admin (null: no existe). */
+/**
+ * La mensualidad de un negocio en su ficha de /admin (null: no existe): la que se le cobra, el precio de su
+ * plan con sus agendas, su precio especial, el día de pago y el primer cobro. Quien la lee para la ficha
+ * llama antes a ensureBillingSchedule, en la misma transacción.
+ */
 export async function adminBusinessBilling(db: Db, businessId: string, at: Date = new Date()): Promise<AdminBusinessBilling | null> {
   const target = await findTarget(db, businessId);
   if (!target) return null;
@@ -328,11 +450,15 @@ export async function adminBusinessBilling(db: Db, businessId: string, at: Date 
     "select count(*)::int as count from billing_charges where business_id = $1 and status = any($2::text[])",
     [businessId, OPEN_STATUSES],
   );
+  const fee = await feeOf(db, target);
   return {
-    monthlyFee: target.monthlyFee,
+    monthlyFee: fee.monthlyFee,
+    planPrice: fee.planPrice,
+    customFee: target.customFee,
+    agendas: fee.agendas,
     billingDay: target.billingDay,
     billingStart: target.billingStart,
-    nextDueDate: await nextUnbilledDue(db, target, todayIn(target.timezone, at)),
+    nextDueDate: await nextUnbilledDue(db, target, todayIn(target.timezone, at), fee.monthlyFee),
     openCharges: open?.count ?? 0,
   };
 }
@@ -438,12 +564,13 @@ async function removeFiles(paths: string[]): Promise<void> {
 export const billingService = {
   /**
    * La mensualidad, el próximo pago, el historial, el cobro pendiente más antiguo (que bloquea la pantalla
-   * hasta subir el comprobante) y las cuentas. Antes crea el cobro del mes si ya llegó su día de pago, para
-   * que la pantalla no espere al cron.
+   * hasta subir el comprobante) y las cuentas. Antes le pone el día de pago automático si le falta y crea el
+   * cobro del mes si ya llegó su día de pago, para que la pantalla no espere al cron.
    */
   async get(ctx: RequestContext, businessId: string, at: Date = new Date()): Promise<BusinessBilling> {
     await authorizeBilling(pool, ctx, businessId);
     return transaction(async (db) => {
+      await ensureBillingSchedule(db, businessId, at);
       await ensureCharge(db, businessId, at);
       const target = await findTarget(db, businessId);
       if (!target) throw new AppError("not_found", "Negocio no encontrado.");
@@ -545,10 +672,22 @@ export const billingService = {
 
 /* --------------------------------------------------------- El super admin -- */
 
-/** «$9,99», «Sin mensualidad». */
-const feeLabel = (fee: number) => (fee > 0 ? formatUsdAmount(fee) : "Sin mensualidad");
-const dayLabel = (day: number | null) => (day === null ? "Sin día" : `El ${day} de cada mes`);
-const startLabel = (start: ISODate | null) => (start === null ? "Sin fecha" : formatDate(start, "d 'de' MMMM 'de' yyyy"));
+/** «3 agendas»: las agendas incluidas, para la actividad. */
+const agendasLabel = (agendas: number) => (agendas === 1 ? "1 agenda" : `${agendas} agendas`);
+
+/** Los campos de /admin → Planes, como los dice la actividad. */
+const PRICE_FIELDS: { key: keyof PlanPrices; label: string; format: (value: number) => string }[] = [
+  { key: "proPrice", label: "Pro", format: formatUsdAmount },
+  { key: "businessPrice", label: "Business", format: formatUsdAmount },
+  { key: "businessIncludedAgendas", label: "Agendas incluidas en Business", format: agendasLabel },
+  { key: "businessExtraAgendaPrice", label: "Cada agenda más de Business", format: formatUsdAmount },
+];
+
+/** «Pro $14,99 · Business $29,99 con 3 agendas y $8,00 por cada agenda más». */
+const describePrices = (prices: PlanPrices) =>
+  `Pro ${formatUsdAmount(prices.proPrice)} · Business ${formatUsdAmount(prices.businessPrice)} con ${agendasLabel(
+    prices.businessIncludedAgendas,
+  )} y ${formatUsdAmount(prices.businessExtraAgendaPrice)} por cada agenda más`;
 
 /** Los datos de un cobro para los emails al propietario. */
 const emailData = (charge: ChargeRow, firstName: string): BillingEmailData => ({
@@ -629,9 +768,11 @@ const ADMIN_LIST_SIZE = 200;
 /** /api/admin/billing… (spec 029): la mensualidad de cada negocio, los cobros y las cuentas de Agenda360. */
 export const adminBillingService = {
   /**
-   * La mensualidad, el día de pago y el primer cobro de un negocio (RF-001). Un primer cobro nuevo no puede
-   * ser anterior a hoy (en la zona del negocio). Cambiar la mensualidad vale desde el siguiente cobro: los ya
-   * creados no cambian. Queda en la actividad de la plataforma, con lo que cambió.
+   * El precio especial, el día de pago y el primer cobro de un negocio (RF-001; el precio especial, desde la
+   * ampliación del 2026-10-20). Sin precio especial (null) se le cobra el de su plan con sus agendas; con 0,
+   * nada (cortesía). Sin día de pago ni primer cobro, los pone la API como el sistema (automaticBilling). Un
+   * primer cobro nuevo no puede ser anterior a hoy (en la zona del negocio). Un cambio vale desde el siguiente
+   * cobro: los ya creados no cambian. Queda en la actividad de la plataforma, con lo que cambió.
    */
   async setBusinessBilling(ctx: RequestContext, businessId: string, input: unknown): Promise<AdminBusinessBilling> {
     const actor = authorizeSuperAdmin(ctx);
@@ -640,17 +781,20 @@ export const adminBillingService = {
       const before = await findTarget(db, businessId, true);
       if (!before) throw new AppError("not_found", "Negocio no encontrado.");
       const today = todayIn(before.timezone, new Date());
+      const fee = await feeOf(db, { ...before, customFee: parsed.customFee });
       // Sin día de pago ni primer cobro, los dos salen del día en que empezó su plan (pedido del dueño del
       // producto, 2026-10-20): creado el 8 de septiembre, paga el 8 de cada mes desde el 8 de octubre.
       const data =
-        parsed.monthlyFee > 0 && parsed.billingDay === null && parsed.billingStart === null
-          ? { ...parsed, ...proposedBilling(before.planStart, today) }
+        fee.monthlyFee > 0 && parsed.billingDay === null && parsed.billingStart === null
+          ? { ...parsed, ...automaticBilling(before.planStart, today) }
           : parsed;
-      if (data.monthlyFee > 0 && data.billingStart !== null && data.billingStart !== before.billingStart && data.billingStart < today) {
+      if (fee.monthlyFee > 0 && data.billingStart !== null && data.billingStart !== before.billingStart && data.billingStart < today) {
         throw new AppError("validation", "La fecha del primer cobro no puede ser anterior a hoy.");
       }
+      const feeChanged = data.customFee !== before.customFee;
+      const scheduleChanged = data.billingDay !== before.billingDay || data.billingStart !== before.billingStart;
       const changes: AuditChange[] = [
-        data.monthlyFee !== before.monthlyFee && { label: "Mensualidad", before: feeLabel(before.monthlyFee), after: feeLabel(data.monthlyFee) },
+        feeChanged && { label: "Precio especial", before: customFeeLabel(before.customFee), after: customFeeLabel(data.customFee) },
         data.billingDay !== before.billingDay && { label: "Día de pago", before: dayLabel(before.billingDay), after: dayLabel(data.billingDay) },
         data.billingStart !== before.billingStart && {
           label: "Primer cobro",
@@ -661,24 +805,75 @@ export const adminBillingService = {
       if (changes.length > 0) {
         await db.query("update subscriptions set monthly_fee = $2, billing_day = $3, billing_start = $4 where id = $1", [
           before.subscriptionId,
-          data.monthlyFee,
+          data.customFee,
           data.billingDay,
           data.billingStart,
         ]);
+        const name = before.businessName;
+        const planPart = `${describePlanPrice(before.plan, fee.agendas)}${fee.planPrice > 0 ? `, ${formatUsdAmount(fee.planPrice)}` : ": sin cobros"}`;
+        const feePart =
+          data.customFee === null
+            ? `Quitó el precio especial de ${name}: vuelve al de su plan (${planPart})`
+            : data.customFee === 0
+              ? `Puso a ${name} en cortesía: sin cobros`
+              : `Puso a ${name} el precio especial de ${formatUsdAmount(data.customFee)}`;
+        const schedulePart = data.billingDay === null ? null : `el ${data.billingDay} de cada mes desde el ${startLabel(data.billingStart)}`;
         await logAudit(db, {
           businessId: null,
           actor,
           action: "platform.billing_fee_changed",
           entityType: "subscription",
           entityId: before.subscriptionId,
-          summary:
-            data.monthlyFee > 0
-              ? `Puso la mensualidad de ${before.businessName} en ${formatUsdAmount(data.monthlyFee)}, el ${data.billingDay} de cada mes desde el ${startLabel(data.billingStart)}`
-              : `Quitó la mensualidad de ${before.businessName}: ya no se le cobra`,
+          summary: feeChanged
+            ? `${feePart}${scheduleChanged && schedulePart ? `; ${schedulePart}` : ""}`
+            : schedulePart
+              ? `Cambió el día de pago de ${name}: ${schedulePart}`
+              : `Quitó el día de pago de ${name}`,
           changes,
         });
       }
       return (await adminBusinessBilling(db, businessId))!;
+    });
+  },
+
+  /** Los precios de los planes, para /admin → Planes. */
+  async getPlanPrices(ctx: RequestContext): Promise<PlanPrices> {
+    authorizeSuperAdmin(ctx);
+    return getPlanPrices(pool);
+  },
+
+  /**
+   * Cambia los precios de los planes (RF-009): valen desde el siguiente cobro de cada negocio. Los cobros ya
+   * creados no cambian, y los negocios con precio especial siguen con el suyo. Queda en la actividad de la
+   * plataforma, con lo que cambió.
+   */
+  async setPlanPrices(ctx: RequestContext, input: unknown): Promise<PlanPrices> {
+    const actor = authorizeSuperAdmin(ctx);
+    const data = parseInput(planPricesSchema, input);
+    return transaction(async (db) => {
+      // Una sola fila: bloqueada, dos super admins a la vez van uno detrás de otro.
+      await db.query("select 1 from platform_settings for update");
+      const before = await getPlanPrices(db);
+      const changes = PRICE_FIELDS.filter(({ key }) => data[key] !== before[key]).map(({ key, label, format }) => ({
+        label,
+        before: format(before[key]),
+        after: format(data[key]),
+      }));
+      if (changes.length === 0) return before;
+      await db.query(
+        "update platform_settings set pro_price = $1, business_price = $2, business_included_agendas = $3, business_extra_agenda_price = $4",
+        [data.proPrice, data.businessPrice, data.businessIncludedAgendas, data.businessExtraAgendaPrice],
+      );
+      await logAudit(db, {
+        businessId: null,
+        actor,
+        action: "platform.plan_prices_changed",
+        entityType: "platform",
+        entityId: null,
+        summary: `Cambió los precios de los planes: ${describePrices(data)}`,
+        changes,
+      });
+      return data;
     });
   },
 

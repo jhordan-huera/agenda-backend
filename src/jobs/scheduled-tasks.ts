@@ -6,9 +6,11 @@ import { deleteExpiredSessions } from "../services/auth-service.ts";
 import {
   billableBusinessIds,
   deleteStalePendingBillingReceipts,
+  ensureBillingSchedule,
   ensureCharge,
   purgeOldBillingReceipts,
   queueBillingReminder,
+  unscheduledBusinessIds,
 } from "../services/billing-service.ts";
 import {
   billingReceiptNotice,
@@ -110,15 +112,27 @@ export async function queueCalendarInvites(): Promise<QueuedReminders> {
 }
 
 /**
- * El cobro de las mensualidades (spec 029), en cada pasada: el cobro del mes de cada negocio que ya llegó a
- * su día de pago y el email de los tres días antes, cada negocio en su transacción. `at`: el momento (las
- * pruebas lo mueven). Devuelve cuántos cobros y recordatorios, y en cuántos negocios falló.
+ * El cobro de las mensualidades (spec 029), en cada pasada: primero el día de pago automático de los negocios
+ * de pago que todavía no lo tienen (los nuevos, los que volvieron de Free y, al publicarse los precios, los que
+ * ya existían); después el cobro del mes de cada negocio que ya llegó a su día de pago y el email de los tres
+ * días antes. Cada negocio en su transacción. `at`: el momento (las pruebas lo mueven). Devuelve cuántos días
+ * de pago puso, cuántos cobros y recordatorios, y en cuántos negocios falló.
  */
-export async function runMonthlyBilling(at: Date = new Date()): Promise<{ charges: number; reminders: number; failures: number }> {
+export async function runMonthlyBilling(
+  at: Date = new Date(),
+): Promise<{ schedules: number; charges: number; reminders: number; failures: number }> {
+  const schedules = await forEachBusiness(await unscheduledBusinessIds(pool), "día de pago automático", (db, id) =>
+    ensureBillingSchedule(db, id, at),
+  );
   const ids = await billableBusinessIds(pool);
   const charges = await forEachBusiness(ids, "mensualidades", (db, id) => ensureCharge(db, id, at));
   const reminders = await forEachBusiness(ids, "recordatorio de la mensualidad", (db, id) => queueBillingReminder(db, id, at));
-  return { charges: charges.queued, reminders: reminders.queued, failures: charges.failures + reminders.failures };
+  return {
+    schedules: schedules.queued,
+    charges: charges.queued,
+    reminders: reminders.queued,
+    failures: schedules.failures + charges.failures + reminders.failures,
+  };
 }
 
 /** Resumen de una ejecución del cron (scripts/cron.ts). */

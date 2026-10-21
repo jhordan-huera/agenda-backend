@@ -1358,7 +1358,10 @@ export interface BillingCharge {
  * principio III).
  */
 export interface BusinessBilling {
-  /** En USD; 0: sin cobros (plan gratis o cortesía). */
+  /**
+   * Su total en USD, antes del descuento de referidos (que va en cada cobro): el de su plan o su precio
+   * especial, sin decir de dónde sale. 0: sin cobros (plan gratis o cortesía).
+   */
   monthlyFee: number;
   /** El día del mes en que paga (null: sin cobros). */
   billingDay: number | null;
@@ -1381,7 +1384,17 @@ export interface BusinessBilling {
 
 /** La mensualidad de un negocio en su ficha de /admin («Suscripción y uso»). */
 export interface AdminBusinessBilling {
+  /**
+   * La mensualidad que se le cobra (effectiveMonthlyFee): su precio especial o, sin él, el de su plan con sus
+   * agendas. 0: sin cobros (el plan gratis o un negocio de cortesía).
+   */
   monthlyFee: number;
+  /** El precio de su plan con sus agendas (planMonthlyPrice), aunque tenga un precio especial. */
+  planPrice: number;
+  /** Su precio especial (null: el de su plan; 0: cortesía, sin cobros). */
+  customFee: number | null;
+  /** Las agendas que cuenta el precio de Business: las contratadas o, sin tope, las activas. */
+  agendas: number;
   billingDay: number | null;
   /** La fecha del primer cobro (null: todavía sin cobros). */
   billingStart: ISODate | null;
@@ -1389,6 +1402,21 @@ export interface AdminBusinessBilling {
   nextDueDate: ISODate | null;
   /** Sus cobros pendientes: por pagar, en revisión o rechazados. */
   openCharges: number;
+}
+
+/**
+ * Los precios de los planes, en USD (spec 029, ampliación del 2026-10-20): los cambia el super admin en
+ * /admin → Planes y valen desde el siguiente cobro de cada negocio. Free no tiene precio (sin cobros). Nunca
+ * los ve un negocio ni van en la configuración pública: el propietario sólo ve su mensualidad.
+ */
+export interface PlanPrices {
+  proPrice: number;
+  /** Business con sus agendas incluidas. */
+  businessPrice: number;
+  /** Las agendas que incluye el precio de Business. */
+  businessIncludedAgendas: number;
+  /** Lo que suma cada agenda de Business sobre las incluidas. */
+  businessExtraAgendaPrice: number;
 }
 
 /**
