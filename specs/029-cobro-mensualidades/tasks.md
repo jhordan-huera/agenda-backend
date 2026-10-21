@@ -68,12 +68,12 @@ archivos.
 
 ## Fase 5: La beta
 
-- [ ] T011 `beta/`: la tarjeta de la mensualidad, la pantalla de pago y «Cobros» en su /admin, con datos
+- [x] T011 `beta/`: la tarjeta de la mensualidad, la pantalla de pago y «Cobros» en su /admin, con datos
   de ejemplo. Antes, una copia de `src`. Después, `npm run build`.
 
 ## Fase 6: Cierre
 
-- [ ] T012 `reporte.md` y los commits en `dev` de cada repo.
+- [x] T012 `reporte.md` y los commits en `dev` de cada repo.
 
 ## Fase 7: Ampliación, los precios automáticos (2026-10-20)
 
