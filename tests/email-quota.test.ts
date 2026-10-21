@@ -98,6 +98,8 @@ console.log("Cada tipo de email tiene su nivel");
     team: [
       "password_reset", "team_invite", "account_security_changed", "platform_admin_added", "business_suspended", "business_reactivated",
       "plan_change_requested", "plan_change_approved", "plan_change_rejected", "plan_changed", "business_created",
+      // La mensualidad del propietario (spec 029).
+      "billing_reminder", "billing_paid", "billing_rejected", "billing_voided",
     ],
     patient: [
       "welcome", "booking_created", "appointment_confirmed", "appointment_updated", "appointment_cancelled", "appointment_reminder",

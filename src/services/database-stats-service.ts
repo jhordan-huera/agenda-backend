@@ -110,6 +110,8 @@ export const TABLE_INFO: Record<string, { label: string; retention: string }> = 
   subscriptions: { label: "Plan de cada negocio", retention: "Nunca" },
   plan_change_requests: { label: "Solicitudes de cambio de plan", retention: "Nunca" },
   payment_receipts: { label: "Comprobantes de pago (registro)", retention: "3 meses después de la cita (las subidas sin terminar, al día)" },
+  billing_charges: { label: "Cobros de las mensualidades", retention: "Nunca" },
+  billing_receipts: { label: "Comprobantes de las mensualidades (registro)", retention: "12 meses (las subidas sin terminar, al día)" },
   users: { label: "Cuentas", retention: "Nunca" },
   sessions: { label: "Sesiones abiertas", retention: "Al caducar (como mucho 30 días)" },
   login_challenges: { label: "Verificación en dos pasos (códigos por usar)", retention: "Al caducar" },

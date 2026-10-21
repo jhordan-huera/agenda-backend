@@ -58,6 +58,7 @@ import { createUserAccount, hashPassword, isEmailRegistered } from "./accounts.t
 import { emailQuotaStatus } from "./email-limits.ts";
 import { ADMIN_AUDIT_QUERY, parseAuditFilters, queryAuditLogs } from "./activity-service.ts";
 import { businessAnalytics } from "./analytics-service.ts";
+import { adminBusinessBilling, billingCounts, ensureBillingSchedule } from "./billing-service.ts";
 import { findTeamMember, listTeamMembers } from "./account-service.ts";
 import { logAudit } from "./audit.ts";
 import { insertBusiness, isSlugTaken } from "./business-factory.ts";
@@ -404,7 +405,7 @@ export const adminService = {
     authorizeSuperAdmin(ctx);
     const month = getZonedNow(DEFAULT_TIMEZONE).date.slice(0, 7);
     // Las consultas a la vez: cada ida y vuelta a la base cuenta (sobre todo desde dev:prod).
-    const [businesses, counts, growth, health] = await Promise.all([
+    const [businesses, counts, growth, health, billing] = await Promise.all([
       many<{ status: BusinessStatus; createdAt: string; plan: PlanId | null; subscriptionStatus: string | null }>(
         pool,
         `select b.status, b.created_at as "createdAt", s.plan, s.status as "subscriptionStatus"
@@ -421,6 +422,8 @@ export const adminService = {
       ).then((row) => row!),
       platformGrowth(),
       systemHealth(),
+      // El cobro de las mensualidades (spec 029): comprobantes por revisar y cobros atrasados.
+      billingCounts(pool),
     ]);
     // El reparto por plan, sólo con los activos: va junto a «N negocios activos» (spec 015).
     const businessesByPlan = Object.fromEntries(PLANS.map((plan) => [plan.id, 0])) as Record<PlanId, number>;
@@ -443,6 +446,7 @@ export const adminService = {
       })),
       growth,
       health,
+      billing,
     };
   },
 
@@ -454,8 +458,9 @@ export const adminService = {
   async getBusiness(ctx: RequestContext, businessId: string): Promise<AdminBusinessDetail | null> {
     authorizeSuperAdmin(ctx);
     if (!isUuid(businessId)) return null;
-    // El resumen, el equipo, la actividad, su parte de la analítica y sus referidos a la vez (no dependen entre sí).
-    const [[summary], members, recentActivity, analytics, referrals] = await Promise.all([
+    // El resumen, el equipo, la actividad, su parte de la analítica, sus referidos, su última descarga y su
+    // mensualidad a la vez (no dependen entre sí).
+    const [[summary], members, recentActivity, analytics, referrals, lastExport, billing] = await Promise.all([
       summarizeBusinesses(pool, businessId),
       listTeamMembers(pool, businessId),
       // Sin los eventos de la historia clínica (spec 025): llevan pacientes, formatos y nombres de archivos.
@@ -471,9 +476,30 @@ export const adminService = {
       businessAnalytics(businessId),
       // Quién lo recomendó y a quién recomendó (spec 023).
       adminReferralsOf(pool, businessId),
+      // «Eliminar negocio» recuerda la descarga de los datos (spec 028): la última, según la actividad. Sólo
+      // la fecha: nada de lo que se llevó.
+      one<{ at: string | null }>(
+        pool,
+        "select max(created_at) as at from audit_logs where business_id = $1 and action = 'business.data_exported'",
+        [businessId],
+      ),
+      // La mensualidad (spec 029): va aparte de `subscription`, que también la ve el equipo del negocio. Si le
+      // falta el día de pago, se lo pone el sistema (ampliación del 2026-10-20), en la misma transacción.
+      transaction(async (db) => {
+        await ensureBillingSchedule(db, businessId);
+        return adminBusinessBilling(db, businessId);
+      }),
     ]);
     if (!summary) return null;
-    return { ...summary, members, recentActivity, analytics, referrals };
+    return {
+      ...summary,
+      members,
+      recentActivity,
+      analytics,
+      referrals,
+      lastDataExportAt: lastExport?.at ?? null,
+      ...(billing ? { billing } : {}),
+    };
   },
 
   /**

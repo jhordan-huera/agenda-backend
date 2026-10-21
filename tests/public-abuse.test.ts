@@ -120,7 +120,7 @@ async function freeSlots(slug: string, serviceId: string, professionalId: string
   const now = getZonedNow(profile.business.timezone);
   const context = { ...profile, settings: profile.business.bookingSettings, now };
   const slots: { date: string; startTime: string }[] = [];
-  for (let d = 1; d < 50 && slots.length < wanted; d++) {
+  for (let d = 1; d < 220 && slots.length < wanted; d++) {
     const date = addDaysISO(now.date, d);
     if (from && date < from) continue;
     for (const startTime of getAvailableSlots(date, service.durationMinutes, scopeToProfessional(context, professionalId)).filter((_, i) => i % 2 === 0)) {
@@ -224,12 +224,22 @@ try {
   {
     // Free: como mucho una cuarta parte del cupo mensual (20 citas) en 24 h → 5.
     const bella = (await laura.a("GET", laura.B)).body;
-    await laura.a("PATCH", laura.B, { bookingSettings: { ...bella.bookingSettings, minNoticeHours: 0, maxClientBookingsPerDay: 0 } });
+    await laura.a("PATCH", laura.B, { bookingSettings: { ...bella.bookingSettings, minNoticeHours: 0, maxClientBookingsPerDay: 0, maxAdvanceDays: 365 } });
     const agendaId = sql(`select id from professionals where business_id = '${laura.session.businessId}' limit 1`);
     const service = (await laura.a("GET", `${laura.B}/services`)).body.find((s: { isActive: boolean; modes: string[] }) => s.isActive && s.modes.includes("business"));
-    // El mes que viene: el actual ya tiene sus 20 citas en los datos demo.
-    const nextMonth = sql("select to_char(date_trunc('month', current_date) + interval '1 month', 'YYYY-MM-DD')");
-    const bellaSlots = await freeSlots(bella.slug, service.id, agendaId, 3, nextMonth);
+    // El primer mes, desde el que viene, con lugar para dos reservas dentro de las 20 citas del plan: los
+    // datos demo llenan el actual y las semanas próximas, y cuántas caen en el mes que viene depende del
+    // día en que se corre la prueba (así no falla a fin de mes).
+    const roomyMonth = sql(
+      `select to_char(m, 'YYYY-MM-DD')
+         from generate_series(date_trunc('month', current_date) + interval '1 month', date_trunc('month', current_date) + interval '6 months', interval '1 month') m
+        where (select count(*) from appointments a
+                where a.business_id = '${laura.session.businessId}' and a.status <> 'cancelled'
+                  and a.date >= m::date and a.date < (m + interval '1 month')::date) < 18
+        order by m
+        limit 1`,
+    );
+    const bellaSlots = await freeSlots(bella.slug, service.id, agendaId, 3, roomyMonth);
     const recent = () => count(`select count(*) from appointments where business_id = '${laura.session.businessId}' and source = 'booking_page' and created_at between now() - interval '24 hours' and now()`);
     // Reservas falsas ya canceladas (también cuentan): el negocio queda a una del tope.
     const missing = 4 - recent();

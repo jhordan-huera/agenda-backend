@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/027-invitaciones-calendario` (rama de trabajo: `dev`) · **Creada**: 2026-10-19
 
-**Estado**: Implementada (2026-10-19)
+**Estado**: Publicada (2026-10-19, PR backend #52 y front #38)
 
 **Repos**:
 - **agenda-backend:** las invitaciones (crearlas, actualizarlas y cancelarlas), el email y el cron.

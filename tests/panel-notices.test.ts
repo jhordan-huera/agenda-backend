@@ -625,7 +625,12 @@ ok(
   "los intentos fallidos: uno por cuenta y hora",
   attackNotices,
 );
-ok(!(await bell(ricardo, bellPath)).some((notice) => ["new_business", "plan_request", "account_security", "login_attack"].includes(notice.kind)), "ninguno de los del super admin llega a un negocio");
+ok(
+  !(await bell(ricardo, bellPath)).some((notice) =>
+    ["new_business", "plan_request", "account_security", "login_attack", "reminders_sent", "billing_receipt"].includes(notice.kind),
+  ),
+  "ninguno de los del super admin llega a un negocio",
+);
 const adminUnread = await unreadAt(admin, adminPath);
 const secondUnread = await unreadAt(second, adminPath);
 const firstAdmin = (await bell(admin, adminPath))[0];

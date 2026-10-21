@@ -11,8 +11,13 @@ import { appOrigin } from "./notifications.ts";
  * El programa de referidos (spec 023). Cada negocio tiene su código (migración 046) y su enlace,
  * `<portada>/?ref=<código>`. El super admin anota «Recomendado por»; una recomendación «se queda» cuando el
  * negocio recomendado sigue activo a los 30 días de crearse, y entonces quien lo recomendó gana $1,50 de
- * descuento en su siguiente mensualidad, una sola vez. No hay cobro automático: el dueño lo marca como
- * aplicado al cobrar. Que se ganó se calcula al leer; sólo se guarda cuándo se aplicó.
+ * descuento en su siguiente mensualidad, una sola vez. Que se ganó se calcula al leer; sólo se guarda
+ * cuándo se aplicó.
+ *
+ * Desde la spec 029 el descuento va solo en el siguiente cobro de la mensualidad (billing-service.ts): el
+ * cobro guarda las recomendaciones que usa y, al pagarse, quedan aplicadas. Mientras un cobro abierto las
+ * usa, no salen en «Descuentos por referidos» ni se pueden marcar a mano; el dueño sigue marcando así las
+ * de un negocio sin mensualidad.
  */
 
 /** Los códigos: 6 caracteres, letras mayúsculas sin I ni O y números del 2 al 9 (como el check de la 046). */
@@ -21,6 +26,35 @@ const REFERRAL_CODE_PATTERN = /^[A-HJ-NP-Z2-9]{6}$/;
 /** SQL: la recomendación del negocio `alias` se quedó (activo y con 30 días o más desde su alta). */
 const qualifiedSql = (alias: string) =>
   `(${alias}.status = 'active' and ${alias}.created_at <= now() - make_interval(days => ${REFERRAL_QUALIFY_DAYS}))`;
+
+/** SQL: la recomendación del negocio `alias` va en un cobro abierto de la mensualidad (spec 029). */
+const inOpenChargeSql = (alias: string) =>
+  `exists (select 1 from billing_charges c where c.status in ('due', 'in_review', 'rejected') and ${alias}.id = any(c.referral_ids))`;
+
+/**
+ * Las recomendaciones de `referrerId` con el descuento ganado y libre: sin aplicar y sin un cobro abierto
+ * que ya las use. La más antigua primero (así las usa el siguiente cobro).
+ */
+export async function availableRewardIds(db: Db, referrerId: string): Promise<string[]> {
+  const rows = await many<{ id: string }>(
+    db,
+    `select r.id from businesses r
+      where r.referred_by = $1 and r.referral_reward_applied_at is null and ${qualifiedSql("r")} and not ${inOpenChargeSql("r")}
+      order by r.created_at, r.id`,
+    [referrerId],
+  );
+  return rows.map((row) => row.id);
+}
+
+/** Marca aplicados los descuentos de estas recomendaciones (al pagarse el cobro que los usa). Devuelve cuántos. */
+export async function applyRewards(db: Db, referredIds: string[]): Promise<number> {
+  if (referredIds.length === 0) return 0;
+  const result = await db.query(
+    "update businesses set referral_reward_applied_at = now() where id = any($1::uuid[]) and referral_reward_applied_at is null",
+    [referredIds],
+  );
+  return result.rowCount ?? 0;
+}
 
 /** El enlace para recomendar: la portada con el código, que «Quiero mi agenda» nombra en su mensaje. */
 export const referralLink = (code: string) => `${appOrigin()}/?ref=${code}`;
@@ -172,7 +206,10 @@ export const adminReferralService = {
     });
   },
 
-  /** Los descuentos ganados y pendientes de aplicar, el más antiguo primero. */
+  /**
+   * Los descuentos ganados y pendientes de aplicar, el más antiguo primero. Sin los que ya van en un cobro
+   * abierto de la mensualidad (spec 029): se aplican solos al pagarse.
+   */
   async listRewards(ctx: RequestContext): Promise<ReferralReward[]> {
     authorizeSuperAdmin(ctx);
     const rows = await many<{ businessId: string; businessName: string; referrerId: string; referrerName: string; earnedAt: string }>(
@@ -181,7 +218,7 @@ export const adminReferralService = {
               r.created_at + make_interval(days => ${REFERRAL_QUALIFY_DAYS}) as "earnedAt"
          from businesses r
          join businesses p on p.id = r.referred_by
-        where r.referral_reward_applied_at is null and ${qualifiedSql("r")}
+        where r.referral_reward_applied_at is null and ${qualifiedSql("r")} and not ${inOpenChargeSql("r")}
         order by "earnedAt", p.name, r.name`,
     );
     return rows.map((row) => ({
@@ -195,16 +232,17 @@ export const adminReferralService = {
   /**
    * «Marcar como aplicado»: el dueño ya descontó los $1,50 al cobrar a quien recomendó. Queda en la
    * actividad de la plataforma, sin negocio: la actividad del negocio la ven también sus administradores,
-   * y el descuento sólo lo ve el propietario (constitución, principio III). 409 si no se ganó o ya se aplicó.
+   * y el descuento sólo lo ve el propietario (constitución, principio III). 409 si no se ganó, ya se aplicó
+   * o ya va en un cobro abierto de la mensualidad (spec 029: se aplica solo al pagarse).
    */
   async applyReward(ctx: RequestContext, businessId: string): Promise<void> {
     const actor = authorizeSuperAdmin(ctx);
     await transaction(async (db) => {
       const row = isUuid(businessId)
-        ? await one<NamedBusiness & { appliedAt: string | null; qualified: boolean; referrerName: string | null }>(
+        ? await one<NamedBusiness & { appliedAt: string | null; qualified: boolean; inCharge: boolean; referrerName: string | null }>(
             db,
             `select r.id, r.name, r.referral_reward_applied_at as "appliedAt", ${qualifiedSql("r")} as qualified,
-                    p.name as "referrerName"
+                    ${inOpenChargeSql("r")} as "inCharge", p.name as "referrerName"
                from businesses r
                left join businesses p on p.id = r.referred_by
               where r.id = $1
@@ -214,6 +252,9 @@ export const adminReferralService = {
         : null;
       if (!row) throw new AppError("not_found", "Negocio no encontrado.");
       if (row.appliedAt) throw new AppError("conflict", "Este descuento ya se aplicó.");
+      if (row.inCharge) {
+        throw new AppError("conflict", "Este descuento ya va en un cobro de la mensualidad: se aplica solo al marcarlo pagado.");
+      }
       if (!row.referrerName || !row.qualified) {
         throw new AppError(
           "conflict",

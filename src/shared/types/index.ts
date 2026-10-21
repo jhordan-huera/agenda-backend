@@ -703,7 +703,15 @@ export type EmailType =
   /** Al paciente: «Cancelar ésta y las siguientes» de una serie, con las fechas canceladas (spec 011). */
   | "appointment_series_cancelled"
   /** Al profesional: la cita como invitación de calendario, su cambio o su cancelación (spec 027). */
-  | "calendar_invite";
+  | "calendar_invite"
+  /** Al propietario, tres días antes del día de pago: el monto y las cuentas para transferir (spec 029). */
+  | "billing_reminder"
+  /** Al propietario: el super admin confirmó el pago de su mensualidad (spec 029). */
+  | "billing_paid"
+  /** Al propietario: el super admin rechazó el comprobante, con el motivo (spec 029). */
+  | "billing_rejected"
+  /** Al propietario: el super admin anuló el cobro de un mes, con el motivo (spec 029). */
+  | "billing_voided";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -1016,6 +1024,92 @@ export interface ClinicalRecord {
   attachmentAccess: "available" | "upgrade" | "unavailable";
 }
 
+/* -------------------------------------- Descargar los datos del negocio (spec 028) -- */
+
+/**
+ * Qué se lleva quien descarga: el propietario, todo el negocio (`business`); el rol Profesional, lo de
+ * su agenda (`agenda`): sus pacientes (con la regla de «sólo sus pacientes», aunque el negocio esté en
+ * «todos»), sus citas y, con acceso clínico, las historias de esos pacientes. Nadie más descarga: ni el
+ * administrador, ni la recepción, ni el super admin, tampoco en modo soporte.
+ */
+export type DataExportScope = "business" | "agenda";
+
+/**
+ * ¿Lleva las historias clínicas y sus archivos? `no_access`: el profesional no tiene acceso clínico;
+ * `disabled`: la historia clínica no está activada en el negocio.
+ */
+export type DataExportClinical = "included" | "no_access" | "disabled";
+
+/** GET …/export: con qué empieza cada descarga. Pedirlo la deja en la actividad (una entrada por descarga). */
+export interface DataExportSummary {
+  scope: DataExportScope;
+  business: { name: string; slug: string; timezone: string; currency: string; address: string; phone: string };
+  /** Quién descarga: va al pie de cada historia. */
+  exportedBy: string;
+  /** Cuándo empezó: la fecha del ZIP y del LEEME. */
+  exportedAt: ISODateTime;
+  clinical: DataExportClinical;
+  /** Lo que trae; las historias y los archivos, 0 si no lleva lo clínico. */
+  counts: { clients: number; appointments: number; clinicalRecords: number; attachments: number };
+}
+
+/** Una parte de la descarga. `nextCursor`: con qué pedir la siguiente (null: era la última). */
+export interface DataExportPage<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
+/** Un paciente de pacientes.xlsx, con todos sus datos: el email y el teléfono completos (son del negocio). */
+export interface DataExportClient {
+  id: string;
+  name: string;
+  documentId: string;
+  email: string;
+  phone: string;
+  address: string;
+  notes: string;
+  isActive: boolean;
+  /** «Por verificar» (spec 009): una reserva online con la cédula de otro paciente, aún sin unir. */
+  pendingVerification: boolean;
+  createdAt: ISODateTime;
+}
+
+/** Una cita de citas.xlsx. */
+export interface DataExportAppointment {
+  id: string;
+  date: ISODate;
+  startTime: TimeString;
+  endTime: TimeString;
+  status: AppointmentStatus;
+  /** El paciente principal primero y luego los demás de la sesión. */
+  clients: string[];
+  service: string;
+  professional: string;
+  /** En el local, a domicilio o por videollamada. */
+  modality: ServiceMode;
+  /** La dirección de la visita a domicilio ("" si no es a domicilio). */
+  homeAddress: string;
+  price: number;
+  paid: boolean;
+  notes: string;
+}
+
+/** La historia clínica de un paciente, como «Imprimir / PDF». */
+export interface DataExportClinicalRecord {
+  client: Pick<Client, "id" | "name" | "documentId" | "email" | "phone" | "address">;
+  profile: ClinicalProfile | null;
+  /** De la más antigua a la más reciente, con el servicio de su cita (null: sin cita o sin servicio). */
+  notes: (ClinicalNote & { serviceName: string | null })[];
+  /** Los archivos ya subidos, del más antiguo al más reciente. */
+  attachments: ClinicalAttachment[];
+}
+
+/** Una parte de las historias: unos pocos pacientes y las versiones de formato de sus evoluciones. */
+export interface DataExportClinicalPage extends DataExportPage<DataExportClinicalRecord> {
+  /** Las versiones de formato con que se escribieron sus evoluciones (por id). */
+  templateVersions: Record<string, ClinicalTemplateVersion>;
+}
+
 /* ------------------------------------------------------- Cambios de plan ---- */
 
 export type PlanRequestStatus = "pending" | "approved" | "rejected" | "cancelled";
@@ -1122,6 +1216,11 @@ export interface PlatformStats {
     /** Emails de los últimos 14 días (hoy el último), en Ecuador: enviados y fallidos (sin los descartados). */
     emailsByDay: { date: ISODate; sent: number; failed: number }[];
   };
+  /**
+   * El cobro de las mensualidades (spec 029): los comprobantes por revisar y los cobros atrasados (por pagar
+   * desde hace BILLING_OVERDUE_DAYS días o más). Una API anterior no lo trae.
+   */
+  billing?: { inReview: number; overdue: number };
 }
 
 export interface AdminBusinessSummary {
@@ -1145,6 +1244,13 @@ export interface AdminBusinessDetail extends AdminBusinessSummary {
   analytics: AdminBusinessAnalytics | null;
   /** El programa de referidos (spec 023): quién lo recomendó y a quién recomendó. Una API anterior no lo trae. */
   referrals?: AdminBusinessReferrals;
+  /**
+   * La última vez que el propietario o un profesional descargó sus datos (spec 028), según la actividad;
+   * null: ninguna. Una API anterior no lo trae.
+   */
+  lastDataExportAt?: ISODateTime | null;
+  /** Su mensualidad (spec 029): no va en `Subscription`, que la ve todo el equipo. Una API anterior no la trae. */
+  billing?: AdminBusinessBilling;
 }
 
 /* ------------------------------------------------ Programa de referidos (spec 023) -- */
@@ -1191,6 +1297,154 @@ export interface ReferralReward {
   earnedAt: ISODateTime;
   /** En USD (REFERRAL_DISCOUNT). */
   amount: number;
+}
+
+/* ------------------------------------- El cobro de las mensualidades (spec 029) -- */
+
+/**
+ * El estado de un cobro: por pagar (`due`), en revisión (con comprobante), pagado, rechazado (con un
+ * motivo: vuelve a pedir el comprobante) o anulado (con un motivo: ya no se cobra).
+ */
+export type BillingStatus = "due" | "in_review" | "paid" | "rejected" | "void";
+
+/** Cómo se pagó: por transferencia (el comprobante aprobado) u otra vía (efectivo…, sin comprobante). */
+export type BillingPaidMethod = "transfer" | "other";
+
+/** El comprobante de una mensualidad (foto o PDF): privado, lo ven el propietario y el super admin. */
+export interface BillingReceipt {
+  id: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: ISODateTime;
+}
+
+export interface BillingReceiptUpload {
+  receipt: BillingReceipt;
+  upload: UploadTarget;
+}
+
+/**
+ * El cobro de un mes. Se crea en su día de pago con la mensualidad de ese momento, menos el descuento de
+ * las recomendaciones ganadas y sin aplicar (REFERRAL_DISCOUNT cada una, sin pasar de la mensualidad).
+ */
+export interface BillingCharge {
+  id: string;
+  /** Su día de pago (el del mes o, si el mes no lo tiene, el último). */
+  dueDate: ISODate;
+  /** La mensualidad de ese mes. */
+  baseAmount: number;
+  /** El descuento de referidos (0: ninguno). */
+  referralDiscount: number;
+  /** Cuántas recomendaciones usa ese descuento. */
+  referralCount: number;
+  /** Lo que se paga: `baseAmount − referralDiscount`. */
+  amount: number;
+  status: BillingStatus;
+  /** El motivo del último rechazo (null: nunca se rechazó). */
+  rejectionReason: string | null;
+  /** El motivo de la anulación (sólo en los anulados). */
+  voidReason: string | null;
+  paidMethod: BillingPaidMethod | null;
+  paidAt: ISODateTime | null;
+  /** El último comprobante que llegó (null: ninguno). */
+  receipt: BillingReceipt | null;
+  createdAt: ISODateTime;
+}
+
+/**
+ * La mensualidad del propietario (Configuración → Negocio y la pantalla de pago). Sólo la ve el propietario
+ * (y el super admin en modo soporte): nunca la lista de planes ni los precios de otros (constitución,
+ * principio III).
+ */
+export interface BusinessBilling {
+  /**
+   * Su total en USD, antes del descuento de referidos (que va en cada cobro): el de su plan o su precio
+   * especial, sin decir de dónde sale. 0: sin cobros (plan gratis o cortesía).
+   */
+  monthlyFee: number;
+  /** El día del mes en que paga (null: sin cobros). */
+  billingDay: number | null;
+  /** El próximo día de pago que todavía no tiene su cobro (null: sin cobros). */
+  nextDueDate: ISODate | null;
+  /** El cobro pendiente más antiguo (por pagar o rechazado): el que abre la pantalla de pago. */
+  pending: BillingCharge | null;
+  /**
+   * Hay un pendiente: desde su día de pago, la pantalla de pago no se cierra hasta subir el comprobante (sin
+   * «Más tarde» ni días de gracia, desde el 2026-10-20). La API no bloquea nada: lo hace la pantalla.
+   */
+  blocked: boolean;
+  /** Las cuentas de Agenda360 para transferir (las pone el super admin en /admin → Configuración). */
+  bankAccounts: BankAccount[];
+  /** Su historial, el más nuevo primero. */
+  charges: BillingCharge[];
+  /** false: la API no tiene dónde guardar los comprobantes (se envían por WhatsApp al soporte). */
+  receiptsEnabled: boolean;
+}
+
+/** La mensualidad de un negocio en su ficha de /admin («Suscripción y uso»). */
+export interface AdminBusinessBilling {
+  /**
+   * La mensualidad que se le cobra (effectiveMonthlyFee): su precio especial o, sin él, el de su plan con sus
+   * agendas. 0: sin cobros (el plan gratis o un negocio de cortesía).
+   */
+  monthlyFee: number;
+  /** El precio de su plan con sus agendas (planMonthlyPrice), aunque tenga un precio especial. */
+  planPrice: number;
+  /** Su precio especial (null: el de su plan; 0: cortesía, sin cobros). */
+  customFee: number | null;
+  /** Las agendas que cuenta el precio de Business: las contratadas o, sin tope, las activas. */
+  agendas: number;
+  billingDay: number | null;
+  /** La fecha del primer cobro (null: todavía sin cobros). */
+  billingStart: ISODate | null;
+  /** El próximo día de pago (null: sin cobros: mensualidad 0, plan gratis o sin el día de pago). */
+  nextDueDate: ISODate | null;
+  /** Sus cobros pendientes: por pagar, en revisión o rechazados. */
+  openCharges: number;
+}
+
+/**
+ * Los precios de los planes, en USD (spec 029, ampliación del 2026-10-20): los cambia el super admin en
+ * /admin → Planes y valen desde el siguiente cobro de cada negocio. Free no tiene precio (sin cobros). Nunca
+ * los ve un negocio ni van en la configuración pública: el propietario sólo ve su mensualidad.
+ */
+export interface PlanPrices {
+  proPrice: number;
+  /** Business con sus agendas incluidas. */
+  businessPrice: number;
+  /** Las agendas que incluye el precio de Business. */
+  businessIncludedAgendas: number;
+  /** Lo que suma cada agenda de Business sobre las incluidas. */
+  businessExtraAgendaPrice: number;
+}
+
+/**
+ * Los filtros de /admin → Cobros: cada cobro está en uno solo. Los por pagar se separan por los días desde
+ * su día de pago (BILLING_OVERDUE_DAYS, sólo para el super admin: el propietario no tiene gracia): «Por
+ * pagar» (menos de 5) y «Atrasados» (5 o más); los rechazados van aparte, con su motivo.
+ */
+export type AdminBillingFilter = "in_review" | "due" | "overdue" | "paid" | "rejected" | "void";
+
+/** Un cobro en /admin → Cobros. */
+export interface AdminBillingCharge extends BillingCharge {
+  business: { id: string; name: string };
+  /**
+   * Días que le faltan a un cobro por pagar para salir como «Atrasado»: 5 en su día de pago, 1 el quinto
+   * día y 0 desde el sexto (0 también si no está por pagar). Sólo para el super admin.
+   */
+  overdueInDays: number;
+  /** Lo que escribió el super admin al marcarlo pagado sin comprobante (sólo lo ve él). */
+  paidNote: string | null;
+  /** Quién lo marcó pagado, lo rechazó o lo anuló (null: nadie todavía, o ya no existe la cuenta). */
+  reviewedByName: string | null;
+  updatedAt: ISODateTime;
+}
+
+/** /admin → Cobros: los de un filtro y cuántos hay en cada uno. */
+export interface AdminBillingList {
+  charges: AdminBillingCharge[];
+  counts: Record<AdminBillingFilter, number>;
 }
 
 /* ------------------------------------------ Analítica del super admin (spec 016) -- */
@@ -1726,8 +1980,9 @@ export interface DatabaseStats {
 
 /**
  * Tipos de aviso en el celular (Web Push). Los ocho primeros son del propietario del negocio y los
- * cinco siguientes, del super admin (ver src/lib/constants/push.ts). `test` es el aviso de prueba:
- * siempre sale y no se puede apagar. `morning_summary` y `reminders_sent` son de la spec 021.
+ * seis siguientes, del super admin (ver src/lib/constants/push.ts). `test` es el aviso de prueba:
+ * siempre sale y no se puede apagar. `morning_summary` y `reminders_sent` son de la spec 021, y
+ * `billing_receipt` (un propietario subió el comprobante de su mensualidad), de la spec 029.
  */
 export type PushKind =
   | "booking"
@@ -1743,6 +1998,7 @@ export type PushKind =
   | "account_security"
   | "login_attack"
   | "reminders_sent"
+  | "billing_receipt"
   | "test";
 
 /** Lo que necesita el front antes de activar los avisos (GET /api/push/config). */
@@ -1766,7 +2022,7 @@ export interface PushDevice {
 
 /**
  * Los avisos de la campana del panel: los mismos tipos que en el celular, sin el aviso de prueba (R13).
- * Los ocho del negocio y los cinco del super admin (ver src/lib/constants/notices.ts).
+ * Los ocho del negocio y los seis del super admin (ver src/lib/constants/notices.ts).
  */
 export type NoticeKind = Exclude<PushKind, "test">;
 

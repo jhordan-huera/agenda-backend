@@ -268,6 +268,24 @@ export async function notifyPlanRequest(
   });
 }
 
+/**
+ * Un propietario subió el comprobante de su mensualidad (spec 029): «Centro Profesional · $8,49 ·
+ * mensualidad de noviembre». Sólo al super admin (en el celular y en su campana de /admin), para que lo
+ * revise en Cobros; el título no nombra al negocio.
+ */
+export async function notifyBillingReceipt(
+  db: Db,
+  receipt: { id: string; businessName: string; amount: number; dueDate: ISODate },
+): Promise<number> {
+  const text = phoneText("billing_receipt", { businessName: receipt.businessName, amount: receipt.amount, dueDate: receipt.dueDate });
+  await addPlatformNotice(db, { kind: "billing_receipt", text, dedupeKey: `billing-receipt:${receipt.id}` });
+  return guardedPush(db, "billing_receipt", async () => {
+    const audience: PushAudience = { platform: true };
+    if (!(await hasPushRecipients(db, audience, "billing_receipt"))) return 0;
+    return insertPush(db, audience, { kind: "billing_receipt", ...text, tag: `mensualidad-${receipt.id}`, urgency: "normal" });
+  });
+}
+
 /* ------------------------------------------------------------- Del cron -- */
 
 /** El cron estuvo parado: se avisa como mucho de lo de las últimas 3 horas (R12, R13). */

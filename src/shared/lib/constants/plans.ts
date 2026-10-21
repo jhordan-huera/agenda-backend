@@ -1,9 +1,10 @@
 // Copia de agenda-front/src/lib/constants/plans.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
-import type { PlanId, PlanLimits } from "../../types/index.ts";
+import type { PlanId, PlanLimits, PlanPrices } from "../../types/index.ts";
 
 /**
- * Planes de la plataforma. Los precios no están aquí: se acuerdan con cada negocio (según el plan y
- * las agendas contratadas) y no se muestran en la aplicación. Sólo el super admin ve los planes.
+ * Planes de la plataforma. Los precios no están aquí: los guarda la base (platform_settings) y los cambia el
+ * super admin en /admin → Planes (spec 029, ampliación del 2026-10-20). Nunca los ve un negocio: el
+ * propietario sólo ve su mensualidad. Sólo el super admin ve los planes.
  */
 export interface Plan {
   id: PlanId;
@@ -84,4 +85,38 @@ export function getEffectiveLimits(plan: Plan, maxProfessionals: number | null):
   return plan.id === "business" && maxProfessionals !== null
     ? { ...plan.limits, professionals: maxProfessionals }
     : plan.limits;
+}
+
+/**
+ * El precio de un plan al mes, en USD (spec 029, ampliación del 2026-10-20): Free, 0 (sin cobros); Pro, el
+ * suyo; Business, el suyo con sus agendas incluidas, más el extra por cada agenda sobre ellas. `agendas`: las
+ * «Agendas contratadas» o, sin tope, las activas (sólo cuentan en Business). En centavos, para no arrastrar
+ * decimales: Business con 5 agendas, $29,99 + 2 × $8 = $45,99.
+ */
+export function planMonthlyPrice(plan: PlanId, agendas: number, prices: PlanPrices): number {
+  if (plan === "free") return 0;
+  if (plan === "pro") return prices.proPrice;
+  const extra = Math.max(0, agendas - prices.businessIncludedAgendas);
+  return (Math.round(prices.businessPrice * 100) + extra * Math.round(prices.businessExtraAgendaPrice * 100)) / 100;
+}
+
+/**
+ * La mensualidad que se le cobra a un negocio: su precio especial si lo tiene (0 = cortesía, sin cobros) o,
+ * sin él, el de su plan con sus agendas. En el plan Free nunca hay cobros, aunque tenga un precio especial
+ * guardado (vuelve a valer si pasa a un plan de pago).
+ */
+export function effectiveMonthlyFee(
+  subscription: { plan: PlanId; customFee: number | null },
+  agendas: number,
+  prices: PlanPrices,
+): number {
+  if (subscription.plan === "free") return 0;
+  return subscription.customFee ?? planMonthlyPrice(subscription.plan, agendas, prices);
+}
+
+/** «Pro», «Business con 5 agendas»: de dónde sale el precio de su plan (la ficha de /admin y la actividad). */
+export function describePlanPrice(plan: PlanId, agendas: number): string {
+  const { name } = getPlan(plan);
+  if (plan !== "business") return name;
+  return `${name} con ${agendas === 1 ? "1 agenda" : `${agendas} agendas`}`;
 }

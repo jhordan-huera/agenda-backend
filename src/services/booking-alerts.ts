@@ -1,6 +1,7 @@
 import { many, type Db } from "../db/pool.ts";
 import { SERIES_FREQUENCY_LABELS } from "../shared/lib/appointment-series.ts";
-import { formatPrice, formatShortDate, plural } from "../shared/lib/format.ts";
+import { formatUsdAmount } from "../shared/lib/constants/business.ts";
+import { formatDate, formatPrice, formatShortDate, plural } from "../shared/lib/format.ts";
 import { ROLE_LABELS } from "../shared/lib/permissions.ts";
 import type { Appointment, AppointmentSeriesFrequency, BusinessRole, EmailType } from "../shared/types/index.ts";
 import { scrubEmails } from "./mailer.ts";
@@ -927,4 +928,56 @@ export async function findClientImports(
     })),
     total: rows[0].total,
   };
+}
+
+/** Comprobantes de mensualidades detallados por pasada del cron (spec 029); de los demás, cuántos son. */
+export const MAX_BILLING_RECEIPT_NOTICES = 10;
+
+export interface BillingReceiptAlert {
+  businessId: string;
+  businessName: string;
+  dueDate: string;
+  amount: number;
+}
+
+/**
+ * Aviso por ntfy de un comprobante de mensualidad que subió un propietario (spec 029): el negocio en la
+ * primera línea, el mes y el monto. El título no nombra al negocio (el registro de Actions es público).
+ */
+export function billingReceiptNotice(entry: BillingReceiptAlert): BookingNotice {
+  return {
+    title: "Agenda360: comprobante de mensualidad",
+    message: [entry.businessName, `Mensualidad de ${formatDate(entry.dueDate, "MMMM")}: ${formatUsdAmount(entry.amount)}`, "Revísalo en Cobros."].join(
+      "\n",
+    ),
+    priority: 3,
+    tags: ["receipt"],
+    click: "/admin/billing",
+  };
+}
+
+/**
+ * Los comprobantes de mensualidades que llegaron en (since, until], los más antiguos primero (hasta
+ * `limit`), y cuántos son en total. Salen de la actividad de la plataforma (platform.billing_receipt_uploaded,
+ * con el cobro como entidad). Sin `since` (la primera pasada), los del último día.
+ */
+export async function findBillingReceipts(
+  db: Db,
+  since: string | null,
+  until: string,
+  limit = MAX_BILLING_RECEIPT_NOTICES,
+): Promise<{ receipts: BillingReceiptAlert[]; total: number }> {
+  const rows = await many<BillingReceiptAlert & { total: number }>(
+    db,
+    `select count(*) over ()::int as total, b.id as "businessId", b.name as "businessName", c.due_date as "dueDate", c.amount
+       from audit_logs l
+       join billing_charges c on c.id = l.entity_id
+       join businesses b on b.id = c.business_id
+      where l.entity_type = 'subscription' and l.action = 'platform.billing_receipt_uploaded'
+        and l.created_at > coalesce($1::timestamptz, now() - interval '1 day') and l.created_at <= $2
+      order by l.created_at, l.id
+      limit $3`,
+    [since, until, limit],
+  );
+  return { receipts: rows.map(({ total: _total, ...receipt }) => receipt), total: rows[0]?.total ?? 0 };
 }

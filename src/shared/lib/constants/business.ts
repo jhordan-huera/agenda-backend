@@ -1,6 +1,7 @@
 // Copia de agenda-front/src/lib/constants/business.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import type {
   BankAccountType,
+  BillingStatus,
   BookingSettings,
   ClientRequiredFields,
   DayOfWeek,
@@ -206,16 +207,51 @@ export function clientRequiredFieldsOf(business: { clientRequiredFields?: Client
 
 /**
  * El programa de referidos (spec 023): por cada negocio recomendado que sigue activo a los 30 días de
- * crearse, quien lo recomendó paga $1,50 (USD) menos en su siguiente mensualidad, una sola vez. Todavía
- * no hay cobro automático: el sistema lleva la cuenta y el dueño aplica el descuento al cobrar. Es la
- * única cifra de dinero que ve un negocio, en la tarjeta del propietario (constitución, principio III).
+ * crearse, quien lo recomendó paga $1,50 (USD) menos en su siguiente mensualidad, una sola vez. Desde la
+ * spec 029 el descuento va solo en el siguiente cobro y queda aplicado al pagarse. Con la mensualidad del
+ * propietario, es la única cifra de dinero que ve un negocio (constitución, principio III).
  */
 export const REFERRAL_DISCOUNT = 1.5;
 /** Días que el negocio recomendado tiene que seguir activo para que su recomendación «se quede». */
 export const REFERRAL_QUALIFY_DAYS = 30;
 
+/** «$1,50», «$9,99»: un monto en dólares como lo dicen la mensualidad, los referidos y /admin. */
+export const formatUsdAmount = (amount: number) => `$${amount.toFixed(2).replace(".", ",")}`;
+
 /** «$1,50», «$3,00»: el descuento como lo dicen la tarjeta del propietario y /admin. */
-export const formatReferralAmount = (amount: number) => `$${amount.toFixed(2).replace(".", ",")}`;
+export const formatReferralAmount = formatUsdAmount;
+
+/**
+ * El cobro de las mensualidades por transferencia (spec 029, 2026-10-20). Desde su día de pago, el
+ * propietario ve al entrar la pantalla con el monto y las cuentas, y no se cierra hasta subir el comprobante:
+ * no hay «Más tarde» ni días de gracia. Sólo se bloquea el panel del propietario: su equipo y su página de
+ * reservas siguen.
+ *
+ * BILLING_OVERDUE_DAYS es sólo del super admin: los días desde el día de pago (que es el primero) tras los
+ * que un cobro por pagar sale como «Atrasado» en /admin → Cobros y en su Inicio. Es también la ventana en
+ * que se crea el cobro del mes: un mes que el negocio pasó suspendido o sin propietario no se cobra después.
+ */
+export const BILLING_OVERDUE_DAYS = 5;
+/** Días antes del día de pago en que le llega al propietario el email con el monto y las cuentas. */
+export const BILLING_REMINDER_DAYS = 3;
+/** Meses que se guardan los comprobantes de las mensualidades (contabilidad); después se borran solos. */
+export const BILLING_RECEIPT_RETENTION_MONTHS = 12;
+
+/** El estado de un cobro, como lo ven el propietario y /admin. */
+export const BILLING_STATUS_LABELS: Record<BillingStatus, string> = {
+  due: "Por pagar",
+  in_review: "En revisión",
+  paid: "Pagado",
+  rejected: "Rechazado",
+  void: "Anulado",
+};
+
+/** «$9,99 − $1,50 por 1 recomendación»: lo que se descuenta de la mensualidad de un cobro ("" sin descuento). */
+export function describeBillingDiscount(charge: { baseAmount: number; referralDiscount: number; referralCount: number }): string {
+  if (charge.referralDiscount <= 0) return "";
+  const recommendations = charge.referralCount === 1 ? "1 recomendación" : `${charge.referralCount} recomendaciones`;
+  return `${formatUsdAmount(charge.baseAmount)} − ${formatUsdAmount(charge.referralDiscount)} por ${recommendations}`;
+}
 
 /**
  * La historia clínica no se ve en modo soporte (spec 025, 2026-10-19): la API lo responde con este
@@ -223,6 +259,13 @@ export const formatReferralAmount = (amount: number) => `$${amount.toFixed(2).re
  */
 export const CLINICAL_SUPPORT_BLOCKED_MESSAGE =
   "Por privacidad, el soporte de Agenda360 no tiene acceso a la historia clínica de los pacientes.";
+
+/**
+ * Descargar los datos del negocio (spec 028, 2026-10-20): sólo el propietario (todo el negocio) y cada
+ * profesional (lo suyo). La API responde con este mensaje al super admin, también en modo soporte, al
+ * administrador y a la recepción.
+ */
+export const DATA_EXPORT_BLOCKED_MESSAGE = "Por privacidad, sólo el propietario y cada profesional descargan sus datos.";
 
 /** Horario sugerido en el onboarding: lunes a viernes 08:00–17:00, sábado 09:00–13:00, domingo cerrado. */
 export const DEFAULT_WEEKLY_SCHEDULE: { dayOfWeek: DayOfWeek; isActive: boolean; intervals: TimeRange[] }[] =

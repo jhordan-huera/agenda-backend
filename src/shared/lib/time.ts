@@ -100,6 +100,15 @@ export function endOfMonthISO(iso: ISODate): ISODate {
   return addDaysISO(addMonthsISO(startOfMonthISO(iso), 1), -1);
 }
 
+/**
+ * El día `day` del mes de `iso` o, si ese mes no lo tiene, el último: el 31 en noviembre cae el 30. Es el
+ * día de pago de las mensualidades (spec 029).
+ */
+export function dayOfMonthISO(iso: ISODate, day: number): ISODate {
+  const lastDay = endOfMonthISO(iso);
+  return Number(lastDay.slice(8, 10)) < day ? lastDay : `${iso.slice(0, 8)}${String(day).padStart(2, "0")}`;
+}
+
 export interface ZonedNow {
   date: ISODate;
   /** Minutos transcurridos desde la medianoche. */

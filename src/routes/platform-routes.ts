@@ -5,6 +5,7 @@ import { handle, limitRequests } from "../http/handlers.ts";
 import { requireSuperAdminTwoFactor } from "../http/session.ts";
 import { adminService, platformService } from "../services/admin-service.ts";
 import { analyticsService } from "../services/analytics-service.ts";
+import { adminBillingService } from "../services/billing-service.ts";
 import { appointmentPageService } from "../services/appointment-page-service.ts";
 import { categoryService } from "../services/category-service.ts";
 import { databaseStatsService } from "../services/database-stats-service.ts";
@@ -242,6 +243,12 @@ adminRoutes.put(
   "/businesses/:businessId/multi-client-appointments",
   handle((req) => adminService.setMultiClientAppointments(req.ctx, req.params.businessId, req.body?.enabled)),
 );
+// La mensualidad del negocio (spec 029): { customFee (el precio especial; null: el de su plan), billingDay,
+// billingStart }. Devuelve la de la ficha.
+adminRoutes.put(
+  "/businesses/:businessId/billing",
+  handle((req) => adminBillingService.setBusinessBilling(req.ctx, req.params.businessId, req.body)),
+);
 // «Recomendado por» (spec 023): { referredBy: id de otro negocio | null }. Devuelve los referidos de la ficha.
 adminRoutes.put(
   "/businesses/:businessId/referred-by",
@@ -255,6 +262,51 @@ adminRoutes.get(
 adminRoutes.post(
   "/referral-rewards/:businessId/apply",
   handle((req) => adminReferralService.applyReward(req.ctx, req.params.businessId)),
+);
+// «Cobros» (spec 029): los cobros de las mensualidades por estado (?status=in_review|due|overdue|paid|
+// rejected|void), sus comprobantes y las acciones del super admin. Sin caché, como toda la API.
+adminRoutes.get(
+  "/billing",
+  handle((req) => adminBillingService.list(req.ctx, req.query)),
+);
+adminRoutes.post(
+  "/billing/charges/:chargeId/approve",
+  handle((req) => adminBillingService.approve(req.ctx, req.params.chargeId)),
+);
+adminRoutes.post(
+  "/billing/charges/:chargeId/reject",
+  handle((req) => adminBillingService.reject(req.ctx, req.params.chargeId, req.body)),
+);
+adminRoutes.post(
+  "/billing/charges/:chargeId/mark-paid",
+  handle((req) => adminBillingService.markPaid(req.ctx, req.params.chargeId, req.body)),
+);
+adminRoutes.post(
+  "/billing/charges/:chargeId/void",
+  handle((req) => adminBillingService.void(req.ctx, req.params.chargeId, req.body)),
+);
+adminRoutes.get(
+  "/billing/charges/:chargeId/receipt",
+  handle((req) => adminBillingService.receiptUrl(req.ctx, req.params.chargeId)),
+);
+// Los precios de los planes (spec 029, ampliación del 2026-10-20): { proPrice, businessPrice,
+// businessIncludedAgendas, businessExtraAgendaPrice }. Como las cuentas, nunca en /public/platform-settings.
+adminRoutes.get(
+  "/plan-prices",
+  handle((req) => adminBillingService.getPlanPrices(req.ctx)),
+);
+adminRoutes.put(
+  "/plan-prices",
+  handle((req) => adminBillingService.setPlanPrices(req.ctx, req.body)),
+);
+// Las cuentas de Agenda360 para recibir las mensualidades: nunca en /public/platform-settings (que va en la CDN).
+adminRoutes.get(
+  "/billing-accounts",
+  handle((req) => adminBillingService.getAccounts(req.ctx)),
+);
+adminRoutes.put(
+  "/billing-accounts",
+  handle((req) => adminBillingService.setAccounts(req.ctx, req.body)),
 );
 adminRoutes.get(
   "/categories",

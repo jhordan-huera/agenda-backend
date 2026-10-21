@@ -2,7 +2,7 @@
 // frente a los mismos días del mes pasado), la salud del sistema (emails de hoy, cron, copia de
 // seguridad, intentos fallidos) y el crecimiento de cada negocio. Sólo el super admin, sin datos de pacientes.
 // Spec 015: «En Pro desde el…», «Cerca del límite» contado como el tope del plan y el reparto por plan
-// sólo con los activos.
+// sólo con los activos. Spec 029: los comprobantes de mensualidades por revisar y los cobros atrasados.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { cedulaFor } from "./helpers/cedula.mjs";
@@ -251,6 +251,24 @@ console.log("Datos correctos para el super admin (spec 015)");
   ok(r.status === 200 && overview.businessesByPlan[clinicPlan] === inPlan - 1 && sumByPlan(overview) === overview.businesses.active, "al suspender un negocio, sale de su plan en el reparto", overview.businessesByPlan);
   r = await admin("PATCH", `/admin/businesses/${clinicId}/status`, { status: "active" });
   ok(r.status === 200 && (await stats()).businessesByPlan[clinicPlan] === inPlan, "y vuelve al reactivarlo", r.body);
+}
+
+console.log("Las mensualidades (spec 029)");
+{
+  let overview = await stats();
+  ok(overview.billing?.inReview === 0 && overview.billing.overdue === 0, "sin cobros, 0 comprobantes por revisar y 0 atrasados", overview.billing);
+  // Un cobro en revisión, uno atrasado (su día de pago fue hace 5 días, en la zona del negocio: es el sexto)
+  // y uno todavía «Por pagar» (hace 4 días: es el quinto). Los 5 días son sólo del super admin: el
+  // propietario no tiene gracia.
+  const insert = (status: string, daysAgo: number) =>
+    sql(`insert into billing_charges (business_id, due_date, base_amount, amount, status)
+         values ('${clinicId}', (now() at time zone 'America/Guayaquil')::date - ${daysAgo}, 9.99, 9.99, '${status}')`);
+  insert("in_review", 40);
+  insert("due", 5);
+  insert("due", 4);
+  overview = await stats();
+  ok(overview.billing?.inReview === 1 && overview.billing.overdue === 1, "cuenta 1 comprobante por revisar y 1 atrasado (no el que sigue «Por pagar»)", overview.billing);
+  sql(`delete from billing_charges where business_id = '${clinicId}'`);
 }
 
 console.log("Privacidad");

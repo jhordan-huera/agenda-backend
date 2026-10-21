@@ -98,8 +98,8 @@ export async function findPatient(db: Db, businessId: string, clientId: string, 
   return client;
 }
 
-/** Evoluciones con sus aclaraciones, de la más reciente a la más antigua. */
-async function loadNotes(db: Db, where: string, values: unknown[]): Promise<ClinicalNote[]> {
+/** Evoluciones con sus aclaraciones, de la más reciente a la más antigua (también para la descarga, spec 028). */
+export async function loadNotes(db: Db, where: string, values: unknown[]): Promise<ClinicalNote[]> {
   const notes = await many<Omit<ClinicalNote, "addenda">>(
     db,
     `select ${clinicalNoteColumns()} from clinical_notes where ${where} order by date desc, created_at desc`,
@@ -119,7 +119,7 @@ async function loadNotes(db: Db, where: string, values: unknown[]): Promise<Clin
 }
 
 /** Versiones de plantilla (con sus campos) por id. */
-async function loadTemplateVersions(db: Db, ids: string[]): Promise<Record<string, ClinicalTemplateVersion>> {
+export async function loadTemplateVersions(db: Db, ids: string[]): Promise<Record<string, ClinicalTemplateVersion>> {
   if (ids.length === 0) return {};
   const versions = await many<ClinicalTemplateVersion>(
     db,

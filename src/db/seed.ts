@@ -38,6 +38,8 @@ const TABLES = [
   "schedules",
   "services",
   "clients",
+  "billing_receipts",
+  "billing_charges",
   "subscriptions",
   "professional_services",
   "professionals",
@@ -123,7 +125,8 @@ async function seed() {
       );
     }
 
-    await db.query("update platform_settings set allow_public_signup = $1, support_email = $2, support_phone = $3", [
+    // Sin las cuentas para recibir las mensualidades (spec 029): las pone el super admin.
+    await db.query("update platform_settings set allow_public_signup = $1, support_email = $2, support_phone = $3, bank_accounts = '[]'", [
       data.platformSettings.allowPublicSignup,
       data.platformSettings.supportEmail,
       data.platformSettings.supportPhone,

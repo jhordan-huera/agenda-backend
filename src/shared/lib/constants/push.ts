@@ -33,6 +33,7 @@ export const PLATFORM_PUSH_KINDS = [
   "account_security",
   "login_attack",
   "reminders_sent",
+  "billing_receipt",
 ] as const satisfies readonly PushKind[];
 
 /** Los que se pueden apagar: todos menos el aviso de prueba. */
@@ -69,6 +70,10 @@ export const PUSH_KIND_LABELS: Record<MutablePushKind, { label: string; descript
   reminders_sent: {
     label: "Recordatorios de citas por cerrar enviados",
     description: "A qué negocios salieron el resumen de la mañana y el de las 8 de la noche, con cuántas citas.",
+  },
+  billing_receipt: {
+    label: "Comprobantes de mensualidades",
+    description: "Cuando un propietario sube el comprobante de su mensualidad, para revisarlo en Cobros.",
   },
 };
 

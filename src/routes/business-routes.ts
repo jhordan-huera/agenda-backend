@@ -1,9 +1,10 @@
-import express, { Router } from "express";
+import express, { Router, type RequestHandler } from "express";
 import { clientIp } from "../http/client-ip.ts";
 import { handle, limitRequests, queryParam } from "../http/handlers.ts";
 import { requireSuperAdminTwoFactor } from "../http/session.ts";
 import { businessService, subscriptionService, teamService, userService } from "../services/account-service.ts";
 import { auditLogService, notificationService } from "../services/activity-service.ts";
+import { billingService } from "../services/billing-service.ts";
 import { appointmentSeriesService } from "../services/appointment-series-service.ts";
 import { appointmentsToCloseService } from "../services/appointments-to-close.ts";
 import { clinicalAttachmentService } from "../services/clinical-attachment-service.ts";
@@ -11,6 +12,7 @@ import { clinicalService } from "../services/clinical-service.ts";
 import { clinicalTemplateService } from "../services/clinical-template-service.ts";
 import { clientImportService } from "../services/client-import-service.ts";
 import { requireUser } from "../services/context.ts";
+import { dataExportService } from "../services/data-export-service.ts";
 import {
   appointmentService,
   blockedTimeService,
@@ -144,6 +146,34 @@ businessRoutes.get(
   handle((req) => referralService.getForBusiness(req.ctx, req.params.businessId)),
 );
 
+// La mensualidad del propietario (spec 029): sólo el propietario (`billing.manage`); el super admin en modo
+// soporte la ve, pero no sube el comprobante. Leerla crea el cobro del mes si ya llegó su día de pago (así la
+// pantalla de pago no espera al cron). Sin caché, como toda la API (http/no-store.ts).
+const billingReceiptLimit = limitRequests({
+  name: "comprobantes-mensualidad",
+  windowMinutes: 15,
+  max: 20,
+  message: "Demasiados comprobantes seguidos. Espera unos minutos o envíalo por WhatsApp al soporte.",
+});
+businessRoutes.get(
+  "/:businessId/billing",
+  handle((req) => billingService.get(req.ctx, req.params.businessId)),
+);
+businessRoutes.post(
+  "/:businessId/billing/charges/:chargeId/receipt",
+  billingReceiptLimit,
+  handle((req) => billingService.requestUpload(req.ctx, req.params.businessId, req.params.chargeId, req.body)),
+);
+businessRoutes.post(
+  "/:businessId/billing/charges/:chargeId/receipt/:receiptId/complete",
+  billingReceiptLimit,
+  handle((req) => billingService.completeUpload(req.ctx, req.params.businessId, req.params.chargeId, req.params.receiptId)),
+);
+businessRoutes.get(
+  "/:businessId/billing/charges/:chargeId/receipt",
+  handle((req) => billingService.receiptUrl(req.ctx, req.params.businessId, req.params.chargeId)),
+);
+
 // Suscripción
 businessRoutes.get(
   "/:businessId/subscription",
@@ -213,6 +243,51 @@ businessRoutes.delete(
 businessRoutes.post(
   "/:businessId/clients/:clientId/confirm-claim",
   handle((req) => clientService.confirmClaim(req.ctx, req.params.businessId, req.params.clientId, req.body)),
+);
+
+// Descargar los datos del negocio (spec 028): el propietario, todo; el rol Profesional, lo de su agenda (y
+// las historias sólo con acceso clínico). Nadie más, ni el super admin en modo soporte: lo comprueba el
+// servicio. El resumen deja la descarga en la actividad; las partes son cortas (lejos del tope de 6 MB de
+// Lambda), sin caché y con un límite por conexión que comparten todas estas rutas.
+const exportNoStore: RequestHandler = (_req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  next();
+};
+const exportLimit = limitRequests({
+  name: "descarga-datos",
+  windowMinutes: 15,
+  max: 600,
+  message: "Demasiadas descargas seguidas. Espera unos minutos y vuelve a intentarlo.",
+});
+businessRoutes.get(
+  "/:businessId/export",
+  exportNoStore,
+  exportLimit,
+  handle((req) => dataExportService.summary(req.ctx, req.params.businessId)),
+);
+businessRoutes.get(
+  "/:businessId/export/clients",
+  exportNoStore,
+  exportLimit,
+  handle((req) => dataExportService.clients(req.ctx, req.params.businessId, queryParam(req, "cursor"))),
+);
+businessRoutes.get(
+  "/:businessId/export/appointments",
+  exportNoStore,
+  exportLimit,
+  handle((req) => dataExportService.appointments(req.ctx, req.params.businessId, queryParam(req, "cursor"))),
+);
+businessRoutes.get(
+  "/:businessId/export/clinical",
+  exportNoStore,
+  exportLimit,
+  handle((req) => dataExportService.clinical(req.ctx, req.params.businessId, queryParam(req, "cursor"))),
+);
+businessRoutes.post(
+  "/:businessId/export/attachments/:attachmentId",
+  exportNoStore,
+  exportLimit,
+  handle((req) => dataExportService.attachmentUrl(req.ctx, req.params.businessId, req.params.attachmentId)),
 );
 
 // Historia clínica (propietario y miembros autorizados; el super admin en modo soporte, sólo los formatos)
