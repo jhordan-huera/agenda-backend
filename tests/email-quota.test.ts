@@ -100,6 +100,8 @@ console.log("Cada tipo de email tiene su nivel");
       "plan_change_requested", "plan_change_approved", "plan_change_rejected", "plan_changed", "business_created",
       // La mensualidad del propietario (spec 029).
       "billing_reminder", "billing_paid", "billing_rejected", "billing_voided",
+      // El aviso de los costos de AWS al super admin principal (spec 031).
+      "aws_cost_alert",
     ],
     patient: [
       "welcome", "booking_created", "appointment_confirmed", "appointment_updated", "appointment_cancelled", "appointment_reminder",

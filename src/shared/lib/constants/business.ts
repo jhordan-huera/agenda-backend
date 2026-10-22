@@ -218,6 +218,12 @@ export const REFERRAL_QUALIFY_DAYS = 30;
 /** «$1,50», «$9,99»: un monto en dólares como lo dicen la mensualidad, los referidos y /admin. */
 export const formatUsdAmount = (amount: number) => `$${amount.toFixed(2).replace(".", ",")}`;
 
+/**
+ * Los costos de AWS (spec 031), como formatUsdAmount salvo lo que no llega a un centavo: AWS cobra fracciones
+ * de centavo (p. ej. $0,0004 de Lambda), y «$0,00» confundiría con nada gastado. «menos de $0,01», «$0,30».
+ */
+export const formatCostAmount = (amount: number) => (amount > 0 && amount < 0.005 ? "menos de $0,01" : formatUsdAmount(amount));
+
 /** «$1,50», «$3,00»: el descuento como lo dicen la tarjeta del propietario y /admin. */
 export const formatReferralAmount = formatUsdAmount;
 

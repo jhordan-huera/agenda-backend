@@ -20,12 +20,16 @@
  * 021), tampoco. La foto diaria del tamaño de la base (spec 024), tampoco. Las invitaciones de calendario
  * de las citas que entran en la ventana de 14 días (spec 027), tampoco: salen con la misma cuenta de Gmail.
  * El cobro de las mensualidades (spec 029: el cobro de cada mes, el email de los tres días antes, el aviso
- * de cada comprobante y el borrado de los de más de 12 meses), tampoco.
+ * de cada comprobante y el borrado de los de más de 12 meses), tampoco. Los costos de AWS (spec 031, una
+ * consulta al día) usan AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY y AWS_SESSION_TOKEN, las del rol de sólo
+ * lectura que deja el paso anterior de GitHub (secreto AWS_COSTS_ROLE_ARN); sin ellas no consulta y el resto
+ * sigue igual.
  *
  * Prueba local: node --env-file=.env scripts/cron.ts
  */
 import type { ScheduledTasksReport, SentEmail } from "../src/jobs/scheduled-tasks.ts";
-import { formatShortDate } from "../src/shared/lib/format.ts";
+import { formatCostAmount, formatUsdAmount } from "../src/shared/lib/constants/business.ts";
+import { formatDate, formatShortDate } from "../src/shared/lib/format.ts";
 import type { EmailType } from "../src/shared/types/index.ts";
 import { env, notify, type Notice } from "./notify.ts";
 
@@ -70,6 +74,7 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   plan_change_rejected: ["Cambio de plan rechazado", "Cambios de plan rechazados"],
   platform_admin_added: ["Alta de super admin", "Altas de super admin"],
   account_security_changed: ["Cambio de seguridad de una cuenta", "Cambios de seguridad de cuentas"],
+  aws_cost_alert: ["Aviso de los costos de AWS (al super admin principal)", "Avisos de los costos de AWS (al super admin principal)"],
 };
 
 /** "mar 7 oct 10:00" */
@@ -445,6 +450,56 @@ export function describeDatabaseLine(report: ScheduledTasksReport): string {
   return ` · base de datos: ${detail}`;
 }
 
+/**
+ * "· costos de AWS: actualizados": la consulta diaria de los costos (spec 031). Sin montos: el registro es
+ * público (los montos sólo van en el ntfy del aviso).
+ */
+export function describeAwsCostsLine(report: ScheduledTasksReport): string {
+  if (!report.awsCosts) return "";
+  const { status, attempts, plan } = report.awsCosts;
+  const detail =
+    status === "saved"
+      ? plan === false
+        ? "actualizados (sin el plan de la cuenta: no se pudo leer)"
+        : "actualizados"
+      : status === "ready"
+        ? "ya estaban los de hoy"
+        : status === "early"
+          ? "se actualizan después de las 06:00"
+          : status === "no_credentials"
+            ? "sin credenciales (falta el rol de AWS)"
+            : status === "waiting"
+              ? attempts >= 3
+                ? "fallaron las 3 consultas de hoy (se reintenta mañana)"
+                : "falló hace poco (se reintenta 3 horas después)"
+              : "falló (se reintenta 3 horas después)";
+  return ` · costos de AWS: ${detail}`;
+}
+
+/**
+ * El aviso de gasto de los costos de AWS (spec 031): lo gastado en el mes pasó el monto que puso el super
+ * admin. El título es fijo (es lo único que queda en el registro público); los montos van en el mensaje, sólo
+ * a ntfy. Una vez por mes y por monto (lo decide refreshAwsCosts).
+ */
+export function buildCostNotice(report: ScheduledTasksReport): Notice | null {
+  const alert = report.awsCosts?.alert;
+  if (!alert) return null;
+  const month = formatDate(alert.month, "MMMM 'de' yyyy");
+  return {
+    title: "Agenda360: costos de AWS",
+    message: [
+      `Lo gastado en AWS en ${month} (${formatCostAmount(alert.usage)}) pasó tu aviso de ${formatUsdAmount(alert.alertAmount)}.`,
+      `Previsión para fin de mes: ${alert.forecast === null ? "todavía sin previsión" : formatCostAmount(alert.forecast)}.`,
+      `Lo cubren tus créditos: ${formatCostAmount(alert.credits)} · Pagas: ${formatCostAmount(alert.net)}.`,
+      "",
+      "No se repite este mes con este monto (detalle en /admin → Costos).",
+    ].join("\n"),
+    priority: 4,
+    tags: ["money_with_wings"],
+    click: "/admin/costs",
+  };
+}
+
 /** El cron no pudo trabajar: aviso urgente y el job de GitHub termina con error. */
 async function fail(reason: string): Promise<void> {
   await notify({
@@ -504,6 +559,7 @@ async function main(): Promise<void> {
         `${describePanelLine(report)}` +
         `${describePushLine(report, config.webPushProblem ? `sin envío: ${config.webPushProblem}` : null)}` +
         `${describeRemindersLine(report)}` +
+        `${describeAwsCostsLine(report)}` +
         `${describeDatabaseLine(report)}` +
         `${describeAnalyticsLine(report)} · ${report.durationMs} ms`,
     );
@@ -514,6 +570,7 @@ async function main(): Promise<void> {
       ...buildAccountNotices(report),
       buildPushNotice(report),
       buildRemindersNotice(report),
+      buildCostNotice(report),
     ].filter((notice) => notice !== null);
     for (const notice of notices) await notify(notice);
     if (notices.length === 0) console.info("Sin correos, errores ni alertas: no se envía aviso.");

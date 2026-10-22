@@ -7,6 +7,7 @@ import { adminService, platformService } from "../services/admin-service.ts";
 import { analyticsService } from "../services/analytics-service.ts";
 import { adminBillingService } from "../services/billing-service.ts";
 import { appointmentPageService } from "../services/appointment-page-service.ts";
+import { awsCostsService } from "../services/aws-costs.ts";
 import { categoryService } from "../services/category-service.ts";
 import { databaseStatsService } from "../services/database-stats-service.ts";
 import { platformNoticeService } from "../services/panel-notices.ts";
@@ -196,6 +197,20 @@ adminRoutes.get(
     res.set("Cache-Control", "no-store");
     return databaseStatsService.get(req.ctx);
   }),
+);
+// Los costos de AWS (spec 031): lo último que guardó el cron (una consulta a AWS al día; abrir la pantalla no
+// consulta a AWS), sin caché. Cualquier super admin los ve; el aviso por email va al principal. El monto del
+// aviso: { amount: número en USD | null }, que queda en la actividad si cambia.
+adminRoutes.get(
+  "/aws-costs",
+  handle(async (req, res) => {
+    res.set("Cache-Control", "no-store");
+    return awsCostsService.get(req.ctx);
+  }),
+);
+adminRoutes.put(
+  "/aws-costs/alert",
+  handle((req) => awsCostsService.setAlert(req.ctx, req.body)),
 );
 adminRoutes.get(
   "/businesses",

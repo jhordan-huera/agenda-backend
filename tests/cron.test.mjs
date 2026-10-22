@@ -129,6 +129,14 @@ ok(
   "y los de la campana del panel (spec 014): cuántos guardó y que borra los de más de 30 días",
   [first.report.panelNotices, run.output.slice(-400)],
 );
+// Los costos de AWS (spec 031): sin las credenciales del paso de GitHub no consulta; la línea, sin montos.
+ok(
+  / · costos de AWS: (sin credenciales \(falta el rol de AWS\)|se actualizan después de las 06:00) · base de datos: /.test(run.output) &&
+    ["no_credentials", "early"].includes(first.report.awsCosts?.status) &&
+    first.report.awsCosts?.alert === null,
+  "y los costos de AWS (spec 031): sin las credenciales de AWS, no consulta",
+  [first.report.awsCosts, run.output.slice(-400)],
+);
 run = await runScript();
 let second = lastRun();
 ok(run.code === 0 && second.report.reminders === 0 && Math.abs(Date.parse(second.report.since) - Date.parse(first.ranAt)) < 1000, "la siguiente cuenta desde la anterior y no repite recordatorios", second.report);

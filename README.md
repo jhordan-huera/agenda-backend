@@ -188,6 +188,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 | Avisos en el celular (spec 013) | `GET /push/config` · `PUT /push/device` · `PATCH /push/device` · `POST /push/device/off` · `POST /push/device/test` (sólo el propietario de un negocio activo, el rol Profesional con su agenda activa —sólo los resúmenes de su agenda: el de las 8, spec 017, y el de la mañana, spec 021— y el super admin; el aparato va en el cuerpo, nunca en la URL) |
 | Analítica (spec 016) | `GET /admin/analytics?days=30\|90` (sólo el super admin, con la verificación en dos pasos): `{ snapshot }`, la última foto de ese periodo, o `{ snapshot: null }` si aún no hay; `days` distinto de 30 o 90, 400. Lee una fila y no calcula nada. La ficha (`GET /admin/businesses/:id`) suma `analytics`: su parte de la última foto de 30 días y su tipo |
 | Base de datos (spec 024) | `GET /admin/database`: sólo el super admin principal (`platformOwner`), con la verificación en dos pasos; otro super admin o cualquier otra cuenta, 403 («Sólo el super admin principal ve la base de datos.»). Límite propio de 20 cada 15 minutos por conexión y `Cache-Control: no-store`. Devuelve `size`, `files`, `tables`, `work`, `maintenance`, `history` (90 días) y `projection`; cada sección puede venir como `{ error: "No se pudo leer ahora" }`, y `files` y `work` como `null` (no disponibles en esta base). No va a la actividad |
+| Costos de AWS (spec 031) | `GET /admin/aws-costs`: cualquier super admin, con la verificación en dos pasos; los negocios, 403. `Cache-Control: no-store`. Lee lo que guardó el cron (no consulta a AWS): `{ latest, lastAttemptAt, lastError, alertAmount, alertedThisMonth }`, con `latest` (el último mes guardado: `month`, `usage`, `credits`, `net`, `forecast`, `services`, `plan` y `fetchedAt`) en `null` si todavía no hay costos. No va a la actividad · `PUT /admin/aws-costs/alert` (`{ amount }`: de 0,01 a 100.000 USD con dos decimales, o `null` para quitarlo; si no, 400). Queda en la actividad (`platform.aws_cost_alert_changed`) sólo si cambia, y devuelve lo mismo que el `GET` |
 | Centro de avisos (spec 014) | `GET /businesses/:id/notices/unread` · `GET …/notices` (`?limit&unread=1&cursor`) · `POST …/notices/:noticeId/read` · `POST …/notices/read-all` (cualquier rol del equipo; el super admin en modo soporte recibe 403) y lo mismo en `/admin/notices` (el super admin, con la verificación en dos pasos). Ninguna escribe en la actividad |
 | Citas por cerrar (spec 018) | `GET /businesses/:id/appointments/to-close` (`?cursor`, tandas de 50: `{ appointments, overdue, today, previousMonth, nextCursor }`) · `GET …/appointments/to-close/count` (`{ overdue, today, previousMonth }`; `previousMonth`, las de un mes anterior, spec 021) · `POST …/appointments/close-all` (`{ status: "completed", notify, ids }`: `{ closed, skipped }`). Cada uno ve lo suyo: el rol Profesional, su agenda (sin agenda, 403); el resto del equipo y el super admin en modo soporte, el negocio. Consultar no escribe en la actividad |
 | Citas completadas (spec 020) | `POST /businesses/:id/appointments/:appointmentId/correct-status` (`{ status, reason, notify }`: `status`, `confirmed`, `no_show` o `cancelled`; `reason`, de 10 a 300 caracteres; `notify`, por defecto `false`). Sólo el propietario y el super admin en modo soporte (los demás roles, 403) y sólo desde «Completada» (si no, 409). Devuelve la cita corregida |
@@ -1333,6 +1334,84 @@ enlace y la API les responde 403. La beta no la lleva.
   Después, el backend y luego el front. `FILES_LIMIT_MB` es opcional. La primera foto la guarda el cron
   a la mañana siguiente y la proyección sale a los 7 días.
 
+## Los costos de AWS
+
+Spec 031 (decisiones del dueño del producto, 2026-10-22). /admin → «Costos» muestra lo que cuesta el
+backend en AWS sin entrar a AWS: lo gastado en el mes (el de facturación de AWS, que corta a medianoche UTC,
+las 19:00 de Ecuador), la previsión para fin de mes, el desglose por servicio, el plan de la cuenta con los
+créditos que quedan y el monto del aviso de gasto. El Inicio de /admin suma la tarjeta «Costos de AWS», con
+el total del mes y los créditos. La ve cualquier super admin; los negocios, nunca. La beta no la lleva.
+
+- **Una consulta al día, desde el cron de GitHub** (`refreshAwsCosts` en `src/services/aws-costs.ts`): la
+  primera pasada desde las 06:00 de Ecuador pide a Cost Explorer `GetCostAndUsage` del mes en curso, agrupado
+  por servicio y por tipo de registro. Así, con una sola consulta ($0,01, aprobado por el dueño del producto,
+  unos $0,30 al mes) salen lo gastado por servicio y lo que cubren los créditos (`Credit`); los reembolsos no
+  cuentan. El plan y los créditos que quedan salen de `GetAccountPlanState` del Free Tier API, sin costo; si
+  falla, los costos se guardan igual y la página dice «Míralos en la consola de AWS → Créditos». Nunca hay
+  más de una consulta correcta al día: abrir la página no consulta a AWS y no tiene botón de actualizar.
+- **Si AWS falla**, el resto del cron sigue igual. Se guarda el motivo en palabras sencillas, nunca el mensaje
+  de AWS, que puede llevar el número de la cuenta: «Falta el permiso de AWS para leer los costos», «Cost
+  Explorer todavía no tiene datos (tarda hasta un día tras activarlo)», «AWS no respondió»… Se reintenta
+  pasadas 3 horas, hasta 3 consultas al día. La página muestra lo último guardado, con su fecha, y el aviso
+  «No se pudo actualizar».
+- **Las credenciales:** las de un rol de AWS sólo de lectura de los costos, que asume el paso
+  `configure-aws-credentials` de `.github/workflows/cron.yml` con OIDC (sin claves guardadas) y deja en
+  `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` y `AWS_SESSION_TOKEN`. El paso sólo corre si existe el secreto
+  `AWS_COSTS_ROLE_ARN`, y con `continue-on-error`: sin el secreto o si AWS falla, el cron no consulta («sin
+  credenciales») y lo demás sale igual. Es otro rol que el de publicar en Lambda: el cron, que corre cada 10
+  minutos, no puede tocar la función. La firma de las peticiones (Signature V4) va a mano con `node:crypto`
+  (`src/services/aws-signature.ts`), sin el SDK de AWS.
+- **La previsión:** lo gastado entre los días ya cerrados del mes (el día del mes en UTC menos 1), por los días
+  del mes. El día 1, «todavía sin previsión».
+- **El aviso:** el super admin pone el monto en la página (vacío, sin aviso; el cambio queda en la actividad).
+  Cuando lo gastado lo pasa, en esa actualización se pone en cola un email `aws_cost_alert` al super admin
+  principal (sale en la siguiente pasada del cron) y llega el ntfy «Agenda360: costos de AWS», con lo
+  gastado, el monto, la previsión y lo que cubren los créditos. Una vez por mes y por monto: cambiar el monto
+  o empezar un mes lo vuelve a dejar disponible. Si la previsión pasa el monto pero lo gastado todavía no, la
+  página lo señala, sin aviso.
+- **El registro del cron es público:** su línea sólo dice «costos de AWS: actualizados», «ya estaban los de
+  hoy», «se actualizan después de las 06:00», «sin credenciales» o «falló», sin montos. Del ntfy sólo queda
+  el título.
+- **Los datos** (migración 051): `aws_costs`, una fila por mes que se reemplaza cada día y no se borra (sin
+  historial en la página, por decisión del dueño del producto). En `platform_settings`, columnas privadas que
+  nunca van en `/public/platform-settings`: el monto del aviso, para qué mes y monto ya se avisó, y el último
+  intento con su motivo.
+- **Pruebas:** `tests/aws-costs.test.ts`, con un AWS falso local que comprueba la firma y cuenta las
+  peticiones, más los ejemplos oficiales de la firma de AWS (`get-vanilla` y `post-vanilla`). Las variables
+  `AWS_COST_EXPLORER_URL` y `AWS_FREE_TIER_URL` cambian las direcciones de AWS **sólo para las pruebas**: con
+  `NODE_ENV=production` no se leen. Nunca se prueba contra la cuenta de AWS de verdad.
+- **Publicación:**
+  1. La migración 051, como paso aparte, antes del backend: `npm run db:migrate`.
+  2. Los pasos en AWS y GitHub, una sola vez. Hasta entonces la página dice que aún no hay costos:
+     1. **Cost Explorer:** en la consola de AWS, Billing and Cost Management → Cost Explorer, actívalo si
+        todavía no lo está. Los datos tardan hasta un día en aparecer la primera vez.
+     2. **El rol:** IAM → Roles → Create role → Web identity. Proveedor `token.actions.githubusercontent.com`
+        (ya existe, del de Lambda), audiencia `sts.amazonaws.com`, organización `jhordan-huera`, repositorio
+        `agenda-backend` y rama `main`. Nombre: `agenda-costos-lectura`, sin permisos administrados.
+     3. **El permiso:** en el rol, Add permissions → Create inline policy → JSON, con este texto, que sólo
+        permite leer los costos y el estado del plan (nombre: `leer-costos`):
+
+        ```json
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "LeerCostos",
+              "Effect": "Allow",
+              "Action": ["ce:GetCostAndUsage", "freetier:GetAccountPlanState"],
+              "Resource": "*"
+            }
+          ]
+        }
+        ```
+
+     4. **El secreto:** copia el ARN del rol y guárdalo en GitHub → Settings → Secrets and variables → Actions
+        como secreto `AWS_COSTS_ROLE_ARN` (secreto y no variable: el registro es público y el ARN lleva el
+        número de la cuenta).
+  3. El backend y después el front.
+  4. Al día siguiente, después de las 06:00, comparar /admin → Costos con la consola de AWS: la factura del
+     mes y Créditos.
+
 ## Pruebas
 
 `npm test` crea un PostgreSQL temporal (con `initdb`; en macOS `brew install postgresql@16`) o usa
@@ -1382,8 +1461,9 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
      el celular), `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` (las de Vercel: para borrar los
      comprobantes de pago de más de 3 meses; sin ellas se omite), `VAPID_PUBLIC_KEY` y
      `VAPID_PRIVATE_KEY` (las de Vercel: sin ellas el cron no envía los avisos en el celular, que
-     caducan en cola) y, opcional, `HEALTHCHECK_URL` (healthchecks.io avisa si el cron deja de
-     ejecutarse).
+     caducan en cola) y, opcionales, `HEALTHCHECK_URL` (healthchecks.io avisa si el cron deja de
+     ejecutarse) y `AWS_COSTS_ROLE_ARN` (el rol de AWS de sólo lectura de los costos, ver "Los costos de
+     AWS"; sin él, la pantalla «Costos» dice que no hay datos).
    - Variables: `APP_URL` (la del frontend: enlaces de los emails y del aviso) y, opcionales,
      `GMAIL_FROM_NAME` (por defecto "Agenda360"), `GMAIL_TRANSPORT` (`api`, ver "Emails"),
      `NTFY_SERVER` y `VAPID_SUBJECT`.
