@@ -5,6 +5,7 @@ import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { escapeHtml } from "../shared/lib/email/layout.ts";
 import { getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
 import {
+  DISCARD_REASONS,
   EMAIL_PRIORITY_ORDER,
   QUOTA_WAIT_NOTE,
   alertOnce,
@@ -13,6 +14,7 @@ import {
   sentLast24h,
   type EmailPriority,
 } from "./email-limits.ts";
+import { inviteSequenceSql, resetUndeliveredInvitesSql } from "./calendar-invite-reset.ts";
 import { readdressInvite } from "./calendar-invites.ts";
 import { calendarEventOf, createGmailSender } from "./gmail-transport.ts";
 import { isQuietTime, isReminderEmail, isReminderSql, minutesUntilQuietEnds, minutesUntilStart, reminderCurrentSql } from "./reminder-rules.ts";
@@ -183,10 +185,10 @@ function checkReminder(email: QueuedEmail): ReminderCheck {
   const now = zonedNowOf(email);
   if (!email.reminderSent) {
     if (!email.appointmentStatus || !["pending", "confirmed"].includes(email.appointmentStatus) || !email.reminderCurrent) {
-      return { action: "discard", reason: "Recordatorio descartado: la cita se canceló o cambió de fecha u hora." };
+      return { action: "discard", reason: DISCARD_REASONS.reminderChanged };
     }
     if (minutesUntilStart(email.appointmentDate!, email.appointmentTime!, now) <= 0) {
-      return { action: "discard", reason: "Recordatorio descartado: la cita ya empezó." };
+      return { action: "discard", reason: DISCARD_REASONS.reminderStarted };
     }
   }
   if (isQuietTime(now)) return { action: "postpone", minutes: minutesUntilQuietEnds(now) };
@@ -341,6 +343,29 @@ async function discard(id: string, reason: string): Promise<void> {
 }
 
 /**
+ * Una invitación de calendario (spec 027) con otra más nueva de la misma cita para el mismo buzón, en cola o
+ * ya enviada: sobra, porque cada invitación lleva el evento entero. Si saliera después (p. ej. un reintento),
+ * un calendario que nunca tuvo el evento lo añadiría aunque la cita ya se hubiera cancelado. «Más nueva»: la
+ * puesta en cola después o, en la misma transacción, la de SEQUENCE mayor (crece con cada envío de la cita).
+ */
+async function isSupersededInvite(email: QueuedEmail): Promise<boolean> {
+  if (email.type !== "calendar_invite") return false;
+  const newer = await one(
+    pool,
+    `select 1 from notifications n
+       join notifications o
+         on o.business_id = n.business_id and o.created_at >= n.created_at and o.id <> n.id
+        and o.type = 'calendar_invite' and o.appointment_id = n.appointment_id and o.to_email = n.to_email
+        and o.status in ('queued', 'sent')
+        and (o.created_at > n.created_at or coalesce(${inviteSequenceSql("o")}, -1) > coalesce(${inviteSequenceSql("n")}, -1))
+      where n.id = $1
+      limit 1`,
+    [email.id],
+  );
+  return Boolean(newer);
+}
+
+/**
  * Envía un email ya reservado y guarda el resultado al momento, fuera de cualquier transacción
  * larga. Devuelve false si el envío falló.
  */
@@ -348,7 +373,7 @@ async function deliver(email: QueuedEmail, send: (email: OutgoingEmail) => Promi
   // Con los emails desviados a tu correo (pruebas en local), también los de los datos demo:
   // al destinatario falso no le llega nada, sólo a ti.
   if (!config.emailRedirectTo && isUndeliverable(email.to)) {
-    await discard(email.id, "Dirección de demostración: no se envía.");
+    await discard(email.id, DISCARD_REASONS.demoAddress);
     report.skipped++;
     return true;
   }
@@ -364,6 +389,11 @@ async function deliver(email: QueuedEmail, send: (email: OutgoingEmail) => Promi
       "update notifications set attempts = attempts - 1, next_attempt_at = now() + make_interval(mins => $2) where id = $1",
       [email.id, check.minutes],
     );
+    return true;
+  }
+  if (await isSupersededInvite(email)) {
+    await discard(email.id, DISCARD_REASONS.supersededInvite);
+    report.skipped++;
     return true;
   }
 
@@ -393,6 +423,10 @@ async function deliver(email: QueuedEmail, send: (email: OutgoingEmail) => Promi
         where id = $1`,
       [email.id, message.slice(0, 500), giveUp, retryDelayMinutes(email.attempts)],
     );
+    // Una invitación de calendario que ya no saldrá: la siguiente sincronización la vuelve a enviar (spec 027).
+    // Las descartadas a propósito no: la de una dirección de demostración fallaría igual, y la reemplazada
+    // ya tiene su versión más nueva.
+    if (giveUp && email.type === "calendar_invite") await pool.query(resetUndeliveredInvitesSql("n.id = $1"), [email.id]);
     if (giveUp) report.failed++;
     else report.retrying++;
     const summary = scrubEmails(message).slice(0, 200);

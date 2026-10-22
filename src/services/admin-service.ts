@@ -55,7 +55,7 @@ import type {
   User,
 } from "../shared/types/index.ts";
 import { createUserAccount, hashPassword, isEmailRegistered } from "./accounts.ts";
-import { emailQuotaStatus } from "./email-limits.ts";
+import { discardedEmailSql, emailQuotaStatus } from "./email-limits.ts";
 import { ADMIN_AUDIT_QUERY, parseAuditFilters, queryAuditLogs } from "./activity-service.ts";
 import { businessAnalytics } from "./analytics-service.ts";
 import { adminBusinessBilling, billingCounts, ensureBillingSchedule } from "./billing-service.ts";
@@ -289,8 +289,7 @@ async function emailsByDay(): Promise<PlatformStats["health"]["emailsByDay"]> {
               where n.status = 'sent' and n.sent_at >= since.at and (n.sent_at at time zone $1)::date = d.day)::int as sent,
             (select count(*) from notifications n, since
               where n.status = 'failed' and n.created_at >= since.at and (n.created_at at time zone $1)::date = d.day
-                and coalesce(n.last_error, '') not like 'Recordatorio descartado%'
-                and coalesce(n.last_error, '') not like 'Dirección de demostración%')::int as failed
+                and not ${discardedEmailSql("n")})::int as failed
        from days d order by d.day`,
     [DEFAULT_TIMEZONE, EMAIL_CHART_DAYS],
   );
@@ -299,14 +298,6 @@ async function emailsByDay(): Promise<PlatformStats["health"]["emailsByDay"]> {
 
 /** Intentos fallidos de inicio de sesión de una cuenta en una hora que cuentan como alerta (como el cron). */
 const LOGIN_ALERT_ATTEMPTS = 10;
-
-/**
- * Los emails que fallaron a propósito, no por un problema: el recordatorio de una cita que se canceló o cambió,
- * y las direcciones de demostración. «Emails de hoy» no los cuenta como fallidos y la lista los marca
- * «Descartado». `alias`: el de la tabla notifications en la consulta.
- */
-const discardedEmailSql = (alias: string) =>
-  `(coalesce(${alias}.last_error, '') like 'Recordatorio descartado%' or coalesce(${alias}.last_error, '') like 'Dirección de demostración%')`;
 
 /**
  * Salud del sistema (spec 006), sólo con cifras: emails de hoy (enviados, fallidos sin los descartados

@@ -668,9 +668,15 @@ await activate(jhordan, newcomer);
 push.respond(newcomer.endpoint, 410);
 booking = await jhordanPage.book(person("Wendy Paola Suárez Ríos"));
 const newcomerTag = `reserva-${booking.body.appointmentId}`;
+// Con su motivo (last_error): el primer intento ya terminó. «queued|1» solo también se ve mientras la API lo
+// tiene reservado y aún no lo envió, y entonces el reintento de abajo se cruzaba con él (2026-10-22).
 ok(
-  (await until(() => sql(`select m.status || '|' || m.attempts from push_messages m join push_subscriptions s on s.id = m.subscription_id where s.endpoint = '${newcomer.endpoint}' and m.tag = '${newcomerTag}'`) === "queued|1")) &&
-    deviceExists(newcomer),
+  (await until(
+    () =>
+      sql(
+        `select m.status || '|' || m.attempts || '|' || (m.last_error is not null) from push_messages m join push_subscriptions s on s.id = m.subscription_id where s.endpoint = '${newcomer.endpoint}' and m.tag = '${newcomerTag}'`,
+      ) === "queued|1|true",
+  )) && deviceExists(newcomer),
   "un aparato recién activado con un 410 no se borra: el aviso queda para reintentar",
 );
 sql(`update push_messages set next_attempt_at = now() where tag = '${newcomerTag}'`);

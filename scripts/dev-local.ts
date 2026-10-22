@@ -15,12 +15,16 @@
  * Sin ella quedan en cola y se ven en el historial de emails del panel. LOCAL_TEST_INBOX sólo lo lee
  * este script: así el correo de pruebas nunca desvía los emails de `npm run dev:prod` (la base de
  * producción desde este equipo), que leería EMAIL_REDIRECT_TO del mismo .env.
+ *
+ * Las invitaciones de calendario (spec 027) de las citas que entran en la ventana de 14 días las pone en
+ * cola el propio servidor cada 10 minutos, como el cron de GitHub (src/jobs/reminders.ts).
  */
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 import { parseEnv } from "node:util";
+import { resetUndeliveredInvitesSql } from "../src/services/calendar-invite-reset.ts";
 import { generateVapidKeys } from "../src/services/web-push.ts";
 import { findPostgresBin } from "./postgres-bin.ts";
 
@@ -130,7 +134,9 @@ try {
     node(["src/db/seed.ts", "--reset"]);
   }
   if (sendEmails) {
-    // Lo que quedó en cola de otras sesiones no se envía de golpe: sólo lo de esta sesión.
+    // Lo que quedó en cola de otras sesiones no se envía de golpe: sólo lo de esta sesión. Las invitaciones de
+    // calendario que no saldrán vuelven a enviarse en la siguiente sincronización (ver calendar-invite-reset.ts).
+    sql(resetUndeliveredInvitesSql("n.status = 'queued'"));
     const skipped = sql(
       `with skipped as (
          update notifications set status = 'failed', last_error = 'No enviado: estaba en cola antes de arrancar (pruebas en local)'

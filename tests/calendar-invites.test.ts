@@ -6,9 +6,18 @@
 // «No asistió» y una agenda apagada), las reservas por confirmar (TENTATIVE), el cambio de agenda, la
 // ventana (una serie de 24 y el cron), el iCalendar según RFC 5545 y la privacidad del paciente: sólo su
 // nombre a medias, nunca su cédula, su contacto, sus notas ni su historia clínica.
+// Los arreglos de la auditoría (2026-10-22): el SEQUENCE crece por cita (dos agendas con el mismo email), la
+// cancelación va al buzón que tiene el evento, el texto del email, las movidas lejos con el interruptor
+// apagado, el reintento que llega tarde (se descarta como reemplazado), la invitación que agota los
+// reintentos o queda en cola al reiniciar dev:local (vuelve a salir), el borrado de un paciente con la cita
+// bloqueada por el cron y el paso de la ventana en el servidor local.
+import pg from "pg";
 import { cedulaFor } from "./helpers/cedula.mjs";
-import { agent, checks, count, fakeNtfy, login, runCron, sql } from "./helpers/harness.ts";
+import { agent, checks, count, fakeNtfy, login, runCron, sleep, sql, startApi } from "./helpers/harness.ts";
+import { pool } from "../src/db/pool.ts";
+import { resetUndeliveredInvitesSql } from "../src/services/calendar-invite-reset.ts";
 import { buildInviteIcs, escapeIcsText, foldIcsLine, readdressInvite } from "../src/services/calendar-invites.ts";
+import { MAX_ATTEMPTS, processEmailQueue, type OutgoingEmail } from "../src/services/mailer.ts";
 import { EMAIL_PRIORITY, emailTypesOf } from "../src/services/email-limits.ts";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
 import { formatShortDate } from "../src/shared/lib/format.ts";
@@ -33,6 +42,9 @@ const day = (offset: number) => addDaysISO(today, offset);
 
 /** Las invitaciones de una cita, en el orden en que salieron. */
 interface Invite {
+  id: string;
+  status: string;
+  lastError: string | null;
   to: string;
   subject: string;
   body: string;
@@ -41,7 +53,8 @@ interface Invite {
 }
 const invitesOf = (appointmentId: string): Invite[] =>
   JSON.parse(
-    sql(`select coalesce(json_agg(json_build_object('to', to_email, 'subject', subject, 'body', body, 'html', html, 'calendar', calendar)
+    sql(`select coalesce(json_agg(json_build_object('id', id, 'status', status, 'lastError', last_error, 'to', to_email, 'subject', subject,
+                                                  'body', body, 'html', html, 'calendar', calendar)
                                   order by created_at, calendar like '%METHOD:CANCEL%' desc), '[]')
            from notifications where type = 'calendar_invite' and appointment_id = '${appointmentId}'`),
   );
@@ -436,7 +449,8 @@ ok(
     toValeriaCancel.subject.startsWith("Pasó a otra agenda: ") &&
     toRicardo &&
     value(toRicardo.calendar, "METHOD") === "REQUEST" &&
-    value(toRicardo.calendar, "SEQUENCE") === "0" &&
+    // El SEQUENCE crece por cita, no por agenda (2026-10-22): la invitación nueva, uno más que la cancelación.
+    value(toRicardo.calendar, "SEQUENCE") === "2" &&
     value(toRicardo.calendar, "UID") === `${moving.id}@agenda360` &&
     toRicardo.subject.startsWith("Cita: "),
   "pasarla a otra agenda: a Valeria le llega la cancelación y a Ricardo, la invitación",
@@ -447,9 +461,9 @@ list = invitesOf(moving.id);
 ok(
   r.status === 200 &&
     list.length === 5 &&
-    list.some((i) => i.to === "valeria@demo.com" && value(i.calendar, "METHOD") === "REQUEST" && value(i.calendar, "SEQUENCE") === "2") &&
-    list.some((i) => i.to === "ricardo@demo.com" && value(i.calendar, "METHOD") === "CANCEL" && value(i.calendar, "SEQUENCE") === "1"),
-  "y de vuelta: Valeria la recibe con un número mayor (SEQUENCE:2) y Ricardo, su cancelación",
+    list.some((i) => i.to === "valeria@demo.com" && value(i.calendar, "METHOD") === "REQUEST" && value(i.calendar, "SEQUENCE") === "4") &&
+    list.some((i) => i.to === "ricardo@demo.com" && value(i.calendar, "METHOD") === "CANCEL" && value(i.calendar, "SEQUENCE") === "3"),
+  "y de vuelta: Ricardo, su cancelación (SEQUENCE:3), y Valeria la recibe con un número mayor (SEQUENCE:4)",
   list.map((i) => [i.to, value(i.calendar, "METHOD"), value(i.calendar, "SEQUENCE")]),
 );
 
@@ -575,7 +589,171 @@ const firstInvites = invitesOf(first.id).length;
 r = await elena("PUT", `${B}/appointments/${first.id}`, input({ startTime: "07:30" }));
 ok(r.status === 200 && firstInvites === 4 && invitesOf(first.id).length === 4, "y después, los cambios de sus citas ya no le llegan", [firstInvites, invitesOf(first.id).length]);
 
+console.log("Dos agendas con el mismo email (2026-10-22)");
+r = await ricardo("PUT", `${B}/professionals/${andres.id}`, { ...formOf(andres), email: "ricardo@demo.com", calendarInvites: true });
+ok(r.status === 200 && r.body.calendarEmail === "ricardo@demo.com" && r.body.calendarInvites, "Andrés recibe sus avisos en el email de Ricardo, con el interruptor", r.body);
+r = await elena("POST", `${B}/appointments`, input({ date: day(6), startTime: "02:00", professionalId: ricardoAgenda.id }));
+const shared: Appointment = r.body;
+r = await elena("PUT", `${B}/appointments/${shared.id}`, input({ date: day(6), startTime: "02:00", professionalId: andres.id }));
+list = invitesOf(shared.id);
+ok(
+  r.status === 200 &&
+    list.length === 3 &&
+    list.every((i) => i.to === "ricardo@demo.com") &&
+    list.map((i) => `${value(i.calendar, "METHOD")} ${value(i.calendar, "SEQUENCE")}`).join() === "REQUEST 0,CANCEL 1,REQUEST 2",
+  "la cita pasa de una a otra: el mismo buzón recibe la cancelación (1) y la invitación con un número mayor (2), que es la que se queda",
+  list.map((i) => [i.to, value(i.calendar, "METHOD"), value(i.calendar, "SEQUENCE")]),
+);
+const movedCancel = list[1];
+r = await ricardo("PUT", `${B}/professionals/${andres.id}`, { ...formOf(andres), email: "andres.vega@correo.ec", calendarInvites: true });
+ok(r.status === 200 && r.body.calendarEmail === "andres.vega@correo.ec", "(Andrés pasa a su propio email: las pruebas de envío necesitan uno que no sea de demostración)", r.body);
+
+console.log("La cancelación va al buzón que tiene el evento (2026-10-22)");
+r = await elena("POST", `${B}/appointments`, input({ date: day(7), startTime: "02:00", professionalId: ricardoAgenda.id }));
+const renamed: Appointment = r.body;
+// El email de su usuario cambia sin pasar por Profesionales, y la cita se cancela antes de la siguiente pasada del cron.
+sql(`update users set email = 'ricardo.nuevo@correo.ec' where email = 'ricardo@demo.com'`);
+r = await elena("PATCH", `${B}/appointments/${renamed.id}/status`, { status: "cancelled", notify: false });
+sql(`update users set email = 'ricardo@demo.com' where email = 'ricardo.nuevo@correo.ec'`);
+list = invitesOf(renamed.id);
+ok(
+  r.status === 200 &&
+    list.length === 2 &&
+    value(list[1].calendar, "METHOD") === "CANCEL" &&
+    list[1].to === "ricardo@demo.com" &&
+    value(list[1].calendar, "ATTENDEE") === "mailto:ricardo@demo.com",
+  "a ricardo@demo.com, donde está el evento, aunque la agenda tenga ya otro email (decisión del dueño)",
+  list.map((i) => [i.to, value(i.calendar, "METHOD")]),
+);
+
+console.log("El texto del email (2026-10-22)");
+const note = "Te llega porque tu agenda tiene activado «Recibir mis citas en mi calendario».";
+ok(
+  [list[1], movedCancel].every((i) => i.body.includes(note) && !i.body.includes("Añadir al calendario") && !i.html.includes("Añadir al calendario")),
+  "la cancelación y «Pasó a otra agenda»: sin «activaste» y sin invitar a «Añadir al calendario»",
+  [list[1].body, movedCancel.body],
+);
+ok(list[0].body.includes(note) && list[0].body.includes("Añadir al calendario"), "la invitación sí explica «Añadir al calendario»", list[0].body);
+
+console.log("Apagado, movida lejos y vuelta a activar (2026-10-22)");
+r = await toggle(valeria, valeriaAgenda.id, true);
+r = await elena("POST", `${B}/appointments`, input({ date: day(4), startTime: "02:00" }));
+const away: Appointment = r.body;
+await toggle(valeria, valeriaAgenda.id, false);
+r = await elena("PUT", `${B}/appointments/${away.id}`, input({ date: day(25), startTime: "02:00" }));
+ok(r.status === 200 && invitesOf(away.id).length === 1, "apagado: moverla a 25 días no envía nada (por diseño)");
+await toggle(valeria, valeriaAgenda.id, true);
+list = invitesOf(away.id);
+ok(
+  list.length === 2 && value(list[1].calendar, "METHOD") === "REQUEST" && value(list[1].calendar, "SEQUENCE") === "1" && value(list[1].calendar, "DTSTART") === utc(day(25), "02:00"),
+  "al activarlo otra vez, el evento pasa al día nuevo aunque esté fuera de la ventana",
+  list.map((i) => [value(i.calendar, "SEQUENCE"), value(i.calendar, "DTSTART")]),
+);
+
+console.log("Un reintento que llega tarde (2026-10-22)");
+r = await elena("POST", `${B}/appointments`, input({ date: day(8), startTime: "02:00", professionalId: andres.id }));
+const retried: Appointment = r.body;
+const firstTry = invitesOf(retried.id)[0];
+// Gmail falló en el primer intento: el reintento queda para dentro de 5 minutos. Mientras, se cancela.
+sql(`update notifications set attempts = 1, last_error = 'Timeout simulado', next_attempt_at = now() + interval '5 minutes' where id = '${firstTry.id}'`);
+r = await elena("PATCH", `${B}/appointments/${retried.id}/status`, { status: "cancelled", notify: false });
+const delivered: string[] = [];
+const fakeGmail = async (email: OutgoingEmail) => {
+  if (email.calendar?.includes(`UID:${retried.id}@agenda360`)) delivered.push(`${value(email.calendar, "METHOD")} ${value(email.calendar, "SEQUENCE")}`);
+};
+await processEmailQueue({ send: fakeGmail });
+sql(`update notifications set next_attempt_at = now() where id = '${firstTry.id}'`);
+await processEmailQueue({ send: fakeGmail });
+const stale = invitesOf(retried.id)[0];
+ok(
+  delivered.join() === "CANCEL 1" && stale.status === "failed" && stale.lastError === "Invitación reemplazada por una versión más nueva.",
+  "la invitación vieja no sale después de su cancelación: se descarta como reemplazada",
+  { delivered, stale: [stale.status, stale.lastError] },
+);
+
+console.log("Una invitación que agota los reintentos (2026-10-22)");
+r = await elena("POST", `${B}/appointments`, input({ date: day(9), startTime: "02:00", professionalId: andres.id }));
+const lost: Appointment = r.body;
+sql(`update notifications set attempts = ${MAX_ATTEMPTS - 1} where id = '${invitesOf(lost.id)[0].id}'`);
+await processEmailQueue({
+  send: async (email) => {
+    if (email.calendar?.includes(`UID:${lost.id}@agenda360`)) throw new Error("421 Gmail no responde");
+  },
+});
+ok(
+  invitesOf(lost.id)[0].status === "failed" && sql(`select fingerprint from calendar_invites where appointment_id = '${lost.id}'`) === "",
+  "el último intento falla: queda fallida y su fila de calendar_invites, sin huella",
+  invitesOf(lost.id).map((i) => i.status),
+);
+const demoInvites = () => count("select count(*) from notifications where type = 'calendar_invite' and to_email like '%@demo.com'");
+const demoBefore = demoInvites();
+const ntfy2 = await fakeNtfy();
+cron = await runCron(ntfy2.url);
+list = invitesOf(lost.id);
+ok(
+  cron.code === 0 && list.length === 2 && list[1].status === "queued" && value(list[1].calendar, "SEQUENCE") === "1" && list[1].subject.startsWith("Cita: "),
+  "la siguiente pasada del cron la vuelve a enviar entera, con un número mayor",
+  list.map((i) => [i.status, value(i.calendar, "SEQUENCE"), i.subject]),
+);
+ok(demoInvites() === demoBefore, "las descartadas por ser de demostración no se reenvían (si no, se repetirían en cada pasada)", [demoBefore, demoInvites()]);
+
+console.log("Al reiniciar dev:local con invitaciones en cola (2026-10-22)");
+r = await elena("POST", `${B}/appointments`, input({ date: day(10), startTime: "02:00", professionalId: andres.id }));
+const restarted: Appointment = r.body;
+// Lo mismo que hace scripts/dev-local.ts al arrancar con Gmail.
+sql(resetUndeliveredInvitesSql("n.status = 'queued'"));
+sql("update notifications set status = 'failed', last_error = 'No enviado: estaba en cola antes de arrancar (pruebas en local)' where status = 'queued'");
+cron = await runCron(ntfy2.url);
+ntfy2.close();
+list = invitesOf(restarted.id);
+ok(
+  cron.code === 0 &&
+    list.length === 2 &&
+    list[0].status === "failed" &&
+    list[1].status === "queued" &&
+    value(list[1].calendar, "SEQUENCE") === "1" &&
+    list[1].subject.startsWith("Cita: "),
+  "la invitación que no se envió vuelve a salir entera en la siguiente pasada («Cita:», no «Cambió:»)",
+  list.map((i) => [i.status, value(i.calendar, "SEQUENCE"), i.subject]),
+);
+
+console.log("Borrar al paciente mientras el cron tiene la cita (2026-10-22)");
+const lockedClient = sql(
+  `insert into clients (business_id, name, document_id, email, phone)
+   values ('${businessId}', 'Paciente Bloqueada', '${cedulaFor(`bloqueada-${tag}`)}', 'bloqueada.${tag}@correo.ec', '0983334444') returning id`,
+).split("\n")[0];
+r = await elena("POST", `${B}/appointments`, input({ clientId: lockedClient, date: day(11), startTime: "02:00", professionalId: andres.id }));
+const lockedAppointment: Appointment = r.body;
+const cronLock = new pg.Client({ connectionString: process.env.TEST_DATABASE_URL });
+await cronLock.connect();
+await cronLock.query("begin");
+// Como la tiene el cron mientras la sincroniza (syncLocked).
+await cronLock.query("select 1 from appointments where id = $1 for no key update", [lockedAppointment.id]);
+const deleting = ricardo("DELETE", `${B}/clients/${lockedClient}`);
+await sleep(1500);
+await cronLock.query("commit");
+await cronLock.end();
+r = await deleting;
+ok(
+  r.status === 204 &&
+    count(
+      `select count(*) from notifications where type = 'calendar_invite' and calendar like '%UID:${lockedAppointment.id}@agenda360%' and calendar like '%METHOD:CANCEL%'`,
+    ) === 1,
+  "el borrado espera a que la suelte y el evento se cancela igual",
+  r.body,
+);
+
+console.log("El servidor local hace el paso de la ventana (2026-10-22)");
+r = await elena("POST", `${B}/appointments`, input({ date: day(20), startTime: "02:30", professionalId: andres.id }));
+const later: Appointment = r.body;
+sql(`update appointments set date = '${day(12)}' where id = '${later.id}'`);
+const localApi = await startApi({ CALENDAR_INVITE_JOB_INTERVAL_MINUTES: "1" });
+for (let i = 0; i < 40 && invitesOf(later.id).length === 0; i++) await sleep(500);
+localApi.stop();
+ok(invitesOf(later.id).length === 1, "una cita que entra en la ventana recibe su invitación sin el cron de GitHub", localApi.output().slice(-300));
+
 console.log("Los topes");
 ok(EMAIL_PRIORITY.calendar_invite === "business" && emailTypesOf("business").includes("calendar_invite"), "cuentan como emails del negocio para el cupo de Gmail");
 
+await pool.end();
 done("de las invitaciones de calendario");

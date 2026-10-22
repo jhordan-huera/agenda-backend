@@ -806,9 +806,13 @@ export const emailTemplates = {
         { kind: "button", label: "Ver en Agenda360", url: data.agendaUrl },
         {
           kind: "note",
+          // Sin «activaste»: el interruptor también lo cambian el propietario y el administrador. Y en la
+          // cancelación, nada de «Añadir al calendario» (2026-10-22).
           text:
-            "Te llega porque activaste «Recibir mis citas en mi calendario» en tu agenda. Si tu calendario no la añadió solo, " +
-            "toca «Añadir al calendario» en este email; los cambios siguientes se aplican solos.",
+            "Te llega porque tu agenda tiene activado «Recibir mis citas en mi calendario». " +
+            (data.kind === "cancelled" || data.kind === "moved"
+              ? "Tu calendario quita el evento solo; si todavía lo ves, puedes borrarlo."
+              : "Si tu calendario no la añadió solo, toca «Añadir al calendario» en este email; los cambios siguientes se aplican solos."),
         },
       ],
     });

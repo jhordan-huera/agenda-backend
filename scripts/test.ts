@@ -73,6 +73,8 @@ const env: NodeJS.ProcessEnv = {
   PORT: String(apiPort),
   FRONTEND_URL: "http://localhost:5173",
   REMINDER_JOB_INTERVAL_MINUTES: "0",
+  // Sin el paso local de las invitaciones de calendario: las pruebas lo hacen con el cron (runCron).
+  CALENDAR_INVITE_JOB_INTERVAL_MINUTES: "0",
   PROXY_SECRET: randomBytes(24).toString("hex"),
   TEST_DATABASE_URL: databaseUrl,
   // Archivos de la historia clínica en una carpeta temporal (almacenamiento local).

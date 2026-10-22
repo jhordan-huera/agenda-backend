@@ -143,6 +143,8 @@ email("sent", null, "now()");
 email("failed", "550 buzón inexistente");
 email("failed", "Recordatorio descartado: la cita se canceló o cambió de fecha u hora.");
 email("failed", "Dirección de demostración: no se envía.");
+// Una invitación de calendario con otra más nueva para el mismo buzón (spec 027, 2026-10-22): tampoco es un fallo.
+email("failed", "Invitación reemplazada por una versión más nueva.");
 email("queued", null);
 sql("delete from cron_runs");
 sql("delete from backup_runs");
@@ -163,13 +165,13 @@ const listEmails = async (filter?: string) =>
 const todayEmails = await listEmails("today");
 const clinicName = sql(`select name from businesses where id = '${clinicId}'`);
 ok(
-  todayEmails.length === 5 && todayEmails.every((e) => e.businessName === clinicName),
+  todayEmails.length === 6 && todayEmails.every((e) => e.businessName === clinicName),
   "«Hoy»: el enviado, los fallidos y el que sigue en cola, con su negocio",
   todayEmails.map((e) => [e.status, e.businessName]),
 );
 ok(
   todayEmails.filter((e) => e.status === "failed" && !e.discarded).length === 1 &&
-    todayEmails.filter((e) => e.discarded).length === 2 &&
+    todayEmails.filter((e) => e.discarded).length === 3 &&
     todayEmails.find((e) => e.status === "failed" && !e.discarded)?.error === "550 buzón inexistente",
   "los fallidos llevan su motivo, y los descartados a propósito van marcados",
   todayEmails.map((e) => [e.status, e.discarded, e.error]),

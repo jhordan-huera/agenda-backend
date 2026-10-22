@@ -778,8 +778,10 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
 - **Fuera de producción todos los emails se redirigen a `EMAIL_REDIRECT_TO`** (por defecto la propia
   cuenta de Gmail), con el destinatario original en el asunto. Así nunca se escribe a clientes de prueba.
 - Las direcciones de los datos demo (`@demo.com`, `@example.com`) nunca reciben emails.
-- En local, los recordatorios se ponen en cola cada `REMINDER_JOB_INTERVAL_MINUTES` minutos y la cola
-  se revisa cada minuto. **En producción** el trabajo se reparte:
+- En local, los recordatorios se ponen en cola cada `REMINDER_JOB_INTERVAL_MINUTES` minutos, las
+  invitaciones de calendario de las citas que entran en la ventana de 14 días cada
+  `CALENDAR_INVITE_JOB_INTERVAL_MINUTES` (10, sólo con la base de este equipo) y la cola se revisa cada
+  minuto. **En producción** el trabajo se reparte:
   - **La API en Vercel** envía al momento las confirmaciones y avisos de las citas (con `waitUntil`,
     la función sigue viva tras responder). No envía recordatorios.
   - **El cron de GitHub** (`scripts/cron.ts`, cada 10 min) trabaja **aislado de Vercel**: se conecta
