@@ -18,7 +18,7 @@ Crea la base en `.local-db/` la primera vez (necesita `brew install postgresql@1
 arranques y la detiene al salir (Ctrl+C). Aplica las migraciones nuevas en cada arranque: es el sitio
 para probar una migración antes de aplicarla en Supabase. De `.env` sólo lee la cuenta de Gmail
 (`GMAIL_*`): nunca la base, Supabase ni el CAPTCHA. Con ella los emails se envían de verdad, pero
-**todos a tu propio correo** (`EMAIL_REDIRECT_TO` o, si no, `GMAIL_USER`) con el destinatario
+**todos a tu propio correo** (`LOCAL_TEST_INBOX`, si no `EMAIL_REDIRECT_TO` y, si no, `GMAIL_USER`; `LOCAL_TEST_INBOX` sólo lo lee `dev:local`, así nunca desvía los emails de `dev:prod`) con el destinatario
 original en el asunto (`[Para maria@…]`); lo que estaba en cola de otras sesiones no se envía. Sin
 ella quedan en cola (historial de emails del panel). Los recordatorios automáticos de las citas
 demo (unos 20 al día) sólo con `--recordatorios`.

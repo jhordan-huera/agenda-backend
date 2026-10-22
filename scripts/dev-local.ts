@@ -10,9 +10,11 @@
  *
  * Cada arranque aplica las migraciones nuevas: así una migración se prueba aquí antes de aplicarla
  * en producción. Del .env sólo lee la cuenta de Gmail (nunca la base, Supabase ni el CAPTCHA): con
- * ella los emails se envían de verdad, pero TODOS a tu propio correo (EMAIL_REDIRECT_TO o, si no,
- * GMAIL_USER), con el destinatario original en el asunto ("[Para maria@…]"). Sin ella quedan en
- * cola y se ven en el historial de emails del panel.
+ * ella los emails se envían de verdad, pero TODOS a tu propio correo (LOCAL_TEST_INBOX, si no
+ * EMAIL_REDIRECT_TO y, si no, GMAIL_USER), con el destinatario original en el asunto ("[Para maria@…]").
+ * Sin ella quedan en cola y se ven en el historial de emails del panel. LOCAL_TEST_INBOX sólo lo lee
+ * este script: así el correo de pruebas nunca desvía los emails de `npm run dev:prod` (la base de
+ * producción desde este equipo), que leería EMAIL_REDIRECT_TO del mismo .env.
  */
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -36,7 +38,9 @@ const GMAIL_VARS = ["GMAIL_USER", "GMAIL_FROM_NAME", "GMAIL_CLIENT_ID", "GMAIL_C
 const dotEnv = existsSync(join(ROOT, ".env")) ? parseEnv(readFileSync(join(ROOT, ".env"), "utf8")) : {};
 const gmail = Object.fromEntries(GMAIL_VARS.filter((name) => dotEnv[name]).map((name) => [name, dotEnv[name]]));
 // Nunca a los destinatarios reales: "off" no vale aquí.
-const testInbox = dotEnv.EMAIL_REDIRECT_TO && dotEnv.EMAIL_REDIRECT_TO !== "off" ? dotEnv.EMAIL_REDIRECT_TO : dotEnv.GMAIL_USER;
+const testInbox =
+  dotEnv.LOCAL_TEST_INBOX?.trim() ||
+  (dotEnv.EMAIL_REDIRECT_TO && dotEnv.EMAIL_REDIRECT_TO !== "off" ? dotEnv.EMAIL_REDIRECT_TO : dotEnv.GMAIL_USER);
 const sendEmails = Boolean(testInbox && ["GMAIL_USER", "GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"].every((name) => gmail[name]));
 
 function portInUse(port: number): Promise<boolean> {
