@@ -78,7 +78,7 @@ El cron lo pide a AWS una vez al día. Cuando lo gastado pasa el monto que fija 
 
 | Repo | Commit | Mensaje |
 |---|---|---|
-| agenda-backend | (ver abajo) | Spec 031: los costos de AWS en /admin (migración 051, consulta diaria en el cron, API, aviso, pruebas y constitución 1.27.0) |
+| agenda-backend | ce06a27 | Spec 031: los costos de AWS en /admin (migración 051, consulta diaria en el cron, API, aviso, pruebas y constitución 1.27.0) |
 | agenda-front | 332608b | Spec 031: la página «Costos», la tarjeta del Inicio y el aviso de gasto (constitución 1.27.0) |
 
 ## Cómo publicarlo
