@@ -45,8 +45,6 @@ export const EMAIL_PRIORITY: Record<EmailType, EmailPriority> = {
   billing_paid: "team",
   billing_rejected: "team",
   billing_voided: "team",
-  // El aviso de los costos de AWS al super admin principal (spec 031): de la plataforma, sale siempre.
-  aws_cost_alert: "team",
   welcome: "patient",
   booking_created: "patient",
   appointment_confirmed: "patient",

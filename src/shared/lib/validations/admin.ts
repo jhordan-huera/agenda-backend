@@ -188,24 +188,6 @@ export function proposedBilling(planStart: string, today: string): { billingDay:
   return { billingDay, billingStart };
 }
 
-/**
- * El monto del aviso de los costos de AWS (spec 031), en /admin → Costos: de $0,01 a $100.000, con dos
- * decimales como mucho, o null para no recibir avisos. Cuando lo gastado en el mes lo pasa, llegan un ntfy y
- * un email al super admin principal, una vez por mes y por monto.
- */
-export const awsCostAlertSchema = z.object({
-  amount: z
-    .custom<string | number>((value) => typeof value === "number" || (typeof value === "string" && value.trim() !== ""), "Escribe el monto del aviso")
-    .pipe(
-      z.coerce
-        .number<string | number>("Escribe el monto del aviso")
-        .min(0.01, "Mínimo $0,01")
-        .max(100_000, "Máximo $100.000")
-        .refine((value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-6, "Usa como mucho dos decimales"),
-    )
-    .nullable(),
-});
-
 /** El motivo de rechazar un comprobante o de anular un cobro: le llega al propietario por email. */
 export const billingReasonSchema = z.object({ reason: requiredText("El motivo", 3, 300) });
 
@@ -222,7 +204,6 @@ export const adminBillingFilterSchema = z
 
 export type BusinessBillingInput = z.infer<typeof businessBillingSchema>;
 export type PlanPricesInput = z.infer<typeof planPricesSchema>;
-export type AwsCostAlertInput = z.infer<typeof awsCostAlertSchema>;
 export type BillingReasonInput = z.infer<typeof billingReasonSchema>;
 export type BillingPaidInput = z.input<typeof billingPaidSchema>;
 export type PlatformBankAccountsInput = z.infer<typeof platformBankAccountsSchema>;

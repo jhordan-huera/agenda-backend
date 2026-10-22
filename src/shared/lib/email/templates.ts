@@ -1,6 +1,6 @@
 // Copia de agenda-front/src/lib/email/templates.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { APP_NAME } from "../constants/app.ts";
-import { BANK_ACCOUNT_TYPE_LABELS, describeTimezone, formatCostAmount, formatUsdAmount } from "../constants/business.ts";
+import { BANK_ACCOUNT_TYPE_LABELS, describeTimezone, formatUsdAmount } from "../constants/business.ts";
 import { capitalize, formatDate, formatLongDate, formatPrice, formatShortDate, formatTimeRange, joinNames } from "../format.ts";
 import { describeHomeVisit, getDirectionsUrl, getPlaceMapsUrl, hasMapPoint } from "../maps.ts";
 import type { BankAccount, BillingPaidMethod, HomeVisitAddress, ISODate } from "../../types/index.ts";
@@ -538,48 +538,6 @@ export const emailTemplates = {
         { kind: "button", label: "Revisar la actividad", url: data.reviewUrl },
       ],
     }),
-
-  /**
-   * El aviso de los costos de AWS (spec 031): lo gastado en el mes pasó el monto que puso el super admin en
-   * /admin → Costos. Al super admin principal, una vez por mes y por monto (el ntfy dice lo mismo), con lo
-   * gastado, el monto, la previsión y lo que cubren los créditos. Todos los montos, en USD.
-   */
-  awsCostAlert: (data: {
-    /** El día 1 del mes de facturación de AWS. */
-    month: ISODate;
-    usage: number;
-    alertAmount: number;
-    /** null: el día 1, todavía sin previsión. */
-    forecast: number | null;
-    credits: number;
-    net: number;
-    costsUrl: string;
-  }): EmailContent => {
-    const month = formatDate(data.month, "MMMM 'de' yyyy");
-    return platformEmail({
-      subject: `${APP_NAME}: los costos de AWS pasaron tu aviso de ${formatUsdAmount(data.alertAmount)}`,
-      preheader: `En ${month} llevas ${formatCostAmount(data.usage)} gastados en AWS.`,
-      title: "Los costos de AWS pasaron tu aviso",
-      blocks: [
-        {
-          kind: "text",
-          text: `Lo gastado en AWS en ${month} (${formatCostAmount(data.usage)}) ya pasó el monto de tu aviso (${formatUsdAmount(data.alertAmount)}).`,
-        },
-        {
-          kind: "details",
-          rows: [
-            { label: "Gastado este mes", value: formatCostAmount(data.usage) },
-            { label: "Monto del aviso", value: formatUsdAmount(data.alertAmount) },
-            { label: "Previsión para fin de mes", value: data.forecast === null ? "Todavía sin previsión" : formatCostAmount(data.forecast) },
-            { label: "Lo cubren tus créditos", value: formatCostAmount(data.credits) },
-            { label: "Pagas de verdad", value: formatCostAmount(data.net) },
-          ],
-        },
-        { kind: "note", text: "Este mes no se repite con este monto. Lo puedes cambiar o quitar en Costos." },
-        { kind: "button", label: "Ver costos", url: data.costsUrl },
-      ],
-    });
-  },
 
   planChangeRequested: (data: {
     businessName: string;

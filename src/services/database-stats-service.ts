@@ -81,8 +81,7 @@ export const QUERY_TEXT_MAX = 160;
  * - rate_limits: al vencer cada cuenta (deleteExpiredRateLimits);
  * - backup_runs: BACKUP_RUNS_DAYS = 365 (scripts/backup.ts);
  * - database_stats: DATABASE_STATS_KEEP_DAYS = 400 (esta foto diaria);
- * - calendar_invites: se borran en cascada con su cita o su agenda (migración 048);
- * - aws_costs: una fila por mes con los costos de AWS (spec 031, migración 051), no se borra.
+ * - calendar_invites: se borran en cascada con su cita o su agenda (migración 048).
  * Las que no están aquí salen con su nombre técnico y sin regla.
  */
 export const TABLE_INFO: Record<string, { label: string; retention: string }> = {
@@ -125,7 +124,6 @@ export const TABLE_INFO: Record<string, { label: string; retention: string }> = 
   panel_notice_state: { label: "«Marcar todo como leído» de cada persona", retention: "Nunca (una fila por persona)" },
   analytics_snapshots: { label: "Fotos de la analítica", retention: "30 días" },
   database_stats: { label: "Historial del tamaño de la base", retention: "400 días" },
-  aws_costs: { label: "Costos de AWS de cada mes", retention: "Nunca (una fila por mes)" },
   backup_runs: { label: "Copias de seguridad registradas", retention: "1 año" },
   platform_settings: { label: "Configuración de la plataforma", retention: "Nunca (una fila)" },
   schema_migrations: { label: "Migraciones aplicadas", retention: "Nunca" },
@@ -190,7 +188,6 @@ const QUERY_LABELS: { pattern: RegExp; label: string; cron?: true; onlySupabase?
   { pattern: /^with zones as materialized\b/, label: "El cron prepara la analítica", cron: true },
   { pattern: /^insert into analytics_snapshots\b/, label: "El cron guarda la foto de la analítica", cron: true },
   { pattern: /^insert into database_stats\b/, label: "El cron guarda la foto del tamaño de la base", cron: true },
-  { pattern: /^insert into aws_costs\b/, label: "El cron guarda los costos de AWS del mes", cron: true },
   // La API.
   { pattern: /\bfrom sessions s\b.*\btoken_hash = \$/, label: "Se busca la sesión de cada petición" },
   { pattern: /^insert into sessions\b/, label: "Se abre una sesión (alguien inicia sesión)" },
@@ -205,7 +202,6 @@ const QUERY_LABELS: { pattern: RegExp; label: string; cron?: true; onlySupabase?
   { pattern: /^select (\$1|…)$/, label: "Se comprueba que la base responde" },
   { pattern: /\bfrom \S*pg_stat_statements(_info)?\b/, label: "Esta pantalla lee las estadísticas de consultas" },
   { pattern: /\bfrom database_stats\b/, label: "Esta pantalla lee el historial del tamaño" },
-  { pattern: /\bfrom aws_costs\b/, label: "Se leen los costos de AWS (la pantalla «Costos» o el cron)" },
   { pattern: /\bpg_total_relation_size\b|\bpg_stat_user_(tables|indexes)\b|\bpg_stat_activity\b/, label: "Esta pantalla mide las tablas y las conexiones" },
   { pattern: /\bpg_database_size\b/, label: "Se mide el tamaño de la base" },
   { pattern: /^(savepoint|release savepoint|rollback to savepoint)\b/, label: "Un punto de guardado dentro de una transacción" },

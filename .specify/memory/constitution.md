@@ -177,12 +177,6 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   verificación en dos pasos y un límite de peticiones; sólo muestra nombres de tablas, tamaños y
   cifras (las consultas sin valores), nunca datos de filas. Su historial lo guarda el cron una vez
   al día (2026-10-18).
-- La pantalla «Costos» de /admin (spec 031) sólo la ve el super admin. Muestra lo que cuesta el
-  backend en AWS en el mes, la previsión, el desglose por servicio y los créditos. El cron la
-  actualiza una vez al día con una consulta de pago ($0,01, aprobada por el dueño del producto) y un
-  rol de AWS sólo de lectura. Cuando lo gastado pasa el monto que fija el super admin, avisa por ntfy
-  y por email al super admin principal, una vez por mes y por monto. Cambiar el monto queda en la
-  actividad, y los registros públicos del cron no muestran montos (2026-10-22).
 - Una cita Completada queda fija: no cambia de estado ni de datos (salvo el pago, los comprobantes y
   las notas), y sólo el propietario la corrige, con un motivo que queda en la actividad. Ninguna cita
   vuelve a Pendiente; No asistió y Cancelada se pueden cambiar (2026-10-16).
@@ -305,4 +299,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.27.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-22
+**Versión**: 1.26.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-21

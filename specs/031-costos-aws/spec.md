@@ -2,7 +2,13 @@
 
 **Carpeta**: `specs/031-costos-aws` (rama de trabajo: `dev`) · **Creada**: 2026-10-22
 
-**Estado**: Implementada (2026-10-22)
+**Estado**: Descartada (2026-10-22)
+
+> **Descartada antes de publicarse.** El dueño del producto, el mismo día, al saber que la consulta diaria
+> gastaría unos $0,30 al mes de sus créditos de AWS: «no lo implementemos, porque luego se acaban los
+> créditos; dame quitando». Se quitó el código de los dos repos. La migración 051 ya estaba aplicada en
+> producción, así que la 052 borra lo que creó. Para ver los costos se usa la consola de AWS y su
+> presupuesto de $1.
 
 **Repos**:
 - **agenda-backend:** la consulta diaria de los costos, guardarlos, el aviso y lo que lee el super admin. Lleva migración.

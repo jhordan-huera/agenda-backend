@@ -254,14 +254,6 @@ console.log("Privacidad (CE-003)");
     "en palabras y por quién: el cron, el pooler, Supabase y la app",
     [cronQuery, pooler, zones, dashboard, session],
   );
-  // Los costos de AWS (spec 031): la tabla nueva, en palabras y con su regla, y lo que guarda el cron.
-  const awsSave = describeQuery("insert into aws_costs (month, usage_usd) values ($1, $2) on conflict (month) do update set usage_usd = excluded.usage_usd", "postgres", "postgres");
-  ok(
-    TABLE_INFO.aws_costs?.label === "Costos de AWS de cada mes" && TABLE_INFO.aws_costs.retention === "Nunca (una fila por mes)" &&
-      awsSave.label === "El cron guarda los costos de AWS del mes" && awsSave.who === "cron",
-    "los costos de AWS: «una fila por mes, no se borra», y su consulta del cron en palabras",
-    [TABLE_INFO.aws_costs, awsSave],
-  );
 }
 
 /* ---------------------------------------------------------- El tope de 5 s ---- */

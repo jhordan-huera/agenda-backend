@@ -50,7 +50,6 @@ const all = [
   emailTemplates.appointmentRestored(appointment),
   emailTemplates.appointmentCancelled(appointment),
   emailTemplates.appointmentReminder(appointment, "mañana"),
-  emailTemplates.awsCostAlert({ month: "2026-10-01", usage: 1.2, alertAmount: 1, forecast: null, credits: 1.2, net: 0, costsUrl: "https://agenda.example/admin/costs" }),
 ];
 ok(all.every((email) => email.subject && email.body && email.html.startsWith("<!doctype html>")), "cada email trae asunto, texto y HTML");
 ok(all.every((email) => !/undefined|null|\[object Object\]/.test(email.body + email.html)), "sin valores vacíos colados en el texto");

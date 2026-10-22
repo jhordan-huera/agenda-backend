@@ -4,10 +4,6 @@ name: Recordatorios y correos
 # y a Gmail (scripts/cron.ts), así no gasta la CPU de Vercel. Las confirmaciones y avisos de las
 # citas los envía la API al momento; aquí se envían los recordatorios, se reintentan los correos
 # que fallaron y se limpia lo caducado. Avisa por ntfy y da señal de vida a healthchecks.io.
-# Los costos de AWS (spec 031): una vez al día lee lo que cuesta el backend con un rol de AWS sólo de lectura
-# de los costos (secreto AWS_COSTS_ROLE_ARN, ver README, "Los costos de AWS"), sin claves guardadas: GitHub
-# lo asume con OIDC. Es otro rol que el de publicar en Lambda: este job, que corre cada 10 minutos, no puede
-# tocar la función.
 on:
   schedule:
     # Cada 10 minutos (repositorio público: minutos de Actions sin límite), en los minutos
@@ -18,10 +14,8 @@ on:
   workflow_dispatch:
 
 # El job sólo lee el código: el token de GitHub de la ejecución no puede escribir en el repositorio.
-# id-token: el token de OIDC con el que GitHub asume el rol de AWS de los costos (spec 031).
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: agendo-cron
@@ -31,9 +25,6 @@ jobs:
   ejecutar:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Los secretos no se pueden usar en el `if` de un paso: aquí sólo se dice si existe (true/false).
-    env:
-      HAS_AWS_COSTS_ROLE: ${{ secrets.AWS_COSTS_ROLE_ARN != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,16 +37,6 @@ jobs:
 
       - name: Instalar dependencias
         run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
-
-      # Los costos de AWS (spec 031): deja AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY y AWS_SESSION_TOKEN para el
-      # paso siguiente (duran una hora). Sólo con el secreto; si AWS falla, el cron sigue igual (sin costos).
-      - name: Credenciales de AWS para los costos (sólo lectura)
-        if: env.HAS_AWS_COSTS_ROLE == 'true'
-        continue-on-error: true
-        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-        with:
-          role-to-assume: ${{ secrets.AWS_COSTS_ROLE_ARN }}
-          aws-region: us-east-1
 
       - name: Enviar recordatorios y avisar por ntfy
         env:

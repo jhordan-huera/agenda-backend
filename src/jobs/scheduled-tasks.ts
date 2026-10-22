@@ -2,7 +2,6 @@ import { many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { deleteExpiredRateLimits } from "../http/rate-limit-store.ts";
 import { accountChangeNotice, findAccountChanges } from "../services/account-alerts.ts";
 import { refreshAnalytics, type AnalyticsRefresh } from "../services/analytics-service.ts";
-import { refreshAwsCosts, type AwsCostsRefresh } from "../services/aws-costs.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
 import {
   billableBusinessIds,
@@ -220,12 +219,6 @@ export interface ScheduledTasksReport {
    * una vez al día), si ya estaba, si era temprano o si falló (el cron siguió con lo demás).
    */
   databaseStats?: DatabaseStatsRefresh;
-  /**
-   * Los costos de AWS (spec 031): si esta pasada los actualizó (una consulta al día, después de las 06:00 de
-   * Ecuador), si ya estaban, si era temprano, si faltan las credenciales, si espera para reintentar o si falló
-   * (el cron siguió con lo demás), y el aviso de gasto que salió (con montos: sólo va a ntfy).
-   */
-  awsCosts?: AwsCostsRefresh;
   /** Registros de auditoría borrados por antigüedad (purge_audit_logs: sesiones 90 días, acciones 5 meses, historia clínica 5 años). */
   auditPurged: number;
   /** Emails con más de EMAIL_CONTENT_DAYS días a los que se les borró el contenido. */
@@ -399,12 +392,6 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     console.error(`[base de datos] No se pudo guardar la foto de hoy (${(error as { code?: string })?.code ?? "error"}).`);
     return { status: "failed", sizeBytes: null, purged: 0 };
   });
-  // Los costos de AWS (spec 031), una consulta al día: si falla, el cron sigue y lo reintenta a las 3 horas. El
-  // email del aviso queda en cola y sale en la siguiente pasada; el ntfy lo manda scripts/cron.ts al momento.
-  const awsCosts = await refreshAwsCosts().catch((error: unknown): AwsCostsRefresh => {
-    console.error(`[costos de AWS] No se pudieron actualizar (${(error as { code?: string })?.code ?? "error"}).`);
-    return { status: "failed", attempts: 0, alert: null };
-  });
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
     reminderFailures: reminders.failures + calendarInvites.failures + billing.failures,
@@ -446,7 +433,6 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     panelNotices: { created: push.panel ?? 0, purged: panelPurged },
     analytics,
     databaseStats,
-    awsCosts,
     auditPurged: purged?.deleted ?? 0,
     emailContentPurged,
     receiptsPurged,

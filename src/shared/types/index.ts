@@ -711,9 +711,7 @@ export type EmailType =
   /** Al propietario: el super admin rechazó el comprobante, con el motivo (spec 029). */
   | "billing_rejected"
   /** Al propietario: el super admin anuló el cobro de un mes, con el motivo (spec 029). */
-  | "billing_voided"
-  /** Al super admin principal: lo gastado en AWS en el mes pasó el monto de su aviso (spec 031). */
-  | "aws_cost_alert";
+  | "billing_voided";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -1976,68 +1974,6 @@ export interface DatabaseStats {
   history: DatabaseHistoryPoint[] | DatabaseSectionError;
   /** null: menos de 7 días de historial («Hacen falta unos días de datos para calcularlo»). */
   projection: DatabaseProjection | null;
-}
-
-/* --------------------------------------------- Los costos de AWS (spec 031) -- */
-
-/** Un servicio de AWS en el desglose del mes: su nombre como lo da AWS («AWS Lambda») y lo gastado, en USD. */
-export interface AwsServiceCost {
-  name: string;
-  amount: number;
-}
-
-/**
- * El plan de la cuenta de AWS (GetAccountPlanState del Free Tier API). En el de pago (PAID) la cuenta no se
- * cierra; en el gratuito (FREE), AWS la cierra el día que vence si no se pasa al de pago.
- */
-export interface AwsAccountPlan {
-  type: "FREE" | "PAID";
-  /** null: AWS no lo informa. */
-  status: "NOT_STARTED" | "ACTIVE" | "EXPIRED" | null;
-  /** Los créditos que quedan, en USD (null: AWS no los informa; están en la consola → Créditos). */
-  remainingCredits: number | null;
-  /** Hasta cuándo valen los créditos o, en el plan gratuito, cuándo vence (null: AWS no lo informa). */
-  expiresAt: ISODateTime | null;
-}
-
-/**
- * Lo que cuesta el backend en AWS en un mes de facturación (el de AWS, en UTC: corta a las 19:00 de Ecuador),
- * tal como lo guardó el cron en su última actualización. Todos los montos, en USD.
- */
-export interface AwsMonthCosts {
-  /** El día 1 del mes de facturación. */
-  month: ISODate;
-  /** Lo gastado en el mes hasta la actualización, antes de los créditos. */
-  usage: number;
-  /** Lo que cubren los créditos de AWS de lo gastado. */
-  credits: number;
-  /** Lo que se paga de verdad: lo gastado menos los créditos (con créditos, normalmente $0,00). */
-  net: number;
-  /** Lo gastado al ritmo que lleva el mes, a fin de mes (null: el día 1, todavía sin un día cerrado). */
-  forecast: number | null;
-  /** Lo gastado por servicio, de mayor a menor (también los que van en $0,00). */
-  services: AwsServiceCost[];
-  /** null: AWS no dio el plan de la cuenta (sin el permiso o falló): los créditos, en la consola de AWS. */
-  plan: AwsAccountPlan | null;
-  /** Cuándo se obtuvo de AWS (AWS tarda hasta un día en reflejar el uso). */
-  fetchedAt: ISODateTime;
-}
-
-/**
- * GET /api/admin/aws-costs (spec 031): sólo el super admin, con la verificación en dos pasos. Lo último que
- * guardó el cron (una consulta a AWS al día): abrir la página no consulta a AWS.
- */
-export interface AwsCosts {
-  /** El último mes guardado (null: todavía no hay costos: el cron no los pudo obtener nunca). */
-  latest: AwsMonthCosts | null;
-  /** El último intento de consultar a AWS (null: ninguno todavía). */
-  lastAttemptAt: ISODateTime | null;
-  /** El motivo del último fallo, en palabras sencillas (null: la última actualización salió bien). */
-  lastError: string | null;
-  /** El monto del aviso, en USD (null: sin aviso). */
-  alertAmount: number | null;
-  /** Ya se avisó por este monto en el mes que se muestra (no se repite hasta otro monto u otro mes). */
-  alertedThisMonth: boolean;
 }
 
 /* ------------------------------------------- Avisos en el celular (spec 013) -- */
