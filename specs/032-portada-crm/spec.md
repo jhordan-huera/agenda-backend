@@ -42,8 +42,11 @@ Los colores son azul de confianza con el naranja para la acción.
    - Excel (importar pacientes).
 3. **El botón principal, naranja,** como el ejemplo. Es la única excepción a la gama azul: sólo en la
    portada y sólo para «Crear mi agenda gratis». Cambia lo que se decidió en la spec 030 («un solo acento»).
-4. **Los sellos, reales:** «Hecho en Ecuador», «Datos protegidos según la LOPDP» y «Tus pacientes no crean
-   cuenta».
+4. **Los sellos, reales:** «Hecho en Ecuador» y «Tus pacientes no crean cuenta».
+
+   **Cambió el mismo día:** al principio también iba «Datos protegidos según la LOPDP». El dueño del
+   producto pidió quitar la LOPDP de toda la portada: de los sellos, de la franja de hechos (ahora «Gratis ·
+   Para empezar»), del pie y de la respuesta de las preguntas.
 
 Siguen vigentes:
 - **Sin precios ni cifras inventadas.**

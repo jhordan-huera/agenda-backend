@@ -41,6 +41,8 @@ El testimonio está listo, pero no se muestra hasta tener el permiso de la clien
 - **Google Calendar, el Calendario del iPhone y Outlook** van juntos en una tarjeta, «Tus citas, en tu calendario», con la nota «son marcas de sus dueños».
 - **La semana del panel** pasó a `components/shared/week-sample.tsx`, compartida con el login, que quedó idéntico píxel a píxel.
 
+- **Sin la LOPDP en la portada** (a pedido del dueño, el mismo día): los sellos quedan en dos, la franja de hechos cambia «LOPDP» por «Gratis · Para empezar», y el pie y la respuesta sobre los datos ya no la nombran. La política de privacidad sigue citándola. Commit del front `257663d`.
+
 ## Pendientes y riesgos
 
 - **El testimonio:** cuando la clienta lo autorice, rellenar `TESTIMONIAL` con su texto, nombre y especialidad.
