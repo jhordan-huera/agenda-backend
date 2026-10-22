@@ -362,7 +362,7 @@ adminRoutes.get(
 );
 adminRoutes.get(
   "/emails",
-  handle((req) => adminService.listEmails(req.ctx)),
+  handle((req) => adminService.listEmails(req.ctx, req.query)),
 );
 adminRoutes.put(
   "/settings",

@@ -728,7 +728,18 @@ export interface EmailNotification {
   appointmentId: string | null;
   status: "queued" | "sent" | "failed";
   createdAt: ISODateTime;
+  /** Sólo en la bandeja del super admin (/admin → Actividad): el negocio (null en los de cuenta o de plataforma). */
+  businessName?: string | null;
+  /** Sólo en la del super admin: cuándo salió (null si no salió). */
+  sentAt?: ISODateTime | null;
+  /** Sólo en la del super admin: el motivo, si falló. */
+  error?: string | null;
+  /** Sólo en la del super admin: falló a propósito (un recordatorio de una cita que cambió, una dirección de demostración). */
+  discarded?: boolean;
 }
+
+/** El filtro de los emails de /admin → Actividad: los de «Emails de hoy», los fallidos de verdad o todos. */
+export type AdminEmailFilter = "today" | "failed" | "all";
 
 export type AuditEntityType =
   | "appointment"
