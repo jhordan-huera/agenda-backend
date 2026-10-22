@@ -50,7 +50,7 @@ El testimonio está listo, pero no se muestra hasta tener el permiso de la clien
 | Repo | Commit | Mensaje |
 |---|---|---|
 | agenda-front | 713d0b2 | Specs 032 y 033: la portada al estilo de una plataforma de ventas y la marca de Agenda360 en tomate (iconos, colores, emails; constitución 1.28.0) |
-| agenda-backend | (este commit) | Specs 032, 033 y 034: documentos y reportes; constitución 1.28.0 |
+| agenda-backend | 18befa7 | Specs 032, 033 y 034: documentos y reportes; constitución 1.28.0 |
 
 La beta no tiene git. Su respaldo previo está en
 `~/Documentos/Proyectos/Betas/agenda-beta-respaldo-antes-de-portada-032-2026-10-22.tar.gz`.
