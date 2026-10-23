@@ -55,7 +55,7 @@ import type {
   User,
 } from "../shared/types/index.ts";
 import { createUserAccount, hashPassword, isEmailRegistered } from "./accounts.ts";
-import { emailQuotaStatus } from "./email-limits.ts";
+import { discardedEmailSql, emailQuotaStatus } from "./email-limits.ts";
 import { ADMIN_AUDIT_QUERY, parseAuditFilters, queryAuditLogs } from "./activity-service.ts";
 import { businessAnalytics } from "./analytics-service.ts";
 import { adminBusinessBilling, billingCounts, ensureBillingSchedule } from "./billing-service.ts";
@@ -289,8 +289,7 @@ async function emailsByDay(): Promise<PlatformStats["health"]["emailsByDay"]> {
               where n.status = 'sent' and n.sent_at >= since.at and (n.sent_at at time zone $1)::date = d.day)::int as sent,
             (select count(*) from notifications n, since
               where n.status = 'failed' and n.created_at >= since.at and (n.created_at at time zone $1)::date = d.day
-                and coalesce(n.last_error, '') not like 'Recordatorio descartado%'
-                and coalesce(n.last_error, '') not like 'Dirección de demostración%')::int as failed
+                and not ${discardedEmailSql("n")})::int as failed
        from days d order by d.day`,
     [DEFAULT_TIMEZONE, EMAIL_CHART_DAYS],
   );
@@ -321,9 +320,7 @@ async function systemHealth(): Promise<PlatformStats["health"]> {
       `with today as (select date_trunc('day', now() at time zone $1) at time zone $1 as start)
        select (select count(*) from notifications n, today t where n.status = 'sent' and n.sent_at >= t.start)::int as sent,
               (select count(*) from notifications n, today t
-                where n.status = 'failed' and n.created_at >= t.start
-                  and coalesce(n.last_error, '') not like 'Recordatorio descartado%'
-                  and coalesce(n.last_error, '') not like 'Dirección de demostración%')::int as failed,
+                where n.status = 'failed' and n.created_at >= t.start and not ${discardedEmailSql("n")})::int as failed,
               (select count(*) from notifications where status = 'queued')::int as queued,
               (select ran_at from cron_runs order by ran_at desc limit 1) as "cronAt",
               (select coalesce((report->>'reminderFailures')::int, 0) + coalesce((report->'emails'->>'failed')::int, 0)
@@ -1155,12 +1152,37 @@ export const adminService = {
     return queryAuditLogs<AdminAuditLog>(pool, { ...ADMIN_AUDIT_QUERY, where, values }, parseAuditFilters(rest));
   },
 
-  /** Todos los emails de la plataforma (bandeja de salida global). */
-  async listEmails(ctx: RequestContext): Promise<EmailNotification[]> {
+  /**
+   * Todos los emails de la plataforma (bandeja de salida global), los 200 más recientes, con su negocio, cuándo
+   * salieron y, si fallaron, el motivo (o si se descartaron a propósito). `filter`:
+   * - `today`: los de «Emails de hoy» del Inicio: los enviados hoy, los que fallaron hoy y todos los que siguen
+   *   en cola (hoy, en Ecuador);
+   * - `failed`: los que fallaron de verdad, sin los descartados a propósito, de cualquier día;
+   * - otro valor o ninguno: todos.
+   */
+  async listEmails(ctx: RequestContext, query: Record<string, unknown> = {}): Promise<EmailNotification[]> {
     authorizeSuperAdmin(ctx);
+    const filter = query.filter === "today" || query.filter === "failed" ? query.filter : "all";
+    const where =
+      filter === "today"
+        ? `where (n.status = 'sent' and n.sent_at >= (select start from today))
+              or (n.status = 'failed' and n.created_at >= (select start from today))
+              or n.status = 'queued'`
+        : filter === "failed"
+          ? `where n.status = 'failed' and not ${discardedEmailSql("n")}`
+          : "";
     return many<EmailNotification>(
       pool,
-      `select ${notificationColumns()} from notifications order by created_at desc limit 200`,
+      `with today as (select date_trunc('day', now() at time zone $1) at time zone $1 as start)
+       select ${notificationColumns("n")}, b.name as "businessName", n.sent_at as "sentAt",
+              case when n.status = 'failed' then n.last_error end as error,
+              (n.status = 'failed' and ${discardedEmailSql("n")}) as discarded
+         from notifications n
+         left join businesses b on b.id = n.business_id
+        ${where}
+        order by n.created_at desc
+        limit 200`,
+      [DEFAULT_TIMEZONE],
     );
   },
 

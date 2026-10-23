@@ -22,7 +22,13 @@
  * El cobro de las mensualidades (spec 029: el cobro de cada mes, el email de los tres días antes, el aviso
  * de cada comprobante y el borrado de los de más de 12 meses), tampoco.
  *
- * Prueba local: node --env-file=.env scripts/cron.ts
+ * Prueba local, sólo contra la base de `npm run dev:local` (puerto 54329). NUNCA con --env-file=.env: la
+ * DATABASE_URL de .env es la de PRODUCCIÓN, y la pasada entera (recordatorios, mensualidades, limpiezas)
+ * sería real. `env -i` empieza sin ninguna variable, así que tampoco lee .env ni Gmail: lo que ponga en cola
+ * lo envía el servidor de dev:local (su invitación de calendario sale con el organizador de prueba
+ * avisos@agenda360.invalid; para probarlas basta el servidor de dev:local, que ya hace ese paso):
+ *
+ *   env -i PATH="$PATH" HOME="$HOME" NODE_ENV=development DATABASE_URL=postgresql://postgres@127.0.0.1:54329/agenda FRONTEND_URL=http://localhost:5173 node scripts/cron.ts
  */
 import type { ScheduledTasksReport, SentEmail } from "../src/jobs/scheduled-tasks.ts";
 import { formatShortDate } from "../src/shared/lib/format.ts";

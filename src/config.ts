@@ -26,6 +26,9 @@ const envSchema = z.object({
   // las del pooler de Supabase en un pico de tráfico. En local, 10.
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(50).default(process.env.VERCEL ? 3 : 10),
   REMINDER_JOB_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(5),
+  // Sólo servidor local: cada cuántos minutos pasa el paso de las invitaciones de calendario del cron (spec
+  // 027; 0 = desactivado). Las pruebas lo apagan.
+  CALENDAR_INVITE_JOB_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(10),
   // Secreto compartido con el proxy del frontend en Vercel, que reenvía la IP real del visitante.
   PROXY_SECRET: z.string().trim().min(24, "PROXY_SECRET debe tener al menos 24 caracteres").optional(),
   // Envío de emails con Gmail (OAuth2). Sin estas variables los emails quedan en cola sin enviarse.
@@ -233,6 +236,7 @@ export const config = {
   cookieSameSite: env.COOKIE_SAME_SITE,
   trustProxy: env.TRUST_PROXY,
   reminderJobIntervalMinutes: env.REMINDER_JOB_INTERVAL_MINUTES,
+  calendarInviteJobIntervalMinutes: env.CALENDAR_INVITE_JOB_INTERVAL_MINUTES,
   /** null si faltan las credenciales de Gmail. */
   gmail,
   /** CAPTCHA de las reservas online y del registro. null: desactivado. */

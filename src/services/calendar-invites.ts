@@ -22,7 +22,9 @@ import { agendaUrlOf, queueEmail } from "./notifications.ts";
  * Nunca su contacto, su cédula, las notas ni nada de la historia clínica.
  *
  * Lo enviado a cada agenda por cada cita queda en calendar_invites, con la huella de lo que se ve en el
- * calendario: si no cambió, no sale nada. Enviar es automático y no va a la actividad.
+ * calendario: si no cambió, no sale nada. Enviar es automático y no va a la actividad. Lo anota al ponerlo
+ * en cola; si ese email no llega nunca, el mailer invalida la fila para que vuelva a salir
+ * (calendar-invite-reset.ts), y una invitación con otra más nueva para el mismo buzón ya no sale (mailer.ts).
  */
 
 /* ------------------------------------------------------------- iCalendar -- */
@@ -248,46 +250,55 @@ function eventOf(source: InviteSource, cancelled: boolean) {
  * Qué sale para una cita, comparando lo que debería haber en cada calendario con lo enviado:
  * - las completadas y las «No asistió» no se tocan: ya pasaron;
  * - a cada agenda que la tiene y ya no debe (se canceló, se borra o pasó a otra agenda), su cancelación,
- *   si esa agenda sigue con el interruptor y un email (apagado, ya no le llega nada);
+ *   si esa agenda sigue con el interruptor (apagado, ya no le llega nada). Va al buzón que tiene el evento
+ *   (el email de calendar_invites), aunque la agenda tenga ahora otro (decisión del dueño, 2026-10-22);
  * - a la agenda de la cita, si está por confirmar o confirmada y tiene el interruptor y un email: la
- *   primera invitación (o la de después de una cancelación) sólo dentro de la ventana, con SEQUENCE 0 o
- *   uno más; si ya está en su calendario, cada cambio de la huella o del email sale enseguida, aunque
- *   la cita quede fuera de la ventana.
+ *   primera invitación (o la de después de una cancelación) sólo dentro de la ventana; si ya está en su
+ *   calendario, cada cambio de la huella o del email sale enseguida, aunque la cita quede fuera de la
+ *   ventana. Una invitación que no llegó (la fila sin huella, ver calendar-invite-reset.ts) sale otra vez.
+ *
+ * El SEQUENCE crece por cita, no por agenda (2026-10-22): todas las agendas comparten el UID, y dos agendas
+ * con el mismo email recibirían si no la cancelación n y después la invitación 0, que el calendario descarta
+ * por vieja. Cada envío lleva uno más que el mayor de la cita, y la invitación va la última: es la que manda.
  * `removing`: la cita se va a borrar (con su paciente): sólo las cancelaciones.
  */
 function planInvites(source: InviteSource, sent: SentInvite[], removing: boolean): InviteAction[] {
   if (source.status === "completed" || source.status === "no_show") return [];
   const active = !removing && (source.status === "pending" || source.status === "confirmed");
+  let next = Math.max(-1, ...sent.map((invite) => invite.sequence)) + 1;
   const actions: InviteAction[] = [];
   for (const invite of sent) {
-    if (invite.cancelled || !invite.enabled || !invite.agendaEmail) continue;
+    if (invite.cancelled || !invite.enabled) continue;
     const own = invite.professionalId === source.professionalId;
     if (own && active) continue;
     actions.push({
       method: "CANCEL",
       kind: own ? "cancelled" : "moved",
       professionalId: invite.professionalId,
-      to: invite.agendaEmail,
+      to: invite.email,
       displayName: invite.displayName,
-      sequence: invite.sequence + 1,
+      sequence: next++,
     });
   }
   if (!active || !source.enabled || !source.agendaEmail) return actions;
   const own = sent.find((invite) => invite.professionalId === source.professionalId);
-  const request = (kind: InviteAction["kind"], sequence: number) =>
+  const request = (kind: InviteAction["kind"]) =>
     actions.push({
       method: "REQUEST",
       kind,
       professionalId: source.professionalId,
       to: source.agendaEmail,
       displayName: source.displayName,
-      sequence,
+      sequence: next++,
     });
   if (!own || own.cancelled) {
-    if (source.inWindow) request(own ? "updated" : "new", own ? own.sequence + 1 : 0);
+    if (source.inWindow) request(own ? "updated" : "new");
+  } else if (own.fingerprint === "") {
+    // No llegó (agotó los reintentos): sale entera otra vez, como la primera.
+    request("new");
   } else if (own.fingerprint !== eventOf(source, false).fingerprint || own.email !== source.agendaEmail) {
     // Otro email (cambió el de la agenda): para ese calendario es la primera.
-    request(own.email === source.agendaEmail ? "updated" : "new", own.sequence + 1);
+    request(own.email === source.agendaEmail ? "updated" : "new");
   }
   return actions;
 }
@@ -350,14 +361,15 @@ async function syncLocked(db: Db, ids: string[], removing: boolean): Promise<num
   // Sólo las que tienen algo que ver con los calendarios (casi siempre, ninguna: el interruptor empieza
   // apagado). Bloqueadas hasta el fin de la transacción (como las bloquea un update: no chocan con quien
   // sólo las referencia, p. ej. un email nuevo de la cita); las que cambia otra transacción (o el cron)
-  // se saltan: esa transacción las sincroniza, y si no, la siguiente pasada del cron.
+  // se saltan: esa transacción las sincroniza, y si no, la siguiente pasada del cron. Las que se van a
+  // borrar, no: después no queda cita que sincronizar, así que se espera a esa transacción (2026-10-22).
   const locked = await many<{ id: string }>(
     db,
     `select a.id from appointments a
       where a.id = any($1::uuid[])
         and (exists (select 1 from professionals p where p.id = a.professional_id and p.calendar_invites)
              or exists (select 1 from calendar_invites ci where ci.appointment_id = a.id))
-        for no key update of a skip locked`,
+        for no key update of a${removing ? "" : " skip locked"}`,
     [ids],
   );
   if (locked.length === 0) return 0;
@@ -438,9 +450,12 @@ export async function syncCalendarInvites(db: Db, appointmentIds: string[], opti
 }
 
 /**
- * Las citas de la ventana que pueden necesitar algo: las activas de las agendas con el interruptor y las
- * que tienen una invitación sin cancelar (p. ej. una cancelada mientras otra transacción la tenía). De un
- * negocio (el cron) o de una agenda (al activar su interruptor). Sin la huella cambiada no sale nada.
+ * Las citas que pueden necesitar algo, de un negocio (el cron) o de una agenda (al activar su interruptor o
+ * cambiar su email). Sin la huella cambiada no sale nada.
+ * - Las activas de las agendas con el interruptor, dentro de la ventana: las que aún esperan su invitación.
+ * - Las que ya tienen una invitación sin cancelar, de hoy en adelante aunque estén fuera de la ventana
+ *   (2026-10-22): p. ej. una movida lejos mientras el interruptor estaba apagado, una que otra transacción
+ *   tenía bloqueada o una invitación que no llegó. Con una agenda, también las que pasaron de ella a otra.
  */
 export async function upcomingInviteIds(db: Db, filter: { businessId?: string; professionalId?: string }): Promise<string[]> {
   const rows = await many<{ id: string }>(
@@ -448,11 +463,13 @@ export async function upcomingInviteIds(db: Db, filter: { businessId?: string; p
     `select a.id from appointments a
        join businesses b on b.id = a.business_id
       where ($1::uuid is null or a.business_id = $1::uuid)
-        and ($2::uuid is null or a.professional_id = $2::uuid)
         and a.status in ('pending', 'confirmed', 'cancelled')
-        and ${inWindowSql("a", "b")}
-        and ((a.status <> 'cancelled' and exists (select 1 from professionals p where p.id = a.professional_id and p.calendar_invites))
-             or exists (select 1 from calendar_invites ci where ci.appointment_id = a.id and not ci.cancelled))
+        and a.date >= (now() at time zone b.timezone)::date
+        and ((a.status <> 'cancelled' and ($2::uuid is null or a.professional_id = $2::uuid) and ${inWindowSql("a", "b")}
+              and exists (select 1 from professionals p where p.id = a.professional_id and p.calendar_invites))
+             or exists (select 1 from calendar_invites ci
+                         where ci.appointment_id = a.id and not ci.cancelled
+                           and ($2::uuid is null or ci.professional_id = $2::uuid or a.professional_id = $2::uuid)))
       order by a.date, a.start_time`,
     [filter.businessId ?? null, filter.professionalId ?? null],
   );

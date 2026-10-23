@@ -18,7 +18,7 @@ Crea la base en `.local-db/` la primera vez (necesita `brew install postgresql@1
 arranques y la detiene al salir (Ctrl+C). Aplica las migraciones nuevas en cada arranque: es el sitio
 para probar una migración antes de aplicarla en Supabase. De `.env` sólo lee la cuenta de Gmail
 (`GMAIL_*`): nunca la base, Supabase ni el CAPTCHA. Con ella los emails se envían de verdad, pero
-**todos a tu propio correo** (`EMAIL_REDIRECT_TO` o, si no, `GMAIL_USER`) con el destinatario
+**todos a tu propio correo** (`LOCAL_TEST_INBOX`, si no `EMAIL_REDIRECT_TO` y, si no, `GMAIL_USER`; `LOCAL_TEST_INBOX` sólo lo lee `dev:local`, así nunca desvía los emails de `dev:prod`) con el destinatario
 original en el asunto (`[Para maria@…]`); lo que estaba en cola de otras sesiones no se envía. Sin
 ella quedan en cola (historial de emails del panel). Los recordatorios automáticos de las citas
 demo (unos 20 al día) sólo con `--recordatorios`.
@@ -778,8 +778,10 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
 - **Fuera de producción todos los emails se redirigen a `EMAIL_REDIRECT_TO`** (por defecto la propia
   cuenta de Gmail), con el destinatario original en el asunto. Así nunca se escribe a clientes de prueba.
 - Las direcciones de los datos demo (`@demo.com`, `@example.com`) nunca reciben emails.
-- En local, los recordatorios se ponen en cola cada `REMINDER_JOB_INTERVAL_MINUTES` minutos y la cola
-  se revisa cada minuto. **En producción** el trabajo se reparte:
+- En local, los recordatorios se ponen en cola cada `REMINDER_JOB_INTERVAL_MINUTES` minutos, las
+  invitaciones de calendario de las citas que entran en la ventana de 14 días cada
+  `CALENDAR_INVITE_JOB_INTERVAL_MINUTES` (10, sólo con la base de este equipo) y la cola se revisa cada
+  minuto. **En producción** el trabajo se reparte:
   - **La API en Vercel** envía al momento las confirmaciones y avisos de las citas (con `waitUntil`,
     la función sigue viva tras responder). No envía recordatorios.
   - **El cron de GitHub** (`scripts/cron.ts`, cada 10 min) trabaja **aislado de Vercel**: se conecta

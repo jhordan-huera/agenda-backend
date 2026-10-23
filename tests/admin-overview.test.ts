@@ -143,6 +143,8 @@ email("sent", null, "now()");
 email("failed", "550 buzón inexistente");
 email("failed", "Recordatorio descartado: la cita se canceló o cambió de fecha u hora.");
 email("failed", "Dirección de demostración: no se envía.");
+// Una invitación de calendario con otra más nueva para el mismo buzón (spec 027, 2026-10-22): tampoco es un fallo.
+email("failed", "Invitación reemplazada por una versión más nueva.");
 email("queued", null);
 sql("delete from cron_runs");
 sql("delete from backup_runs");
@@ -155,6 +157,43 @@ ok(
   { emailsBefore, now: health.emailsToday },
 );
 ok(health.cron.lastRunAt === null && health.backup === null, "sin pasadas del cron ni copias registradas: null", health);
+
+console.log("Los emails de /admin → Actividad («Ver emails» de «Emails de hoy»)");
+type AdminEmail = { to: string; subject: string; status: string; businessName?: string | null; sentAt?: string | null; error?: string | null; discarded?: boolean };
+const listEmails = async (filter?: string) =>
+  ((await admin("GET", `/admin/emails${filter ? `?filter=${filter}` : ""}`)).body as AdminEmail[]).filter((e) => e.to === "salud@example.com");
+const todayEmails = await listEmails("today");
+const clinicName = sql(`select name from businesses where id = '${clinicId}'`);
+ok(
+  todayEmails.length === 6 && todayEmails.every((e) => e.businessName === clinicName),
+  "«Hoy»: el enviado, los fallidos y el que sigue en cola, con su negocio",
+  todayEmails.map((e) => [e.status, e.businessName]),
+);
+ok(
+  todayEmails.filter((e) => e.status === "failed" && !e.discarded).length === 1 &&
+    todayEmails.filter((e) => e.discarded).length === 3 &&
+    todayEmails.find((e) => e.status === "failed" && !e.discarded)?.error === "550 buzón inexistente",
+  "los fallidos llevan su motivo, y los descartados a propósito van marcados",
+  todayEmails.map((e) => [e.status, e.discarded, e.error]),
+);
+ok(
+  todayEmails.find((e) => e.status === "sent")?.sentAt !== null && todayEmails.find((e) => e.status === "queued")?.error === null,
+  "el enviado dice cuándo salió; el de la cola, sin motivo",
+  todayEmails,
+);
+const failedEmails = await listEmails("failed");
+ok(
+  failedEmails.length === 1 && failedEmails[0].error === "550 buzón inexistente",
+  "«Fallidos»: sólo los que fallaron de verdad (sin los descartados)",
+  failedEmails.map((e) => e.error),
+);
+sql(`update notifications set created_at = now() - interval '3 days', sent_at = now() - interval '3 days'
+      where to_email = 'salud@example.com' and status = 'sent'`);
+ok(
+  (await listEmails("today")).every((e) => e.status !== "sent") && (await listEmails()).some((e) => e.status === "sent"),
+  "un enviado de otro día no sale en «Hoy», pero sí en «Todos»",
+);
+ok((await owner("GET", "/admin/emails?filter=today")).status === 403, "un propietario no ve los emails de la plataforma (403)");
 ok(
   health.database !== null && health.database.sizeBytes > 0 && health.database.limitBytes === 500 * 1024 * 1024,
   "la base de datos: lo que ocupa frente al tope de 500 MB del plan gratuito de Supabase",

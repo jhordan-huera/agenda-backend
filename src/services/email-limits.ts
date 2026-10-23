@@ -91,6 +91,34 @@ export function emailQuotaLimits(quota = config.emailQuota): Record<EmailPriorit
  */
 export const QUOTA_WAIT_NOTE = "En espera: no queda cupo de Gmail en las últimas 24 h.";
 
+/**
+ * Los motivos (en last_error) de los emails que no salen a propósito, no por un problema: el recordatorio
+ * de una cita que se canceló, cambió o ya empezó (mailer.ts, checkReminder), las direcciones de
+ * demostración y la invitación de calendario que ya tiene una versión más nueva para el mismo buzón (spec
+ * 027, 2026-10-22). En un solo sitio: el mailer los escribe y el super admin (discardedEmailSql) no los
+ * cuenta como fallidos.
+ */
+export const DISCARD_REASONS = {
+  reminderChanged: "Recordatorio descartado: la cita se canceló o cambió de fecha u hora.",
+  reminderStarted: "Recordatorio descartado: la cita ya empezó.",
+  demoAddress: "Dirección de demostración: no se envía.",
+  supersededInvite: "Invitación reemplazada por una versión más nueva.",
+} as const;
+
+/**
+ * Cómo empiezan los motivos de DISCARD_REASONS (hasta los «:» o el punto final), lo que buscan las
+ * consultas: «Recordatorio descartado», «Dirección de demostración»… Salen de los motivos, así no se
+ * desfasan.
+ */
+const DISCARD_PREFIXES = [...new Set(Object.values(DISCARD_REASONS).map((reason) => reason.split(/[:.]/)[0]))];
+
+/**
+ * El email se descartó a propósito (DISCARD_REASONS): «Emails de hoy» y el gráfico del super admin no lo
+ * cuentan como fallido y la lista de /admin lo marca «Descartado». `alias`: el de notifications en la consulta.
+ */
+export const discardedEmailSql = (alias: string) =>
+  `(${DISCARD_PREFIXES.map((prefix) => `coalesce(${alias}.last_error, '') like '${prefix.replaceAll("'", "''")}%'`).join(" or ")})`;
+
 /** Los envíos de las últimas 24 h, de todos los niveles: lo que cuenta frente al cupo. */
 export async function sentLast24h(db: Db): Promise<number> {
   const row = await one<{ count: number }>(

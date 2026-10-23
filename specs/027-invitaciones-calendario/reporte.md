@@ -59,6 +59,35 @@ invitación de calendario, con el paciente a medias y el enlace «Ver en Agenda3
   hay que tocar «Añadir al calendario». La explicación del interruptor lo dice.
 - **Si se borra un negocio,** no salen cancelaciones: todo se borra en cascada.
 
+## Arreglos posteriores (2026-10-22)
+
+Una auditoría encontró casos en los que el calendario del profesional quedaba mal. El dueño aprobó
+arreglarlos todos; sin migración. Cada uno tiene su prueba en `tests/calendar-invites.test.ts`, que falla
+con el código anterior:
+
+- **El SEQUENCE crece por cita, no por agenda:** con dos agendas que comparten el email, pasar una cita de
+  una a otra enviaba la cancelación 1 y después la invitación 0, y el calendario se quedaba con la
+  cancelación. Ahora cada envío lleva uno más que el mayor de la cita.
+- **La cancelación va al buzón que tiene el evento** (el email guardado en `calendar_invites`), aunque la
+  agenda tenga ya otro email (decisión del dueño).
+- **Un reintento que llega tarde no resucita la cita:** antes de enviar una invitación, el mailer la
+  descarta si ya hay otra más nueva para la misma cita y el mismo buzón («Invitación reemplazada por una
+  versión más nueva.»). El super admin no la cuenta como fallo: los motivos de descarte están ahora en un
+  solo sitio (`DISCARD_REASONS` y `discardedEmailSql`, en `email-limits.ts`).
+- **Una invitación que no llega vuelve a salir:** si agota los reintentos (o, en local, quedaba en cola al
+  reiniciar `dev:local`), su fila de `calendar_invites` se invalida (`calendar-invite-reset.ts`) y la
+  siguiente sincronización la envía entera, con un número mayor. Las descartadas por ser de demostración
+  no, porque fallarían en cada pasada.
+- **La ventana de 14 días sólo frena la primera invitación:** al activar el interruptor y en el cron
+  también se ponen al día las citas que ya estaban en el calendario, aunque estén más lejos (p. ej. una
+  movida a 25 días con el interruptor apagado).
+- **Borrar un paciente** espera a que el cron suelte sus citas, así su cancelación no se pierde.
+- **En local** (`npm run dev:local`), el servidor hace también el paso del calendario del cron cada 10
+  minutos (`CALENDAR_INVITE_JOB_INTERVAL_MINUTES`), sólo con la base de este equipo. El comentario
+  «Prueba local» de `scripts/cron.ts` ya no usa `--env-file=.env`, que apunta a producción.
+- **El texto del email:** «Te llega porque tu agenda tiene activado «Recibir mis citas en mi calendario».»
+  (lo puede activar también el propietario), y la cancelación ya no invita a «Añadir al calendario».
+
 ## Commits
 
 | Repo | Commit | Mensaje |

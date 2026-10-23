@@ -178,7 +178,8 @@ async function logCalendarInvites(db: Db, actor: Actor, professional: Profession
 
 /**
  * Al activarlas (o si cambió el email al que llegan), salen enseguida las de las citas de la ventana: las
- * de más lejos, cuando entren (el cron). Devuelve cuántas quedaron en cola.
+ * de más lejos, cuando entren (el cron). Las que ya estaban en su calendario se ponen al día aunque estén
+ * más lejos (p. ej. movidas mientras estaba apagado). Devuelve cuántas quedaron en cola.
  */
 async function syncAgendaInvites(db: Db, professional: Professional): Promise<number> {
   if (!professional.calendarInvites) return 0;
@@ -332,7 +333,7 @@ export const professionalService = {
         });
       }
       if (calendarChanged) await logCalendarInvites(db, actor, professional);
-      // Recién activadas, o con otro email: las citas de la ventana, a su calendario (el nuevo).
+      // Recién activadas, o con otro email: las citas de la ventana (y las que ya tenía), a su calendario.
       if (calendarChanged || professional.calendarEmail !== before.calendarEmail) await syncAgendaInvites(db, professional);
       return { professional, previousAvatar: before.avatarUrl };
     });

@@ -32,6 +32,9 @@ Agenda360 guarda datos de salud (historia clínica, citas, contacto de pacientes
 - Las páginas públicas (reservas, pago y «Tu cita») no exponen datos internos del negocio ni de otros pacientes.
 - La historia clínica sólo la ven el propietario y los miembros que él autoriza; ni el soporte de la
   plataforma (spec 025, 2026-10-19).
+- El super admin no tiene un calendario con las citas de los negocios: el de /admin sólo lleva cifras
+  por día, hora, negocio, agenda y estado, nunca el paciente, el servicio, las notas ni la cita suelta
+  (spec 035, 2026-10-22). Las citas de un negocio se ven en modo soporte, para darle asistencia.
 - Nunca se copian datos de producción a local ni a pruebas, ni siquiera anonimizados.
 - La base de producción sólo se consulta en lectura desde el equipo; las migraciones las aplica el
   dueño del producto.
@@ -182,7 +185,13 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   vuelve a Pendiente; No asistió y Cancelada se pueden cambiar (2026-10-16).
 - Las citas del panel (y sus series) nacen Confirmadas; sólo las reservas online nacen Pendientes,
   porque el negocio todavía las tiene que confirmar (2026-10-17).
-- En la portada no hay testimonios, cifras ni precios inventados.
+- En la portada no hay testimonios, cifras ni precios inventados. Un testimonio sólo sale con el permiso
+  de quien lo da, y las integraciones que se muestran son sólo las reales, con iconos propios y sin logos
+  de marcas (spec 032, 2026-10-22).
+- La marca de Agenda360 es tomate (#c2410c) con un durazno suave de resaltado: el logo y el icono, la
+  portada y el login, el panel por defecto y los emails. Una sola gama: el botón principal de la portada
+  es el principal de la marca, sin otro color aparte. Los negocios y los super admin con colores propios
+  no cambian; el azul de antes queda como la paleta «Azul clásico» (spec 033, 2026-10-22).
 - Las páginas de los pacientes (reservas, pago y cita) llevan siempre «Agenda online con Agenda360 ·
   ¿Eres profesional? Crea tu agenda»; ningún negocio lo oculta. Con el registro público cerrado, la
   portada lleva al WhatsApp del dueño (o a su email de soporte), con el negocio de origen en el
@@ -221,7 +230,8 @@ Tipos, validaciones, constantes y plantillas de email se editan sólo en agenda-
 
 ### VII. Diseño coherente, accesible y para el celular
 
-- Letra Sora. Estilo SaaS: lienzo `--canvas`, tarjetas, degradado azul → lila de la marca.
+- Letra Sora. Estilo SaaS: lienzo `--canvas`, tarjetas, degradado del tomate al tono del durazno de la
+  marca.
 - Dos modos, claro y oscuro: cada persona elige el suyo en su cuenta (Claro, Oscuro o Automático,
   por defecto Automático) y las páginas de los pacientes siguen a su aparato. Los dos salen de los
   mismos colores del negocio o del super admin, con contraste AA. Los emails, lo impreso, el QR y
@@ -299,4 +309,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.26.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-21
+**Versión**: 1.29.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-22

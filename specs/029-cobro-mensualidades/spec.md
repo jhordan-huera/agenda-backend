@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/029-cobro-mensualidades` (rama de trabajo: `dev`) · **Creada**: 2026-10-20
 
-**Estado**: Implementada (2026-10-21)
+**Estado**: Publicada (2026-10-21, PR backend #53 y front #39)
 
 **Repos**:
 - **agenda-backend:** los cobros de cada mes, el comprobante, la revisión, los avisos y la migración.

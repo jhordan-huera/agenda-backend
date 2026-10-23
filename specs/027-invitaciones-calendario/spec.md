@@ -97,7 +97,8 @@ citas.
 
 - **Una agenda sin email** (sin usuario ni email de avisos) no tiene el interruptor.
 - **Si el email del profesional cambia,** las siguientes invitaciones van al nuevo. Las de antes quedan
-  en el calendario anterior.
+  en el calendario anterior. La cancelación de una cita va siempre al calendario que tiene su evento,
+  aunque sea el del email anterior (decisión del dueño, 2026-10-22).
 - **Gmail añade la invitación solo** si así lo tiene configurado la persona. Si no, la primera vez se
   toca «Añadir al calendario». Los cambios siguientes se aplican solos. La explicación del interruptor
   lo dice.

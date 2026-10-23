@@ -307,7 +307,8 @@ async function purgeOldEmailContent(): Promise<number> {
 /**
  * Tareas periódicas: recordatorios, reintentos de la cola de emails y limpieza. En producción
  * las ejecuta el cron de GitHub (scripts/cron.ts) directamente contra la base y Gmail, sin
- * pasar por Vercel; en local, el propio servidor.
+ * pasar por Vercel. En local nada ejecuta esta pasada entera: el servidor (src/jobs/reminders.ts)
+ * sólo hace los recordatorios, el paso de las invitaciones de calendario y el envío de la cola.
  */
 export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const started = Date.now();

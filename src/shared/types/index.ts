@@ -728,7 +728,18 @@ export interface EmailNotification {
   appointmentId: string | null;
   status: "queued" | "sent" | "failed";
   createdAt: ISODateTime;
+  /** Sólo en la bandeja del super admin (/admin → Actividad): el negocio (null en los de cuenta o de plataforma). */
+  businessName?: string | null;
+  /** Sólo en la del super admin: cuándo salió (null si no salió). */
+  sentAt?: ISODateTime | null;
+  /** Sólo en la del super admin: el motivo, si falló. */
+  error?: string | null;
+  /** Sólo en la del super admin: falló a propósito (un recordatorio de una cita que cambió, una dirección de demostración). */
+  discarded?: boolean;
 }
+
+/** El filtro de los emails de /admin → Actividad: los de «Emails de hoy», los fallidos de verdad o todos. */
+export type AdminEmailFilter = "today" | "failed" | "all";
 
 export type AuditEntityType =
   | "appointment"
@@ -1614,6 +1625,73 @@ export interface AdminBusinessAnalytics {
   periodDays: AnalyticsPeriodDays;
   business: BusinessAnalytics;
   category: CategoryAnalytics | null;
+}
+
+/*
+ * El calendario de la plataforma (spec 035): sólo cifras. Nunca lleva al paciente, el servicio, las notas,
+ * el identificador de una cita ni su hora exacta; las citas de un negocio se ven en modo soporte.
+ */
+
+/** Un día del calendario del super admin. */
+export interface AdminCalendarDayTotals {
+  date: ISODate;
+  /** Citas sin las canceladas. */
+  appointments: number;
+  cancelled: number;
+  /** De días pasados que siguen Pendientes o Confirmadas. */
+  unclosed: number;
+  /** Negocios con alguna cita sin cancelar. */
+  businesses: number;
+}
+
+/** Las citas sin cancelar que empiezan en una hora (de 0 a 23, en la hora de cada negocio). */
+export interface AdminCalendarHourTotals {
+  date: ISODate;
+  hour: number;
+  appointments: number;
+}
+
+/** GET /api/admin/calendar: los días con citas del rango y sus horas (los vacíos no vienen). */
+export interface AdminCalendar {
+  from: ISODate;
+  /** Incluido. */
+  to: ISODate;
+  days: AdminCalendarDayTotals[];
+  hours: AdminCalendarHourTotals[];
+}
+
+/** Las citas de un negocio por estado, con las columnas del tablero (spec 034). */
+export interface AdminCalendarStatusCounts {
+  pending: number;
+  confirmed: number;
+  /** Atendidas sin pagar. */
+  completed: number;
+  /** Atendidas y pagadas. */
+  paid: number;
+  noShow: number;
+  cancelled: number;
+}
+
+/** Un negocio en el panel de un día o de una hora. */
+export interface AdminCalendarBusiness {
+  id: string;
+  name: string;
+  categoryName: string;
+  /** Citas sin las canceladas. */
+  appointments: number;
+  counts: AdminCalendarStatusCounts;
+  /** Sin cancelar, llegadas por la página de reservas. */
+  online: number;
+  unclosed: number;
+  /** Cada agenda con sus citas sin cancelar, de más a menos. */
+  professionals: { id: string; name: string; appointments: number }[];
+}
+
+/** GET /api/admin/calendar/day: los negocios con citas ese día (o a esa hora), de más a menos citas. */
+export interface AdminCalendarDay {
+  date: ISODate;
+  hour: number | null;
+  businesses: AdminCalendarBusiness[];
 }
 
 /** Un super admin del equipo de la plataforma (Configuración del panel /admin). */
