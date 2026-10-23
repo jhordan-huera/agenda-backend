@@ -58,7 +58,7 @@ El /admin tiene la página **Calendario**, después de «Analítica»:
 | Repo | Commit | Mensaje |
 |---|---|---|
 | agenda-front | 744416d | Spec 035: el calendario de la plataforma en /admin, sólo con cifras (mes, semana por horas y el panel de cada día u hora por negocio, estado y agenda; sin pacientes ni servicios); constitución 1.29.0 |
-| agenda-backend | COMMIT_BACKEND | Spec 035: el calendario de la plataforma, sólo con cifras (endpoints, prueba y documentos); constitución 1.29.0 |
+| agenda-backend | 551b72e | Spec 035: el calendario de la plataforma, sólo con cifras (endpoints, prueba y documentos); constitución 1.29.0 |
 
 ## Cómo publicarlo
 
