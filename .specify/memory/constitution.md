@@ -32,6 +32,9 @@ Agenda360 guarda datos de salud (historia clínica, citas, contacto de pacientes
 - Las páginas públicas (reservas, pago y «Tu cita») no exponen datos internos del negocio ni de otros pacientes.
 - La historia clínica sólo la ven el propietario y los miembros que él autoriza; ni el soporte de la
   plataforma (spec 025, 2026-10-19).
+- El super admin no tiene un calendario con las citas de los negocios: el de /admin sólo lleva cifras
+  por día, hora, negocio, agenda y estado, nunca el paciente, el servicio, las notas ni la cita suelta
+  (spec 035, 2026-10-22). Las citas de un negocio se ven en modo soporte, para darle asistencia.
 - Nunca se copian datos de producción a local ni a pruebas, ni siquiera anonimizados.
 - La base de producción sólo se consulta en lectura desde el equipo; las migraciones las aplica el
   dueño del producto.
@@ -306,4 +309,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.28.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-22
+**Versión**: 1.29.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-22

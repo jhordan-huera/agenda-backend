@@ -62,7 +62,7 @@ El dueño del producto lo aprobó con las capturas el 2026-10-22.
 | Repo | Commit | Mensaje |
 |---|---|---|
 | agenda-front | 8be9054 | Spec 034: el tablero de las citas en la Agenda (Por confirmar, Confirmadas, Atendidas, Pagadas y la columna plegada), con arrastre, «Mover a…» y confirmación |
-| agenda-backend | (este) | Spec 034: tareas y reporte |
+| agenda-backend | 2f587c5 | Spec 034: tareas y reporte del tablero de las citas |
 
 La beta no tiene git. Su respaldo previo está en
 `~/Documentos/Proyectos/Betas/agenda-beta-respaldo-antes-de-tablero-034-2026-10-22.tar.gz`.

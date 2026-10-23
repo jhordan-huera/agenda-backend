@@ -3,6 +3,7 @@ import { config } from "../config.ts";
 import { requireCaptcha } from "../http/captcha.ts";
 import { handle, limitRequests } from "../http/handlers.ts";
 import { requireSuperAdminTwoFactor } from "../http/session.ts";
+import { adminCalendarService } from "../services/admin-calendar-service.ts";
 import { adminService, platformService } from "../services/admin-service.ts";
 import { analyticsService } from "../services/analytics-service.ts";
 import { adminBillingService } from "../services/billing-service.ts";
@@ -179,6 +180,16 @@ adminRoutes.get(
 adminRoutes.get(
   "/analytics",
   handle((req) => analyticsService.getSnapshot(req.ctx, req.query)),
+);
+// El calendario de la plataforma (spec 035): sólo cifras por día, hora, negocio, agenda y estado; nunca
+// pacientes ni citas sueltas. Se calcula al abrirlo, con un rango de 42 días como mucho.
+adminRoutes.get(
+  "/calendar",
+  handle((req) => adminCalendarService.getRange(req.ctx, req.query)),
+);
+adminRoutes.get(
+  "/calendar/day",
+  handle((req) => adminCalendarService.getDay(req.ctx, req.query)),
 );
 // La pantalla «Base de datos» (spec 024): sólo el super admin principal (los demás, 403 en el servicio),
 // con su propio límite y sin caché. Se calcula al abrirla, en una transacción de sólo lectura.
