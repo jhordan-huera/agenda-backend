@@ -59,7 +59,7 @@
 | Repo | Commit | Mensaje |
 |---|---|---|
 | agenda-front | 3bdeeaa | Spec 036: el menú del super admin en grupos (Principal, Negocios, Sistema) y el menú de los dos paneles que se encoge a iconos, con el nombre al pasar el ratón y recordado en el equipo |
-| agenda-backend | COMMIT_BACKEND | Spec 036: documentos y reporte del menú con grupos |
+| agenda-backend | 64c9df1 | Spec 036: documentos y reporte del menú con grupos |
 
 La beta no tiene git. Su respaldo previo está en
 `~/Documentos/Proyectos/Betas/agenda-beta-respaldo-antes-de-menu-036-2026-10-22.tar.gz`.
