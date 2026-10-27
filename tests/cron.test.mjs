@@ -152,6 +152,29 @@ await runScript();
 const kept = sql("select string_agg(report->>'prueba', ',' order by ran_at) from cron_runs where report ? 'prueba'");
 ok(kept === "12:01", "se borran las pasadas de antes del lunes a las 12:00 (la de las 11:59) y queda la de las 12:01", kept);
 ok(Number(sql(`select count(*) from cron_runs where ran_at < ${cutoff}`)) === 0 && lastRun().report.sentSinceLastRun === 0, "nada de antes del lunes al mediodía; la última pasada sigue ahí", lastRun().report);
+// Y devuelve el espacio (2026-10-27): antes guardaba la pasada nueva y después borraba, y la tabla seguía
+// ocupando lo de toda la semana. Una semana de pasadas, todas de antes del lunes a las 12:00, de ~1,3 KB.
+sql("delete from cron_runs");
+sql(`insert into cron_runs (ran_at, report)
+     select ${cutoff} - make_interval(mins => i),
+            jsonb_build_object('prueba', 'semana', 'relleno', (select string_agg(md5(i::text || '-' || j::text), '') from generate_series(1, 40) j))
+       from generate_series(1, 1500) i`);
+const heapBefore = Number(sql("select pg_relation_size('cron_runs')"));
+await runScript();
+const heapAfter = Number(sql("select pg_relation_size('cron_runs')"));
+ok(
+  heapBefore > 1_000_000 && heapAfter <= 16_384,
+  `la tabla devuelve el espacio: de ${Math.round(heapBefore / 1024)} KB a ${Math.round(heapAfter / 1024)} KB`,
+  { heapBefore, heapAfter },
+);
+const cronLog = lastRun().report.cronLog;
+ok(
+  Number(sql("select count(*) from cron_runs")) === 1 && cronLog?.deleted === 1500 && cronLog?.vacuumed === true,
+  "queda sólo la pasada nueva, que anota las 1.500 borradas y el VACUUM",
+  cronLog,
+);
+await runScript();
+ok(lastRun().report.cronLog === undefined, "la pasada siguiente no borra nada ni vuelve a hacer VACUUM", lastRun().report.cronLog);
 
 console.log("Alerta de intentos fallidos");
 received.length = 0;
