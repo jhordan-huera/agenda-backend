@@ -39,7 +39,14 @@ const ROOT = new URL("..", import.meta.url).pathname;
 
 try {
   console.log("Copia comprobada");
+  // El registro de copias guarda 365 días: al anotar una copia se borran las de antes.
+  await db.query(
+    `insert into backup_runs (ok, size_bytes, error, ran_at)
+     values (true, 1, 'prueba-366', now() - interval '366 days'), (true, 1, 'prueba-364', now() - interval '364 days')`,
+  );
   let r = backup({ RESTORE_CHECK_URL: checkUrl });
+  const keptRuns = (await db.query("select string_agg(error, ',' order by error) as tags from backup_runs where error like 'prueba-%'")).rows[0].tags;
+  ok(keptRuns === "prueba-364", "al anotar la copia se borran las de más de 365 días (y queda la de 364)", keptRuns);
   const firstRun = r.stdout;
   ok(r.status === 0 && /restauración comprobada/.test(r.stdout), "hace la copia y la restaura en una base vacía de prueba", r.stdout + r.stderr);
   const lastRun = async () =>

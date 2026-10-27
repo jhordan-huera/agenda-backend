@@ -145,6 +145,42 @@ ok(
   "y un comprobante sin terminar de subir, igual",
 );
 ok(existsSync(file), "el archivo ya subido sigue");
+// Los comprobantes de las mensualidades (spec 029) a medio subir: igual, pasado un día.
+const { deleteStalePendingBillingReceipts } = await import("../src/services/billing-service.ts");
+const charge = sql(`insert into billing_charges (business_id, due_date, base_amount, amount) values ('${id}', current_date, 14.99, 14.99) returning id`).split("\n")[0];
+const billingPath = (name) => `mensualidades/${id}/${name}.jpg`;
+for (const [name, age] of [["vieja", "2 days"], ["reciente", "1 hour"]]) {
+  sql(
+    `insert into billing_receipts (charge_id, file_name, content_type, size_bytes, storage_path, created_at)
+     values ('${charge}', 'transferencia.jpg', 'image/jpeg', 10, '${billingPath(name)}', now() - interval '${age}')`,
+  );
+}
+const billingOld = putFile("comprobantes", billingPath("vieja"));
+const billingRecent = putFile("comprobantes", billingPath("reciente"));
+await deleteStalePendingBillingReceipts();
+ok(
+  !existsSync(billingOld) && count(`select count(*) from billing_receipts where storage_path = '${billingPath("vieja")}'`) === 0,
+  "un comprobante de mensualidad sin terminar de subir hace más de un día se borra, con su archivo",
+);
+ok(
+  existsSync(billingRecent) && count(`select count(*) from billing_receipts where storage_path = '${billingPath("reciente")}'`) === 1,
+  "el que se está subiendo ahora (hace una hora) se queda",
+);
+
+console.log("Sesiones y pasos de verificación caducados (los borra el cron)");
+const { deleteExpiredSessions } = await import("../src/services/auth-service.ts");
+for (const [table, token, expires] of [
+  ["sessions", "prueba-sesion-caducada", "now() - interval '1 minute'"],
+  ["sessions", "prueba-sesion-vigente", "now() + interval '1 day'"],
+  ["login_challenges", "prueba-paso-caducado", "now() - interval '1 minute'"],
+  ["login_challenges", "prueba-paso-vigente", "now() + interval '5 minutes'"],
+]) {
+  sql(`insert into ${table} (user_id, token_hash, expires_at) select id, '${token}', ${expires} from users where email = 'ricardo@demo.com'`);
+}
+await deleteExpiredSessions();
+const tokens = (table) => sql(`select string_agg(token_hash, ',' order by token_hash) from ${table} where token_hash like 'prueba-%'`);
+ok(tokens("sessions") === "prueba-sesion-vigente", "las sesiones caducadas se borran y las vigentes se quedan", tokens("sessions"));
+ok(tokens("login_challenges") === "prueba-paso-vigente", "los pasos de la verificación en dos pasos caducados, igual", tokens("login_challenges"));
 
 console.log("Quién puede y cómo se confirma");
 r = await ricardo("DELETE", `/admin/businesses/${id}`, { confirmName: name });

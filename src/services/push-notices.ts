@@ -756,6 +756,8 @@ export interface PushReport extends PushQueueReport {
    * (el registro del cron, que es público, sólo lleva las cifras).
    */
   reminders?: RemindersSent[];
+  /** La limpieza de esta pasada: avisos de más de 7 días y aparatos en pausa hace más de 90 (cleanupPush). */
+  purged?: { messages: number; devices: number };
 }
 
 /** Tiempo del cron para enviar avisos (el job de GitHub tiene 10 minutos). */
@@ -802,8 +804,10 @@ export async function runPushJobs(input: {
   }
   const sent = await processPushQueue({ deadline: Date.now() + CRON_PUSH_BUDGET_MS });
   Object.assign(report, { ...sent, queued: report.queued, panel: tally.panel, morning: reminders.morningNotices, reminders: remindersSent });
-  await cleanupPush().catch((error: unknown) =>
-    console.error(`[avisos] No se pudo limpiar la cola (${(error as { code?: string })?.code ?? "error"}).`),
-  );
+  const purged = await cleanupPush().catch((error: unknown) => {
+    console.error(`[avisos] No se pudo limpiar la cola (${(error as { code?: string })?.code ?? "error"}).`);
+    return null;
+  });
+  if (purged) report.purged = purged;
   return report;
 }
