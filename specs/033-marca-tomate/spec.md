@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/033-marca-tomate` (rama de trabajo: `dev`) · **Creada**: 2026-10-22
 
-**Estado**: Implementada (2026-10-22)
+**Estado**: Publicada (2026-10-22, PR backend #54 y front #40)
 
 **Repos**:
 - **agenda-front:** los colores de la marca, el icono, la portada, el acceso y los emails.

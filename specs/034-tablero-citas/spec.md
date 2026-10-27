@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/034-tablero-citas` (rama de trabajo: `dev`) · **Creada**: 2026-10-22
 
-**Estado**: Implementada (2026-10-22)
+**Estado**: Publicada (2026-10-22, PR backend #54 y front #40)
 
 **Repos**:
 - **agenda-front:** la vista «Tablero» de la Agenda.

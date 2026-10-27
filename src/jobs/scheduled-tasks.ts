@@ -229,6 +229,11 @@ export interface ScheduledTasksReport {
   unusedImagesDeleted: number | null;
   /** Cuentas caducadas de los límites de intentos, borradas. */
   rateLimitsPurged: number;
+  /**
+   * El registro del cron de cada lunes: las pasadas borradas y si se devolvió su espacio (VACUUM). Sólo en la
+   * primera pasada desde el lunes a las 12:00, la que borra.
+   */
+  cronLog?: { deleted: number; vacuumed: boolean };
   durationMs: number;
 }
 
@@ -393,6 +398,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     console.error(`[base de datos] No se pudo guardar la foto de hoy (${(error as { code?: string })?.code ?? "error"}).`);
     return { status: "failed", sizeBytes: null, purged: 0 };
   });
+  const cronLog = await clearCronLog(totals?.at ?? null);
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
     reminderFailures: reminders.failures + calendarInvites.failures + billing.failures,
@@ -439,20 +445,40 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     receiptsPurged,
     unusedImagesDeleted,
     rateLimitsPurged,
+    ...(cronLog && { cronLog }),
     durationMs: Date.now() - started,
   };
   await pool.query("insert into cron_runs (ran_at, report) values (coalesce($1::timestamptz, now()), $2)", [
     totals?.at ?? null,
     report,
   ]);
-  // El registro del cron se borra cada lunes al mediodía (hora de Ecuador): la primera pasada desde
-  // las 12:00 borra todas las de antes (decisión del dueño del producto, 2026-10-19). Sólo se lee la
-  // última. Restar 12 horas antes de truncar a la semana da el último lunes a las 12:00.
-  await pool.query(
+  return report;
+}
+
+/**
+ * El registro del cron se borra cada lunes al mediodía (hora de Ecuador): la primera pasada desde las
+ * 12:00 borra todas las de antes (decisión del dueño del producto, 2026-10-19). Sólo se lee la última.
+ * Restar 12 horas antes de truncar a la semana da el último lunes a las 12:00.
+ *
+ * Va ANTES de guardar la pasada nueva, y si borró algo, VACUUM devuelve el espacio. Con la pasada nueva
+ * ya guardada, quedaba al final del archivo y PostgreSQL no podía recortarlo: la tabla seguía ocupando lo
+ * de toda la semana anterior (2,2 MB el 2026-10-27). Si VACUUM falla, el cron sigue: el espacio se reutiliza.
+ */
+async function clearCronLog(at: string | null): Promise<{ deleted: number; vacuumed: boolean } | null> {
+  const result = await pool.query(
     `delete from cron_runs
       where ran_at < ((date_trunc('week', (coalesce($1::timestamptz, now()) at time zone $2) - interval '12 hours')
                        + interval '12 hours') at time zone $2)`,
-    [totals?.at ?? null, DEFAULT_TIMEZONE],
+    [at, DEFAULT_TIMEZONE],
   );
-  return report;
+  const deleted = result.rowCount ?? 0;
+  if (deleted === 0) return null;
+  const vacuumed = await pool.query("vacuum cron_runs").then(
+    () => true,
+    (error: unknown) => {
+      console.error("[cron] No se pudo devolver el espacio del registro del cron:", error instanceof Error ? error.message : error);
+      return false;
+    },
+  );
+  return { deleted, vacuumed };
 }

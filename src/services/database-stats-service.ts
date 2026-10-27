@@ -180,6 +180,7 @@ const QUERY_LABELS: { pattern: RegExp; label: string; cron?: true; onlySupabase?
   { pattern: /^select ran_at as "ranat" from cron_runs order by ran_at desc/, label: "El cron revisa su última pasada", cron: true },
   { pattern: /^insert into cron_runs\b/, label: "El cron guarda su resumen", cron: true },
   { pattern: /^delete from cron_runs\b/, label: "El cron borra sus pasadas de la semana anterior", cron: true },
+  { pattern: /^vacuum cron_runs\b/, label: "El cron devuelve el espacio de las pasadas que borró", cron: true },
   { pattern: /\bpurge_audit_logs\(\)/, label: "El cron borra la actividad vieja", cron: true },
   { pattern: /^update notifications set body = /, label: "El cron borra el contenido de los emails viejos", cron: true },
   { pattern: /^delete from sessions where expires_at\b/, label: "El cron borra las sesiones caducadas", cron: true },
