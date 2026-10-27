@@ -122,6 +122,11 @@ ok(
   run.output.slice(-300),
 );
 ok(
+  typeof first.report.push?.purged?.messages === "number" && typeof first.report.push?.purged?.devices === "number",
+  "el registro anota lo que borró la limpieza de los avisos en la app",
+  first.report.push,
+);
+ok(
   / · avisos del panel: \d+ \(borrados, más de 30 días: \d+\) · avisos en la app: /.test(run.output) &&
     first.report.panelNotices?.created === Number(sql("select count(*) from panel_notices")) &&
     first.report.panelNotices?.purged >= 1 &&

@@ -727,6 +727,24 @@ ok(
   "un aviso de más de 24 h queda «Caducó» y no se envía",
   report,
 );
+// La limpieza del cron (cleanupPush): los avisos de más de 7 días y los aparatos en pausa hace más de 90.
+sql(`update push_messages set created_at = now() - interval '8 days' where tag = 'caducada'`);
+const recentMessages = count("select count(*) from push_messages where created_at >= now() - interval '7 days'");
+const pausedOld = push.device();
+const pausedRecent = push.device();
+await activate(jhordan, pausedOld);
+await activate(jhordan, pausedRecent);
+sql(`update push_subscriptions set signed_out_at = now() - interval '91 days' where endpoint = '${pausedOld.endpoint}'`);
+sql(`update push_subscriptions set signed_out_at = now() - interval '89 days' where endpoint = '${pausedRecent.endpoint}'`);
+const cleaned = await delivery.cleanupPush();
+ok(
+  count("select count(*) from push_messages where tag = 'caducada'") === 0 &&
+    count("select count(*) from push_messages where created_at >= now() - interval '7 days'") === recentMessages &&
+    cleaned.messages >= 1,
+  "la limpieza borra los avisos de más de 7 días y deja los recientes",
+  cleaned,
+);
+ok(!deviceExists(pausedOld) && deviceExists(pausedRecent) && cleaned.devices === 1, "y los aparatos en pausa hace más de 90 días (el de 89 se queda)", cleaned);
 
 /* ======================================================================================== */
 console.log("Nunca rompe la reserva (RF-011)");
