@@ -6,9 +6,11 @@ import type {
   ClinicalFieldValue,
   ClinicalListRow,
   ClinicalNoteData,
+  ISODate,
   OdontogramValue,
   ToothState,
 } from "../../types/index.ts";
+import { addDaysISO } from "../time.ts";
 import { optionalDigitsField, optionalText, requiredText, stripControlChars } from "./fields.ts";
 
 const optionalDate = z.string().refine((value) => value === "" || /^\d{4}-\d{2}-\d{2}$/.test(value), "Fecha inválida");
@@ -32,15 +34,33 @@ export const clinicalProfileSchema = z.object({
   consentSigned: z.boolean().default(false),
 });
 
+/** Una evolución puede llevar la fecha de una consulta de hasta 30 días antes de registrarse (spec 037). */
+export const CLINICAL_NOTE_DATE_WINDOW_DAYS = 30;
+
+/** Las fechas que admite una evolución registrada el día `registered`: de 30 días antes hasta ese día. */
+export function clinicalNoteDateRange(registered: ISODate): { min: ISODate; max: ISODate } {
+  return { min: addDaysISO(registered, -CLINICAL_NOTE_DATE_WINDOW_DAYS), max: registered };
+}
+
+// Una fecha que existe en el calendario (AAAA-MM-DD): el 30 de febrero, no.
+const noteDate = z
+  .string({ error: "Elige la fecha de la consulta" })
+  .refine((value) => /^\d{4}-\d{2}-\d{2}$/.test(value) && addDaysISO(value, 0) === value, "Elige la fecha de la consulta");
+
 /**
- * Evolución. Su fecha la pone la API (hoy, en la zona horaria del negocio): no se puede elegir.
- * El contenido (`data`) depende de la plantilla: se valida con `clinicalNoteDataSchema`.
+ * Evolución. La fecha de la consulta la elige quien la registra (si no viene, hoy en la zona del
+ * negocio); la API comprueba que esté en `clinicalNoteDateRange` de hoy. El contenido (`data`)
+ * depende de la plantilla: se valida con `clinicalNoteDataSchema`.
  */
 export const clinicalNoteSchema = z.object({
   appointmentId: z.string().nullable(),
+  date: noteDate.optional(),
   templateVersionId: z.string({ error: "Elige el formato de la evolución" }).min(1, "Elige el formato de la evolución"),
   data: z.record(z.string(), z.unknown(), { error: "Contenido de la evolución inválido" }),
 });
+
+/** Corregir la fecha de una evolución ya guardada: dentro de `clinicalNoteDateRange` de su día de registro. */
+export const clinicalNoteDateSchema = z.object({ date: noteDate });
 
 /* ---------------------------------------------- Contenido según la plantilla ---- */
 
@@ -372,6 +392,7 @@ export const clinicalAddendumSchema = z.object({
 export type ClinicalProfileInput = z.infer<typeof clinicalProfileSchema>;
 export type ClinicalNoteInput = z.infer<typeof clinicalNoteSchema>;
 export type ClinicalAddendumInput = z.infer<typeof clinicalAddendumSchema>;
+export type ClinicalNoteDateInput = z.infer<typeof clinicalNoteDateSchema>;
 
 /** Formato propio de un negocio (planes de pago): nombre, descripción y campos. */
 export const clinicalTemplateInputSchema = z.object({

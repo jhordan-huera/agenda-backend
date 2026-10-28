@@ -89,7 +89,10 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   (2026-10-14).
 - Las sesiones con «Recordarme» duran como mucho 30 días desde que se inician, y 7 las del super
   admin (2026-10-14).
-- Las fechas de consentimiento y de las evoluciones clínicas las pone el sistema.
+- La fecha del consentimiento la pone el sistema. La de cada evolución la elige quien la registra (hoy
+  por defecto) y se puede corregir después, siempre entre los 30 días anteriores a su registro y ese
+  mismo día, nunca futura; cada cambio queda en la actividad. El contenido y la fecha de registro no se
+  modifican (2026-10-28).
 - Cada email al paciente sobre su cita, también los recordatorios, sale con copia al profesional
   (los recordatorios, desde el 2026-10-13). La copia puede esperar en la cola si un día no hay cupo de
   Gmail, pero nunca se descarta (2026-10-15).
@@ -309,4 +312,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.29.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-22
+**Versión**: 1.30.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-28

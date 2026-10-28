@@ -3,10 +3,14 @@ import { isUuid, many, one, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { CLINICAL_SUPPORT_BLOCKED_MESSAGE } from "../shared/lib/constants/business.ts";
+import { formatNumericDate } from "../shared/lib/format.ts";
 import { getZonedNow } from "../shared/lib/time.ts";
 import {
+  CLINICAL_NOTE_DATE_WINDOW_DAYS,
   clinicalAddendumSchema,
   clinicalNoteDataSchema,
+  clinicalNoteDateRange,
+  clinicalNoteDateSchema,
   clinicalNoteSchema,
   clinicalProfileSchema,
 } from "../shared/lib/validations/clinical.ts";
@@ -30,7 +34,8 @@ import { authorize, parseInput, type Actor, type RequestContext } from "./contex
  * Historia clínica (datos de salud: datos sensibles).
  * - Sólo el propietario y los miembros que él autoriza. Ni el super admin en modo soporte
  *   ("Gestionar negocio"): no la ve ni la cambia (spec 025). Los formatos sí los gestiona.
- * - No hay borrado ni edición de evoluciones: se añaden aclaraciones con autor y fecha.
+ * - No hay borrado ni edición de evoluciones: se añaden aclaraciones con autor y fecha. Sólo la
+ *   fecha de la consulta se puede corregir, dentro de los 30 días anteriores a su registro (spec 037).
  * - Cada acceso queda en la auditoría.
  */
 
@@ -74,10 +79,42 @@ async function assertClinicalAccess(db: Db, businessId: string, actor: Actor): P
   return actor;
 }
 
-/** "Hoy" en la zona horaria del negocio: fecha de las evoluciones y del consentimiento. */
+/** "Hoy" en la zona horaria del negocio: la fecha del consentimiento. */
 async function businessToday(db: Db, businessId: string): Promise<string> {
   const business = await one<{ timezone: string }>(db, "select timezone from businesses where id = $1", [businessId]);
   return getZonedNow(business?.timezone ?? DEFAULT_TIMEZONE).date;
+}
+
+/**
+ * El día de registro de una evolución que se guarda en esta transacción: el de `now()` en la zona
+ * del negocio, el mismo que comprueba la base (migración 053).
+ */
+async function registrationDay(db: Db, businessId: string): Promise<string> {
+  const row = await one<{ day: string }>(
+    db,
+    "select to_char(now() at time zone timezone, 'YYYY-MM-DD') as day from businesses where id = $1",
+    [businessId],
+  );
+  return row!.day;
+}
+
+/** La fecha de la consulta está entre los 30 días anteriores al día de registro y ese día. */
+function assertNoteDate(date: string, registered: string, saved: boolean) {
+  const { min, max } = clinicalNoteDateRange(registered);
+  if (date > max) {
+    throw new AppError(
+      "validation",
+      saved ? `La fecha no puede ser posterior al día en que se registró (${formatNumericDate(max)}).` : "La fecha de la consulta no puede ser futura.",
+    );
+  }
+  if (date < min) {
+    throw new AppError(
+      "validation",
+      saved
+        ? `La fecha puede ser de hasta ${CLINICAL_NOTE_DATE_WINDOW_DAYS} días antes de su registro: desde el ${formatNumericDate(min)}.`
+        : `La fecha de la consulta puede ser de hasta ${CLINICAL_NOTE_DATE_WINDOW_DAYS} días atrás: desde el ${formatNumericDate(min)}.`,
+    );
+  }
 }
 
 /**
@@ -304,6 +341,9 @@ export const clinicalService = {
         throw new AppError("conflict", "El formato de evolución cambió mientras escribías. Recarga la página para usar la versión nueva.");
       }
       const content = parseInput(clinicalNoteDataSchema(template.fields), data.data);
+      const today = await registrationDay(db, businessId);
+      const date = data.date ?? today;
+      assertNoteDate(date, today, false);
       if (data.appointmentId) {
         const appointment = isUuid(data.appointmentId)
           ? await one<{ clientIds: string[] }>(
@@ -327,8 +367,7 @@ export const clinicalService = {
           businessId,
           clientId,
           data.appointmentId,
-          // La evolución lleva siempre la fecha de hoy: no se puede fechar con retraso.
-          await businessToday(db, businessId),
+          date,
           data.templateVersionId,
           content,
           actor.userId,
@@ -375,6 +414,45 @@ export const clinicalService = {
         entityId: note.clientId,
         summary: `Añadió una aclaración a una evolución de ${note.clientName}`,
       });
+      return (await loadNotes(db, "id = $1", [noteId]))[0];
+    });
+  },
+
+  /**
+   * Corrige la fecha de la consulta (spec 037): quien puede añadir aclaraciones, dentro de los 30 días
+   * anteriores al día en que se registró. El contenido y la fecha de registro no cambian.
+   */
+  async changeNoteDate(ctx: RequestContext, businessId: string, noteId: string, input: unknown): Promise<ClinicalNote> {
+    const { date } = parseInput(clinicalNoteDateSchema, input);
+    return transaction(async (db) => {
+      const actor = await authorizeClinical(db, ctx, businessId, true);
+      const note = isUuid(noteId)
+        ? await one<{ clientId: string; clientName: string; date: string; registered: string }>(
+            db,
+            `select n.client_id as "clientId", c.name as "clientName", n.date,
+                    to_char(n.created_at at time zone b.timezone, 'YYYY-MM-DD') as registered
+               from clinical_notes n
+               join clients c on c.id = n.client_id
+               join businesses b on b.id = n.business_id
+              where n.id = $1 and n.business_id = $2
+                for update of n`,
+            [noteId, businessId],
+          )
+        : null;
+      if (!note) throw new AppError("not_found", "Evolución no encontrada.");
+      await findPatient(db, businessId, note.clientId, actor);
+      assertNoteDate(date, note.registered, true);
+      if (date !== note.date) {
+        await db.query("update clinical_notes set date = $2 where id = $1", [noteId, date]);
+        await logAudit(db, {
+          businessId,
+          actor,
+          action: "clinical_record.note_date_changed",
+          entityType: "clinical_record",
+          entityId: note.clientId,
+          summary: `Cambió la fecha de una evolución de ${note.clientName}: del ${formatNumericDate(note.date)} al ${formatNumericDate(date)}`,
+        });
+      }
       return (await loadNotes(db, "id = $1", [noteId]))[0];
     });
   },

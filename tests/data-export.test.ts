@@ -125,7 +125,7 @@ sql(`insert into clinical_profiles (business_id, client_id, allergies, updated_b
       where business_id = '${businessId}' and name like 'Paciente Volumen %' and name <= 'Paciente Volumen 060'`);
 const heavy = sql(`select id from clients where business_id = '${businessId}' and name = 'Paciente Volumen 030'`);
 sql(`insert into clinical_notes (business_id, client_id, date, template_version_id, data, author_id, author_name)
-     select '${businessId}', '${heavy}', current_date, '${general.versionId}', '{"reason":"Control"}'::jsonb, '${ricardoId}', 'Ricardo Paredes'
+     select '${businessId}', '${heavy}', (now() at time zone (select timezone from businesses where id = '${businessId}'))::date, '${general.versionId}', '{"reason":"Control"}'::jsonb, '${ricardoId}', 'Ricardo Paredes'
        from generate_series(1, 1001)`);
 const bulkPatient = sql(`select id from clients where business_id = '${businessId}' and name = 'Paciente Volumen 500'`);
 sql(`insert into appointments (business_id, client_id, service_id, professional_id, date, start_time, end_time, status, price)

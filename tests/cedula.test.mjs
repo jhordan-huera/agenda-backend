@@ -175,10 +175,13 @@ ok(r.body?.consentDate === today && r.body.allergies === "Látex", "después no 
 let error = sqlError(`update clinical_profiles set consent_date = '2020-01-01' where client_id = '${patient.id}'`);
 ok(error && /consentimiento informado no se puede modificar/.test(error), "ni siquiera con SQL directo", error);
 const general = (await ricardo("GET", `${RB}/clinical-templates`)).body.find((t) => t.id === "evolucion-general");
+// La de la evolución se elige desde la spec 037 (tests/clinical-note-date.test.ts): hasta 30 días atrás.
 r = await ricardo("POST", `${RB}/clients/${patient.id}/clinical-record/notes`, { appointmentId: null, date: "2020-01-01", templateVersionId: general.versionId, data: { reason: "Control" } });
-ok(r.status === 200 && r.body.date === today, "la evolución lleva la fecha de hoy aunque se envíe otra", r.body);
+ok(r.status === 400 && /30 días atrás/.test(r.body.error.message), "la evolución no se puede fechar años atrás", r.body);
+r = await ricardo("POST", `${RB}/clients/${patient.id}/clinical-record/notes`, { appointmentId: null, templateVersionId: general.versionId, data: { reason: "Control" } });
+ok(r.status === 200 && r.body.date === today, "sin fecha, lleva la de hoy", r.body);
 error = sqlError(`update clinical_notes set date = '2020-01-01' where id = '${r.body.id}'`);
-ok(error && /no se pueden modificar/.test(error), "la evolución no se puede cambiar con SQL directo", error);
+ok(error && /30 días anteriores a su registro/.test(error), "ni con SQL directo", error);
 error = sqlError(`update clinical_notes set data = '{"reason": "Otro"}' where id = '${r.body.id}'`);
 ok(error && /no se pueden modificar/.test(error), "ni su contenido", error);
 

@@ -1632,6 +1632,12 @@ export interface AdminBusinessAnalytics {
  * el identificador de una cita ni su hora exacta; las citas de un negocio se ven en modo soporte.
  */
 
+/** Los filtros del calendario: un tipo de negocio (el id de su categoría) o un negocio. */
+export interface AdminCalendarFilters {
+  category?: string;
+  businessId?: string;
+}
+
 /** Un día del calendario del super admin. */
 export interface AdminCalendarDayTotals {
   date: ISODate;
