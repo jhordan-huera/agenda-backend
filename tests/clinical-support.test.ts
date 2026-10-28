@@ -1,5 +1,5 @@
 // Historia clínica privada (spec 025): el super admin en modo soporte no la ve ni la cambia. Cada camino
-// (la historia, los antecedentes, las evoluciones y sus aclaraciones, los archivos y el acceso clínico
+// (la historia, los antecedentes, las evoluciones con sus aclaraciones y su fecha, los archivos y el acceso clínico
 // del equipo) da 403 sin cambiar nada ni dejar rastro en la actividad; la actividad que ve no trae los
 // eventos clínicos; sigue gestionando los formatos, activando la historia y los pacientes; y el
 // propietario y un miembro autorizado siguen igual. Repaso del resto de caminos del super admin
@@ -59,6 +59,7 @@ ok(sql(`select status from clinical_attachments where id = '${pendingId}'`) === 
 const snapshot = () => ({
   notes: count(`select count(*) from clinical_notes where business_id = '${businessId}'`),
   addenda: count(`select count(*) from clinical_note_addenda where business_id = '${businessId}'`),
+  noteDates: sql(`select md5(string_agg(date::text, ',' order by id)) from clinical_notes where business_id = '${businessId}'`),
   attachments: sql(`select count(*) || '/' || count(*) filter (where status = 'ready') from clinical_attachments where business_id = '${businessId}'`),
   profile: sql(`select md5(p::text) from clinical_profiles p where client_id = '${patient!.id}'`),
   auditLogs: count(`select count(*) from audit_logs where business_id = '${businessId}'`),
@@ -79,6 +80,8 @@ r = await admin("POST", `${P}/notes`, note("Escrita por el soporte"));
 ok(blocked(r), "registrar una evolución: 403", r.body);
 r = await admin("POST", `${B}/clinical-notes/${noteId}/addenda`, { text: "Aclaración del soporte" });
 ok(blocked(r), "añadir una aclaración: 403", r.body);
+r = await admin("PATCH", `${B}/clinical-notes/${noteId}/date`, { date: sql("select to_char(current_date - 1, 'YYYY-MM-DD')") });
+ok(blocked(r), "cambiar la fecha de una evolución (spec 037): 403", r.body);
 r = await admin("POST", `${P}/attachments`, { fileName: "Del soporte.pdf", contentType: "application/pdf", sizeBytes: pdf.length, description: "" });
 ok(blocked(r) && !r.body.upload, "pedir la subida de un archivo: 403, sin enlace", r.body);
 r = await admin("POST", `${B}/clinical-attachments/${pendingId}/complete`);
@@ -88,7 +91,7 @@ ok(blocked(r) && !r.body.url, "abrir el archivo del propietario: 403, sin enlace
 r = await admin("PATCH", `${B}/team/${elenaId}/clinical-access`, { access: true });
 ok(blocked(r, ONLY_OWNER), "dar el acceso clínico a un miembro: 403 con su propio mensaje", r.body);
 let after = snapshot();
-ok(JSON.stringify(after) === JSON.stringify(before), "nada cambió: evoluciones, aclaraciones, archivos, antecedentes, actividad y el acceso de Elena", { before, after });
+ok(JSON.stringify(after) === JSON.stringify(before), "nada cambió: evoluciones y sus fechas, aclaraciones, archivos, antecedentes, actividad y el acceso de Elena", { before, after });
 ok(sql(`select status from clinical_attachments where id = '${pendingId}'`) === "pending", "el archivo a medio subir sigue pendiente");
 
 r = await ricardo("PATCH", `${B}/team/${elenaId}/clinical-access`, { access: true });

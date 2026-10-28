@@ -343,6 +343,10 @@ businessRoutes.post(
   "/:businessId/clinical-notes/:noteId/addenda",
   handle((req) => clinicalService.addAddendum(req.ctx, req.params.businessId, req.params.noteId, req.body)),
 );
+businessRoutes.patch(
+  "/:businessId/clinical-notes/:noteId/date",
+  handle((req) => clinicalService.changeNoteDate(req.ctx, req.params.businessId, req.params.noteId, req.body)),
+);
 
 // Servicios
 businessRoutes.get(
