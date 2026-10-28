@@ -53,7 +53,7 @@ description: "Tareas de «Elegir y corregir la fecha de una evolución»"
 - [x] T010 [P] La constitución 1.30.0 en `back/` y `front/` (la regla de la fecha, iguales en los dos repos).
 - [x] T011 `back/`: `typecheck` y `npm test`. `front/`: build, lint y `check:contrast`. El recorrido en el computador y a 390 px, con capturas.
 - [x] T012 `beta/`: lo mismo con su repositorio de datos de ejemplo; build y lint.
-- [ ] T013 `reporte.md` y los commits en `dev`.
+- [x] T013 `reporte.md` y los commits en `dev`.
 
 ## Dependencias
 

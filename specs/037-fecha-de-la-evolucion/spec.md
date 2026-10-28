@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/037-fecha-de-la-evolucion` (rama de trabajo: `dev`) · **Creada**: 2026-10-28
 
-**Estado**: Propuesta
+**Estado**: Implementada (2026-10-28)
 
 **Repos**:
 - **agenda-backend:** la fecha al registrar, la ruta para corregirla, la actividad y la migración 053.
