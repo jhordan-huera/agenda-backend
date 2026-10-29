@@ -62,11 +62,23 @@ export const optionalEmailField = z
   .toLowerCase()
   .refine((value) => value === "" || z.email().safeParse(value).success, "Ingresa un email válido");
 
+/**
+ * Lo que el iPhone mete al pegar o autocompletar un teléfono (desde Contactos o WhatsApp): marcas
+ * invisibles de dirección del texto («098 312 5556» entre U+202A y U+202C), guiones y espacios
+ * especiales. Se quitan o se cambian por los normales: así no da «Ingresa un teléfono válido» a un
+ * número correcto (2026-10-29).
+ */
+const cleanPhone = (value: string) =>
+  value
+    .replace(/\p{Cf}/gu, "")
+    .replace(/[‐-―−]/g, "-")
+    .replace(/[   ]/g, " ");
+
 /** Teléfono opcional: vacío o con formato válido (el obligatorio es requiredPhoneField). */
 export const phoneField = z
   .string()
-  .trim()
-  .refine((value) => value === "" || /^[+\d][\d\s()-]{6,19}$/.test(value), "Ingresa un teléfono válido");
+  .transform(cleanPhone)
+  .pipe(z.string().trim().refine((value) => value === "" || /^[+\d][\d\s()-]{6,19}$/.test(value), "Ingresa un teléfono válido"));
 
 export const timeField = z.string().regex(TIME_REGEX, "Hora inválida");
 
@@ -112,9 +124,8 @@ export const optionalDigitsField = z.string().trim().max(20, "Máximo 20 dígito
 /** Teléfono obligatorio (reservas online). */
 export const requiredPhoneField = z
   .string()
-  .trim()
-  .min(1, "El teléfono es obligatorio")
-  .regex(/^[+\d][\d\s()-]{6,19}$/, "Ingresa un teléfono válido");
+  .transform(cleanPhone)
+  .pipe(z.string().trim().min(1, "El teléfono es obligatorio").regex(/^[+\d][\d\s()-]{6,19}$/, "Ingresa un teléfono válido"));
 
 /** Contraseña de una cuenta (bcrypt sólo usa los primeros 72 bytes). */
 export const passwordField = z

@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/038-documento-de-otro-pais` (rama de trabajo: `dev`) · **Creada**: 2026-10-29
 
-**Estado**: Implementada (2026-10-29)
+**Estado**: Publicada (2026-10-29, PR backend #64 y front #45)
 
 **Repos**:
 - **agenda-backend:** la reserva online, la ficha del paciente y la importación aceptan cualquier documento.
