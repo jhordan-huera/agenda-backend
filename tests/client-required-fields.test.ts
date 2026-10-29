@@ -151,8 +151,8 @@ ok(r.status === 200 && r.body.email === "" && r.body.phone === "", "con cédula 
 const ana: Client = r.body;
 r = await ricardo("POST", `${B}/clients`, newClient({ documentId: cedulaFor("email-malo"), address: "Calle 1", email: "no-es-un-email" }));
 ok(r.status === 400 && r.body.error.message === "Ingresa un email válido", "el email opcional, si se escribe, tiene que ser válido", r.body);
-r = await ricardo("POST", `${B}/clients`, newClient({ documentId: ana.documentId.slice(0, 9) + ((Number(ana.documentId[9]) + 1) % 10), address: "Calle 1" }));
-ok(r.status === 400 && /no es válida/.test(r.body.error.message), "la cédula ecuatoriana se sigue comprobando", r.body);
+r = await ricardo("POST", `${B}/clients`, newClient({ documentId: "AB#12345", address: "Calle 1" }));
+ok(r.status === 400 && /letras y números/.test(r.body.error.message), "el documento se sigue comprobando: sólo letras y números (spec 038)", r.body);
 r = await ricardo("POST", `${B}/clients`, newClient({ documentId: ana.documentId, address: "Calle 1" }));
 ok(r.status === 409, "y no puede repetirse", r.body);
 r = await elena("POST", `${B}/clients`, newClient({ name: "Desde Recepción", documentId: cedulaFor("recepcion"), address: "Calle 2" }));

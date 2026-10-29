@@ -79,9 +79,11 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   salvo un precio especial opcional en su ficha (0 = cortesía), y su día de pago, del día en que empezó su
   plan. Un cambio vale desde el siguiente cobro. Los negocios nunca ven esos precios: el propietario sólo
   ve su total y su descuento (spec 029, 2026-10-20).
-- Los pacientes se identifican por cédula (sólo números) dentro de cada negocio. La reserva
-  online no reconoce al paciente por la cédula ni muestra sus datos: siempre pide nombre, email y
-  teléfono.
+- Los pacientes se identifican por su documento dentro de cada negocio: la cédula, el pasaporte o el
+  documento de cualquier país, de 5 a 20 letras y números, en el mismo campo de siempre y sin comprobar
+  el dígito verificador de la cédula ecuatoriana (spec 038, 2026-10-29; riesgo aceptado: una cédula mal
+  escrita puede crear un paciente repetido). La reserva online no reconoce al paciente por la cédula ni
+  muestra sus datos: siempre pide nombre, email y teléfono.
 - Si la cédula de una reserva online es de un paciente y no coinciden ni su email ni su teléfono, la
   reserva se acepta igual que con una cédula nueva (nadie de fuera nota la diferencia) y queda «Por
   verificar»: un paciente aparte, sin cédula, que no da acceso a la ficha. El negocio la une a la
@@ -312,4 +314,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.30.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-28
+**Versión**: 1.31.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-29

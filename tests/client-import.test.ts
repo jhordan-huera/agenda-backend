@@ -6,7 +6,6 @@
 import { agent, checks, count, fakeNtfy, login, runCron, sql } from "./helpers/harness.ts";
 import { clientImportNotice, findClientImports, findPanelClients } from "../src/services/booking-alerts.ts";
 import { pool } from "../src/db/pool.ts";
-import { documentIdError } from "../src/shared/lib/identity.ts";
 import { missingRequiredFields } from "../src/shared/lib/validations/client.ts";
 import {
   classifyImportRows,
@@ -132,11 +131,11 @@ for (let i = 0; i < 190; i++) {
     }),
   );
   // Las filas especiales, repartidas en el archivo.
-  if (i === 10) rows.push(row(rows.length + 2, { name: "Dígito Mal", documentId: wrongCheckDigit(cedula("135", 900)), email: "digito@example.com" }));
+  if (i === 10) rows.push(row(rows.length + 2, { name: "Muy Corto", documentId: "1234", email: "corto@example.com" }));
   if (i === 20) rows.push(row(rows.length + 2, { name: "Sin Email", documentId: cedula("135", 901) }));
   if (i === 30) rows.push(row(rows.length + 2, { name: "Email Malo", documentId: cedula("135", 902), email: "no-es-un-email" }));
   if (i === 40) rows.push(row(rows.length + 2, { name: "Teléfono Malo", documentId: cedula("135", 903), email: "tel@example.com", phone: "099 ABC 4567" }));
-  if (i === 50) rows.push(row(rows.length + 2, { name: "Cédula Letras", documentId: "17ABC23456", email: "letras@example.com" }));
+  if (i === 50) rows.push(row(rows.length + 2, { name: "Con Signos", documentId: "17#ABC23456", email: "signos@example.com" }));
   if (i === 60 || i === 70 || i === 80) {
     const known = demo[(i - 60) / 10];
     rows.push(row(rows.length + 2, { name: "Otro Nombre Cualquiera", documentId: known.documentId, email: "otro@example.com" }));
@@ -167,11 +166,11 @@ const reasons = result.errors.map((e) => e.reason);
 ok(
   JSON.stringify(reasons) ===
     JSON.stringify([
-      "La cédula no es válida. Revisa el número.",
+      "Ingresa un número de cédula válido",
       "El email es obligatorio",
       "Ingresa un email válido",
       "Ingresa un teléfono válido",
-      "Cédula: escribe sólo números, sin letras ni guiones",
+      "Cédula: escribe sólo letras y números, sin espacios ni guiones",
     ]),
   "5 con error, con el motivo esperado",
   result.errors,
@@ -279,17 +278,28 @@ ok(
 );
 ok(prepared.every((x) => JSON.stringify(prepareImportRow(x, ec)) === JSON.stringify(x)), "volver a limpiar una fila limpia no cambia nada");
 ok(prepareImportRow(clean[3], "America/Bogota").documentId === "912345670" && prepareImportRow(row(2, { documentId: cedula("024", 9).slice(1) }), "America/Bogota").documentId.length === 9, "en otro país no se pone el 0");
+// Cualquier documento de cualquier país (spec 038): sin comprobar el dígito verificador de la cédula.
+const anyCountry = classifyImportRows(
+  [
+    row(2, { name: "Con Pasaporte", documentId: "ab-1234567", email: "pasaporte@example.com" }),
+    row(3, { name: "De Venezuela", documentId: "V-12.345.678", email: "venezuela@example.com" }),
+    row(4, { name: "De Guayas", documentId: cedula("096", 61881), email: "guayas@example.com" }),
+    row(5, { name: "Dígito Mal", documentId: wrongCheckDigit(cedula("135", 77)), email: "digito@example.com" }),
+  ],
+  { required: { documentId: true, email: true, phone: false, address: false }, timezone: ec, existing: [], remaining: null },
+);
 ok(
-  documentIdError(cedula("096", 61881), ec) === null &&
-    documentIdError(wrongCheckDigit(cedula("096", 61881)), ec) !== null &&
-    documentIdError(cedula("097", 61881), ec) !== null &&
-    documentIdError(cedula("099", 61881), ec) !== null,
-  "las cédulas de Guayas que empiezan por 096 valen (2026-10-29), con su dígito verificador; un tercer dígito 7 o 9 no",
+  anyCountry.errors.length === 0 &&
+    JSON.stringify(anyCountry.newClients.map((c) => c.documentId)) ===
+      JSON.stringify(["AB1234567", "V12345678", cedula("096", 61881), wrongCheckDigit(cedula("135", 77))]),
+  "un pasaporte, una cédula venezolana, una de Guayas (096) y una con el verificador mal: todas entran, en mayúsculas y sin guiones ni puntos",
+  anyCountry,
 );
 r = await importTo(jhordan, J, clean);
 ok(
-  r.status === 200 && r.body.created === 3 && r.body.errors.length === 1 && r.body.errors[0].row === 5 && r.body.errors[0].reason === "La cédula debe tener 10 dígitos.",
-  "la API limpia igual: se crean 3, y la de 9 dígitos que no vale con el 0 da su error",
+  r.status === 200 && r.body.created === 4 && r.body.errors.length === 0 &&
+    sql(`select count(*) from clients where business_id = '${jhordan.session.businessId}' and document_id = '912345670'`) === "1",
+  "la API limpia igual: se crean las 4, y la de 9 dígitos que no vale con el 0 entra tal cual (puede ser de otro país)",
   r.body,
 );
 ok(
@@ -429,7 +439,7 @@ const tenPatients = [
   row(5, { name: "Diego Paz", email: "diego@correo.ec", phone: "0994444444" }),
   row(6, { name: "Elena Ruiz", phone: "0995555555" }),
   row(7, { name: "Fabián León" }),
-  row(8, { name: "Gina Sol", documentId: wrongCheckDigit(cedula("143", 7)), email: "gina@correo.ec", phone: "0997777777" }),
+  row(8, { name: "Gina Sol", documentId: "17#2345678", email: "gina@correo.ec", phone: "0997777777" }),
   row(9, { name: "Hugo Ríos", documentId: `${hugo.slice(0, 4)}-${hugo.slice(4)}`, email: "hugo@correo.ec", phone: "0998888888" }),
   row(10, {}),
   row(11, { name: "Iván Cruz", documentId: cedula("143", 9), email: "ivan@correo.ec", address: "Av. Amazonas N34-120" }),
@@ -446,7 +456,7 @@ const expectedIncomplete = [
   { row: 7, missing: ["documentId", "email"] },
   { row: 12, missing: ["documentId"] },
 ];
-const badDigit = [{ row: 8, reason: "La cédula no es válida. Revisa el número." }];
+const badDocument = [{ row: 8, reason: "Cédula: escribe sólo letras y números, sin espacios ni guiones" }];
 const on = reviewOf(tenPatients, true);
 ok(
   on.created === 9 && JSON.stringify(on.newClients.map((c) => c.row)) === JSON.stringify([2, 3, 4, 5, 6, 7, 9, 11, 12]),
@@ -455,7 +465,7 @@ ok(
 );
 ok(JSON.stringify(on.incomplete) === JSON.stringify(expectedIncomplete), "5 por completar, cada uno con lo que le falta", on.incomplete);
 ok(
-  JSON.stringify(on.errors) === JSON.stringify(badDigit) && on.existing.length === 0 && on.repeated.length === 0 && on.overLimit.length === 0,
+  JSON.stringify(on.errors) === JSON.stringify(badDocument) && on.existing.length === 0 && on.repeated.length === 0 && on.overLimit.length === 0,
   "la de la cédula mal escrita sigue con error, con el motivo de siempre",
   on.errors,
 );
@@ -469,7 +479,7 @@ const today = [
   { row: 5, reason: "La cédula es obligatoria" },
   { row: 6, reason: "La cédula es obligatoria" },
   { row: 7, reason: "La cédula es obligatoria" },
-  ...badDigit,
+  ...badDocument,
   { row: 12, reason: "La cédula es obligatoria" },
 ];
 ok(
@@ -482,8 +492,8 @@ const badlyWritten = reviewOf(
   [
     row(2, { name: "Email Malo", email: "no-es-un-email" }),
     row(3, { name: "Teléfono Malo", phone: "099 ABC 4567" }),
-    row(4, { name: "Cédula Letras", documentId: "17ABC23456" }),
-    row(5, { name: "Dígito Mal", documentId: wrongCheckDigit(cedula("143", 20)) }),
+    row(4, { name: "Con Signos", documentId: "17#ABC2345" }),
+    row(5, { name: "Muy Corto", documentId: "1234" }),
     row(6, { email: "sin.nombre@correo.ec", phone: "0991234567" }),
     row(7, { name: "Fabián León" }),
     row(8, { name: "fabián  león" }),
@@ -495,8 +505,8 @@ ok(
     JSON.stringify([
       "Ingresa un email válido",
       "Ingresa un teléfono válido",
-      "Cédula: escribe sólo números, sin letras ni guiones",
-      "La cédula no es válida. Revisa el número.",
+      "Cédula: escribe sólo letras y números, sin espacios ni guiones",
+      "Ingresa un número de cédula válido",
       "El nombre es obligatorio",
     ]),
   "con la casilla, lo mal escrito sigue con error y sin el nombre no entra",
@@ -579,7 +589,7 @@ ok(count("select count(*) from notifications") === notificationsBeforeIncomplete
 r = await importWith(tomas, `/businesses/${fisio}`, tenPatients, true);
 const idOf = (name: string) => sql(`select id from clients where business_id = '${fisio}' and name = '${name}'`);
 ok(
-  r.status === 200 && r.body.created === 0 && r.body.existing.length === 9 && r.body.incomplete.length === 0 && JSON.stringify(r.body.errors) === JSON.stringify(badDigit),
+  r.status === 200 && r.body.created === 0 && r.body.existing.length === 9 && r.body.incomplete.length === 0 && JSON.stringify(r.body.errors) === JSON.stringify(badDocument),
   "repetir la importación con la casilla no crea ninguno: los 9 ya existían",
   r.body,
 );

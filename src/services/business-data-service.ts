@@ -17,7 +17,6 @@ import {
 } from "../shared/lib/constants/appointment-status.ts";
 import { clientRequiredFieldsOf } from "../shared/lib/constants/business.ts";
 import { formatNumericDate, formatTimeRange, joinNames } from "../shared/lib/format.ts";
-import { documentIdError } from "../shared/lib/identity.ts";
 import { addMinutesToTime, getZonedNow, minutesToTime } from "../shared/lib/time.ts";
 import {
   appointmentCorrectionSchema,
@@ -86,8 +85,9 @@ export async function findOwned<T>(db: Db, table: string, columns: string, busin
 /* ---------------------------------- Clientes --------------------------------- */
 
 /**
- * La cédula identifica al cliente en el negocio: no puede repetirse y, en Ecuador, debe ser válida.
- * Con «sólo sus pacientes» el aviso no dice de quién es: el profesional no ve a los demás pacientes.
+ * La cédula (o el pasaporte o documento de cualquier país, spec 038; su forma la comprueba el esquema)
+ * identifica al cliente en el negocio: no puede repetirse. Con «sólo sus pacientes» el aviso no dice de
+ * quién es: el profesional no ve a los demás pacientes.
  */
 async function assertValidClientDocument(
   db: Db,
@@ -97,9 +97,6 @@ async function assertValidClientDocument(
   excludeId?: string,
 ) {
   if (!documentId) return;
-  const business = await one<{ timezone: string }>(db, "select timezone from businesses where id = $1", [businessId]);
-  const error = documentIdError(documentId, business?.timezone ?? "");
-  if (error) throw new AppError("validation", error);
   const duplicate = await one<{ name: string }>(
     db,
     "select name from clients where business_id = $1 and document_id = $2 and ($3::uuid is null or id <> $3::uuid)",

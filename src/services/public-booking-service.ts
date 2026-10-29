@@ -6,7 +6,6 @@ import { isSlotAvailable, offersService, scopeToProfessional } from "../shared/l
 import { DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY, getTimezoneInfo } from "../shared/lib/constants/business.ts";
 import { isPriceVisible } from "../shared/lib/format.ts";
 import { addMinutesToTime, getZonedNow } from "../shared/lib/time.ts";
-import { documentIdError } from "../shared/lib/identity.ts";
 import { clientLookupSchema, publicBookingSchema, type BookingPerson } from "../shared/lib/validations/booking.ts";
 import type {
   Appointment,
@@ -298,18 +297,15 @@ async function findRepeatedBooking(
  * sigue como la de una cédula nueva, pero con un paciente «Por verificar» aparte (ver
  * resolveClaimingClient): nadie de fuera sabe que la cédula ya era de alguien, ni llega nada a esa
  * ficha. Si la cédula no existe, se crea (con los topes de pacientes nuevos del día y del plan). Vale
- * igual para quien reserva y para las otras personas de una sesión en pareja o en familia
- * (`otherName`: cómo la escribió quien reserva; null: quien reserva).
+ * igual para quien reserva y para las otras personas de una sesión en pareja o en familia, y con el
+ * pasaporte o el documento de cualquier país (spec 038).
  */
 async function resolveBookingClient(
   db: Db,
   business: Business,
   person: BookingPerson,
-  options: { otherName: string | null; address: string },
+  options: { address: string },
 ): Promise<Client> {
-  const { otherName } = options;
-  const documentError = documentIdError(person.documentId, business.timezone);
-  if (documentError) throw new AppError("validation", otherName === null ? documentError : `${otherName}: ${documentError}`);
   const found = await findClientByDocument(db, business.id, person.documentId);
   if (found) {
     if (sameContact(found, person, business.timezone)) return found;
@@ -479,11 +475,9 @@ export const publicBookingService = {
    * responde siempre lo mismo, sea o no cliente (antes devolvía su nombre para saludarlo).
    */
   async lookupClient(slug: string, input: unknown): Promise<PublicClientLookup> {
-    const { documentId } = parseInput(clientLookupSchema, input);
+    parseInput(clientLookupSchema, input);
     const found = await findActiveBusiness(pool, slug);
     if (!found) throw new AppError("not_found", "Esta página de reservas no está disponible.");
-    const documentError = documentIdError(documentId, found.business.timezone);
-    if (documentError) throw new AppError("validation", documentError);
     return { found: false, greetingName: null };
   },
 
@@ -615,7 +609,7 @@ export const publicBookingService = {
       await withPublicLimitMessage(() => assertAppointmentLimit(db, business.id, data.date));
 
       // Cada persona se identifica con su cédula (ver resolveBookingClient): primero quien reserva.
-      const client = await resolveBookingClient(db, business, data, { otherName: null, address: data.homeVisit?.address ?? "" });
+      const client = await resolveBookingClient(db, business, data, { address: data.homeVisit?.address ?? "" });
       await assertClientDailyLimit(db, business, client.id, data.date);
       if (!client.address && data.homeVisit) {
         // La dirección de la visita queda en la ficha del cliente si aún no tenía una.
@@ -623,7 +617,7 @@ export const publicBookingService = {
       }
       const extraClientIds: string[] = [];
       for (const person of data.extraPatients) {
-        const extra = await resolveBookingClient(db, business, person, { otherName: person.name, address: "" });
+        const extra = await resolveBookingClient(db, business, person, { address: "" });
         if (extra.id === client.id || extraClientIds.includes(extra.id)) {
           throw new AppError("validation", "Cada persona debe tener su propia cédula.");
         }

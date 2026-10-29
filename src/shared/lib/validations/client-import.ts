@@ -2,15 +2,15 @@
 import { z } from "zod";
 import { getTimezoneInfo } from "../constants/business.ts";
 import { normalizeSearch, plural } from "../format.ts";
-import { documentIdError, isValidEcuadorianCedula, normalizeDocumentId } from "../identity.ts";
+import { isValidEcuadorianCedula, normalizeDocumentId } from "../identity.ts";
 import type { ClientImportResult, ClientImportRow, ClientRequiredFields } from "../../types/index.ts";
 import { clientSchemaFor, missingRequiredFields } from "./client.ts";
 
 /**
  * Importar pacientes desde un Excel o un CSV (spec 012). La revisión del panel y la API ejecutan este
  * mismo código: lo que se ve antes de importar es lo que hace la API (que no se fía y lo vuelve a
- * revisar todo). Cada fila pasa las reglas del formulario del paciente del negocio (clientSchemaFor y
- * documentIdError), salvo que se elija «Importar también los que tienen datos por completar»
+ * revisar todo). Cada fila pasa las reglas del formulario del paciente del negocio (clientSchemaFor),
+ * salvo que se elija «Importar también los que tienen datos por completar»
  * (ampliación del 2026-10-15): entonces basta el nombre, lo que viene se valida igual y el paciente
  * queda «Por completar» (missingRequiredFields). Los motivos de error nunca repiten el valor de la celda.
  */
@@ -164,9 +164,9 @@ const EMAIL_SEPARATORS = /[\s,;/]+/;
 /**
  * La limpieza de una fila. Se puede aplicar dos veces sin cambiar nada.
  * - Todo recortado y con los espacios seguidos juntos (en las notas, sólo al principio y al final).
- * - La cédula, como en el formulario: sin espacios, puntos ni guiones (las letras quedan, para que la
- *   validación las rechace). En Ecuador, a una de 9 dígitos se le vuelve a poner el 0 que quitó Excel,
- *   sólo si así es una cédula válida.
+ * - El documento, como en el formulario: en mayúsculas y sin espacios, puntos ni guiones (vale el de
+ *   cualquier país). En Ecuador, a uno de 9 dígitos se le vuelve a poner el 0 que quitó Excel, sólo si
+ *   así es una cédula válida.
  * - Con varios teléfonos o emails en la celda, el primero va a su dato y los demás, a las notas.
  * - El punto del teléfono («099.123.4567») pasa a espacio: el formulario no lo admite.
  */
@@ -298,11 +298,6 @@ export function classifyImportRows(
       continue;
     }
     const data = parsed.data;
-    const documentError = data.documentId ? documentIdError(data.documentId, options.timezone) : null;
-    if (documentError) {
-      result.errors.push({ row: row.row, reason: documentError });
-      continue;
-    }
     const key = personKey(data);
     const clientId = (data.documentId ? byDocument.get(data.documentId) : undefined) ?? withoutDocument.get(key);
     if (clientId) {
