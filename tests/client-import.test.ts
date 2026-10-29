@@ -6,6 +6,7 @@
 import { agent, checks, count, fakeNtfy, login, runCron, sql } from "./helpers/harness.ts";
 import { clientImportNotice, findClientImports, findPanelClients } from "../src/services/booking-alerts.ts";
 import { pool } from "../src/db/pool.ts";
+import { documentIdError } from "../src/shared/lib/identity.ts";
 import { missingRequiredFields } from "../src/shared/lib/validations/client.ts";
 import {
   classifyImportRows,
@@ -17,7 +18,7 @@ import type { AuditLog, Client, ClientImportResult, ClientImportRow, PlatformSta
 
 const { ok, done } = checks();
 
-/** Cédula ecuatoriana válida: `prefix` (3 dígitos: la provincia y un tercer dígito menor que 6) y un número. Distinta de las de la demo (170…). */
+/** Cédula ecuatoriana válida: `prefix` (3 dígitos: la provincia y un tercer dígito de 0 a 6) y un número. Distinta de las de la demo (170…). */
 function cedula(prefix: string, n: number): string {
   const nine = `${prefix}${String(n).padStart(6, "0")}`;
   const sum = [...nine].reduce((total, digit, i) => {
@@ -278,6 +279,13 @@ ok(
 );
 ok(prepared.every((x) => JSON.stringify(prepareImportRow(x, ec)) === JSON.stringify(x)), "volver a limpiar una fila limpia no cambia nada");
 ok(prepareImportRow(clean[3], "America/Bogota").documentId === "912345670" && prepareImportRow(row(2, { documentId: cedula("024", 9).slice(1) }), "America/Bogota").documentId.length === 9, "en otro país no se pone el 0");
+ok(
+  documentIdError(cedula("096", 61881), ec) === null &&
+    documentIdError(wrongCheckDigit(cedula("096", 61881)), ec) !== null &&
+    documentIdError(cedula("097", 61881), ec) !== null &&
+    documentIdError(cedula("099", 61881), ec) !== null,
+  "las cédulas de Guayas que empiezan por 096 valen (2026-10-29), con su dígito verificador; un tercer dígito 7 o 9 no",
+);
 r = await importTo(jhordan, J, clean);
 ok(
   r.status === 200 && r.body.created === 3 && r.body.errors.length === 1 && r.body.errors[0].row === 5 && r.body.errors[0].reason === "La cédula debe tener 10 dígitos.",
