@@ -153,6 +153,11 @@ r = await ricardo("POST", `${B}/clients`, newClient({ documentId: cedulaFor("ema
 ok(r.status === 400 && r.body.error.message === "Ingresa un email válido", "el email opcional, si se escribe, tiene que ser válido", r.body);
 r = await ricardo("POST", `${B}/clients`, newClient({ documentId: "AB#12345", address: "Calle 1" }));
 ok(r.status === 400 && /letras y números/.test(r.body.error.message), "el documento se sigue comprobando: sólo letras y números (spec 038)", r.body);
+// Pegado desde Contactos o WhatsApp del iPhone: entre marcas invisibles y con espacios duros (2026-10-29).
+r = await ricardo("POST", `${B}/clients`, newClient({ documentId: cedulaFor("telefono-iphone"), address: "Calle 1", phone: "‪+593 98 312‑5556‬" }));
+ok(r.status === 200 && r.body.phone === "+593 98 312-5556", "un teléfono pegado desde el iPhone se acepta y se guarda limpio", r.body);
+r = await ricardo("POST", `${B}/clients`, newClient({ documentId: cedulaFor("telefono-malo"), address: "Calle 1", phone: "098 ABC 4567" }));
+ok(r.status === 400 && r.body.error.message === "Ingresa un teléfono válido", "uno mal escrito sigue con error", r.body);
 r = await ricardo("POST", `${B}/clients`, newClient({ documentId: ana.documentId, address: "Calle 1" }));
 ok(r.status === 409, "y no puede repetirse", r.body);
 r = await elena("POST", `${B}/clients`, newClient({ name: "Desde Recepción", documentId: cedulaFor("recepcion"), address: "Calle 2" }));
