@@ -11,13 +11,13 @@ import type {
   ToothState,
 } from "../../types/index.ts";
 import { addDaysISO } from "../time.ts";
-import { optionalDigitsField, optionalText, requiredText, stripControlChars } from "./fields.ts";
+import { optionalDocumentField, optionalText, requiredText, stripControlChars } from "./fields.ts";
 
 const optionalDate = z.string().refine((value) => value === "" || /^\d{4}-\d{2}-\d{2}$/.test(value), "Fecha inválida");
 const longText = optionalText(4000);
 
 export const clinicalProfileSchema = z.object({
-  documentId: optionalDigitsField,
+  documentId: optionalDocumentField,
   birthDate: optionalDate,
   sex: z.enum(["", "female", "male", "other"]),
   bloodType: optionalText(10),

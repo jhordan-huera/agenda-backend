@@ -24,8 +24,8 @@ export const clientRequiredFieldsSchema = z.object(
 /**
  * Ficha del paciente desde el panel, con los datos obligatorios del negocio
  * (Business.clientRequiredFields). El nombre lo es siempre. Lo que se escribe tiene que ser válido
- * aunque sea opcional: la cédula sólo con números (en Ecuador, además, con su dígito verificador: ver
- * documentIdError), el email y el teléfono con su formato. La reserva online tiene su propio esquema
+ * aunque sea opcional: la cédula, el pasaporte o el documento de cualquier país con letras y números
+ * (spec 038), el email y el teléfono con su formato. La reserva online tiene su propio esquema
  * (publicBookingSchema): pide siempre cédula, nombre, email y teléfono.
  */
 export function clientSchemaFor(required: ClientRequiredFields) {

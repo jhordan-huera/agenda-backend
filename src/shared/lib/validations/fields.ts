@@ -70,11 +70,16 @@ export const phoneField = z
 
 export const timeField = z.string().regex(TIME_REGEX, "Hora inválida");
 
-/** Cédula: sólo números (sin letras ni guiones). */
 const ONLY_DIGITS_MESSAGE = "Escribe sólo números, sin letras ni guiones";
-const DOCUMENT_ID_REGEX = /^\d{5,20}$/;
 
-/** Cédula (normalizada: sin espacios, puntos ni guiones). */
+/**
+ * Cédula, pasaporte o documento de cualquier país: de 5 a 20 letras y números (spec 038). Es lo que
+ * admite la base (clients_document_id_check).
+ */
+const DOCUMENT_CHARS_MESSAGE = "Escribe sólo letras y números, sin espacios ni guiones";
+const DOCUMENT_ID_REGEX = /^[A-Z0-9]{5,20}$/;
+
+/** Documento (normalizado: en mayúsculas y sin espacios, puntos ni guiones). */
 export const documentIdField = z
   .string({ error: "Ingresa tu número de cédula" })
   .transform(normalizeDocumentId)
@@ -82,7 +87,7 @@ export const documentIdField = z
     z
       .string()
       .min(1, "Ingresa tu número de cédula")
-      .regex(/^\d*$/, ONLY_DIGITS_MESSAGE)
+      .regex(/^[A-Z0-9]*$/, DOCUMENT_CHARS_MESSAGE)
       .regex(DOCUMENT_ID_REGEX, "Ingresa un número de cédula válido"),
   );
 
@@ -91,10 +96,17 @@ export const optionalDocumentIdField = z
   .string()
   .default("")
   .transform(normalizeDocumentId)
-  .refine((value) => /^\d*$/.test(value), ONLY_DIGITS_MESSAGE)
+  .refine((value) => /^[A-Z0-9]*$/.test(value), DOCUMENT_CHARS_MESSAGE)
   .refine((value) => value === "" || DOCUMENT_ID_REGEX.test(value), "Ingresa un número de cédula válido");
 
-/** Cédula opcional sin mínimo de largo (antecedentes de la historia clínica). */
+/** Documento opcional sin mínimo de largo (antecedentes de la historia clínica). */
+export const optionalDocumentField = z
+  .string()
+  .trim()
+  .transform(normalizeDocumentId)
+  .pipe(z.string().max(20, "Máximo 20 caracteres").regex(/^[A-Z0-9]*$/, DOCUMENT_CHARS_MESSAGE));
+
+/** Sólo números, opcional (la cédula o el RUC del titular de una cuenta bancaria). */
 export const optionalDigitsField = z.string().trim().max(20, "Máximo 20 dígitos").regex(/^\d*$/, ONLY_DIGITS_MESSAGE);
 
 /** Teléfono obligatorio (reservas online). */
