@@ -22,11 +22,15 @@ export function documentIdMaxLength(timezone: string): number {
   return getTimezoneInfo(timezone).countryCode === "ec" ? 10 : 20;
 }
 
-/** Cédula ecuatoriana: 10 dígitos, provincia 01–24 (o 30), tercer dígito < 6 y dígito verificador (módulo 10). */
+/**
+ * Cédula ecuatoriana: 10 dígitos, provincia 01–24 (o 30), tercer dígito de 0 a 6 y dígito verificador
+ * (módulo 10). El 6 también es de personas: en Guayas hay cédulas que empiezan por 096 (una real no
+ * pasaba, 2026-10-29). El 9 es de RUC de sociedades, no de cédulas.
+ */
 export function isValidEcuadorianCedula(id: string): boolean {
   if (!/^\d{10}$/.test(id)) return false;
   const province = Number(id.slice(0, 2));
-  if (!((province >= 1 && province <= 24) || province === 30) || Number(id[2]) >= 6) return false;
+  if (!((province >= 1 && province <= 24) || province === 30) || Number(id[2]) > 6) return false;
   const sum = [...id.slice(0, 9)].reduce((total, digit, index) => {
     const product = Number(digit) * (index % 2 === 0 ? 2 : 1);
     return total + (product > 9 ? product - 9 : product);
