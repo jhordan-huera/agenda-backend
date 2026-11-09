@@ -26,6 +26,12 @@ export const OWNER_PUSH_KINDS = [
  */
 export const AGENDA_PUSH_KINDS = ["evening_summary", "morning_summary"] as const satisfies readonly PushKind[];
 
+/**
+ * Los del rol Profesional en un negocio con «Pedir el comprobante de pago» (spec 039): además de los
+ * resúmenes, el comprobante de pago de las citas de su agenda, que es quien lo verifica.
+ */
+export const AGENDA_RECEIPT_PUSH_KINDS = ["receipt", ...AGENDA_PUSH_KINDS] as const satisfies readonly PushKind[];
+
 /** Los del super admin, en el orden de la tarjeta. */
 export const PLATFORM_PUSH_KINDS = [
   "new_business",
@@ -79,6 +85,7 @@ export const PUSH_KIND_LABELS: Record<MutablePushKind, { label: string; descript
 
 /** En la tarjeta del rol Profesional (spec 017), los resúmenes son sólo de su agenda: la explicación lo dice. */
 export const AGENDA_PUSH_KIND_DESCRIPTIONS: Partial<Record<MutablePushKind, string>> = {
+  receipt: "Cuando un paciente de tu agenda sube el comprobante de su transferencia, para que lo verifiques.",
   evening_summary: "Cuántas citas de hoy de tu agenda quedan sin cerrar, si hay alguna.",
   morning_summary: "A la hora en que empiezas a atender, cuántas citas de días anteriores de tu agenda siguen sin cerrar, si hay alguna.",
 };

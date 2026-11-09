@@ -4,6 +4,7 @@ import { addMonthsISO, dayOfMonthISO } from "../time.ts";
 import { brandColorsSchema, businessCategorySchema, slugSchema, timezoneField } from "./business.ts";
 import { dateField, emailField, moneyField, optionalEmailField, optionalText, passwordField, phoneField, requiredText } from "./fields.ts";
 import { bankAccountsSchema } from "./payment.ts";
+import { paymentReminderModeField } from "./professional.ts";
 import { weeklyScheduleSchema } from "./schedule.ts";
 import { teamInviteSchema } from "./team.ts";
 
@@ -85,6 +86,18 @@ export const adminMemberSchema = teamInviteSchema.extend({ password: passwordFie
 export const platformAdminSchema = adminMemberSchema.omit({ role: true });
 
 /** Eliminar un negocio: hay que escribir su nombre para confirmar. */
+/**
+ * «Pedir el comprobante de pago» de un negocio (spec 039), sólo el super admin: el interruptor, el modo que
+ * toman todas sus agendas al activarlo (`defaultMode`, obligatorio al activarlo e ignorado después) y los días
+ * del modo «Antes de la cita», que se pueden cambiar con el interruptor encendido.
+ */
+export const paymentRemindersSchema = z.object({
+  enabled: z.boolean({ error: "Indica si el negocio pide el comprobante de pago" }),
+  defaultMode: paymentReminderModeField.optional(),
+  days: z.enum(["before_three", "after_booking", "before_and_morning"], { error: "Elige qué días salen los recordatorios" }).optional(),
+});
+export type PaymentRemindersInput = z.infer<typeof paymentRemindersSchema>;
+
 export const businessDeletionSchema = z.object({ confirmName: z.string().trim().min(1, "Escribe el nombre del negocio") });
 
 const normalizeName = (value: string) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase("es");

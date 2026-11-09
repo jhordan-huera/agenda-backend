@@ -112,15 +112,38 @@ export async function notifyOnlineBooking(db: Db, appointment: Pick<Appointment,
   }));
 }
 
-/** Comprobante de pago recibido (R9): «Comprobante de pago · Juan P. · Mañana 16:00». */
+/**
+ * Comprobante de pago recibido (R9): «Comprobante de pago · Juan P. · Mañana 16:00». Al propietario y, en
+ * un negocio con «Pedir el comprobante de pago» (spec 039), también al rol Profesional que tiene la agenda
+ * de la cita (`userOf`: sólo si sigue con ese rol en el negocio y tiene los avisos activados), que es quien
+ * lo verifica. En los demás negocios, el rol Profesional sigue sin recibirlo (spec 017).
+ */
 export async function notifyReceipt(db: Db, appointment: Pick<Appointment, "id" | "businessId">): Promise<number> {
   await addAppointmentNotice(db, { kind: "receipt", businessId: appointment.businessId, appointmentId: appointment.id });
-  return notifyAboutAppointment(db, appointment, "receipt", (notice) => ({
+  const message = (notice: AppointmentNotice): PushMessageInput => ({
     kind: "receipt",
     ...phoneText("receipt", { appointment: notice }),
     tag: `comprobante-${notice.id}`,
     urgency: "high",
-  }));
+  });
+  const toOwner = await notifyAboutAppointment(db, appointment, "receipt", message);
+  const toAgenda = await guardedPush(db, "receipt", async () => {
+    const agenda = await one<{ userId: string | null }>(
+      db,
+      `select p.user_id as "userId"
+         from appointments a
+         join businesses b on b.id = a.business_id and b.payment_reminders
+         join professionals p on p.id = a.professional_id
+        where a.id = $1 and p.user_id is distinct from b.owner_id`,
+      [appointment.id],
+    );
+    if (!agenda?.userId) return 0;
+    const audience: PushAudience = { userOf: agenda.userId, businessId: appointment.businessId };
+    if (!(await hasPushRecipients(db, audience, "receipt"))) return 0;
+    const notice = await appointmentNotice(db, appointment.id);
+    return notice ? insertPush(db, audience, message(notice)) : 0;
+  });
+  return toOwner + toAgenda;
 }
 
 /** El paciente canceló desde su email (spec 010, R10): «Cita cancelada por el paciente · Mañana 16:00 · Juan P.». */

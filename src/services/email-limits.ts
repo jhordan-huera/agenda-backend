@@ -57,6 +57,9 @@ export const EMAIL_PRIORITY: Record<EmailType, EmailPriority> = {
   // Una serie de citas (spec 011): un email por paciente, no uno por cita.
   appointment_series: "patient",
   appointment_series_cancelled: "patient",
+  // El recordatorio del comprobante de pago (spec 039): uno al día por paciente y negocio, sin copia al
+  // profesional. Si un día no cabe, espera al siguiente, como los demás del paciente.
+  payment_reminder: "patient",
   appointment_copy: "business",
   booking_received: "business",
   professional_new_appointment: "business",

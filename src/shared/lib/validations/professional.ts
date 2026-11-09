@@ -4,6 +4,9 @@ import { optionalEmailField, optionalText, requiredText } from "./fields.ts";
 import { imageUrlField } from "./images.ts";
 import { bankAccountsSchema } from "./payment.ts";
 
+/** «Antes de la cita» o «Después de la cita» (spec 039). */
+export const paymentReminderModeField = z.enum(["before", "after"], { error: "Elige «Antes de la cita» o «Después de la cita»" });
+
 /** Ficha de un profesional (su agenda). La crean el propietario y los administradores. */
 export const professionalSchema = z
   .object({
@@ -38,6 +41,11 @@ export const professionalSchema = z
      * lo que tenía; al crear la agenda, apagado.
      */
     calendarInvites: z.boolean().optional(),
+    /**
+     * El modo de los recordatorios del comprobante de pago (spec 039). Sin el campo, se conserva el que
+     * tenía; sólo se cambia con el negocio activado.
+     */
+    paymentReminderMode: paymentReminderModeField.optional(),
     isActive: z.boolean(),
   })
   .refine((data) => data.allServices || data.serviceIds.length > 0, {
@@ -54,3 +62,9 @@ export type ProfessionalInput = z.infer<typeof professionalSchema>;
 export const calendarInvitesSchema = z.object({
   calendarInvites: z.boolean({ error: "Indica si quieres recibir tus citas en tu calendario" }),
 });
+
+/**
+ * El modo de los recordatorios del comprobante de pago de una agenda (spec 039), solo: lo cambian el
+ * profesional en la suya y quien gestiona los profesionales en cualquiera, como el calendario (spec 027).
+ */
+export const paymentReminderModeSchema = z.object({ mode: paymentReminderModeField });

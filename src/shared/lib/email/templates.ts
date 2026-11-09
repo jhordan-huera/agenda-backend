@@ -109,6 +109,17 @@ export interface CalendarInviteEmailData {
 }
 
 /**
+ * El recordatorio del comprobante de pago (spec 039): un email al día por paciente y negocio con todas sus
+ * citas que siguen sin comprobante y tocan ese día (`appointments`, en orden), cada una con sus datos de pago
+ * (las cuentas de su agenda y el enlace para subir el comprobante). Sólo al paciente principal: nunca lleva
+ * copia al profesional.
+ */
+export interface PaymentReminderEmailData {
+  clientName: string;
+  appointments: AppointmentEmailData[];
+}
+
+/**
  * Un cobro de la mensualidad en los emails al propietario (spec 029): el negocio, el día de pago (de él
  * sale el mes: «Tu mensualidad de noviembre») y lo que paga, con la mensualidad y el descuento de referidos
  * si lo hay. Son de la plataforma: los ve sólo el propietario, nunca su equipo.
@@ -266,6 +277,31 @@ function payment(data: AppointmentEmailData): EmailBlock[] {
     { kind: "button", label: "Enviar el comprobante", url },
     { kind: "note", text: "Cuando transfieras, sube ahí la foto o el PDF del comprobante (o envíalo por WhatsApp al negocio)." },
   ];
+}
+
+/**
+ * Las cuentas para transferir, sin el monto (va en los datos de cada cita): con una, un recuadro con sus
+ * datos; con varias, una línea y un recuadro por cuenta (vale cualquiera).
+ */
+function transferAccounts(bankAccounts: BankAccount[]): EmailBlock[] {
+  if (bankAccounts.length === 0) return [];
+  if (bankAccounts.length === 1) return [{ kind: "details", title: "Pago por transferencia", rows: bankAccountRows(bankAccounts[0]) }];
+  return [
+    { kind: "text", text: `Puedes transferir a cualquiera de estas ${bankAccounts.length} cuentas.` },
+    ...bankAccounts.map((account, index): EmailBlock => ({ kind: "details", title: `Cuenta ${index + 1}`, rows: bankAccountRows(account) })),
+  ];
+}
+
+/** Los datos de una cita en el recordatorio del comprobante (spec 039): sin el lugar, con el monto si se muestra. */
+function paymentReminderDetails(data: AppointmentEmailData, title: string): EmailBlock {
+  const rows: Extract<EmailBlock, { kind: "details" }>["rows"] = [
+    { label: "Servicio", value: data.serviceName },
+    { label: "Profesional", value: data.professionalName },
+    { label: "Fecha", value: capitalize(formatLongDate(data.date)) },
+    { label: "Hora", value: `${formatTimeRange(data.startTime, data.endTime)}${zoneSuffix(data)}` },
+  ];
+  if (data.showPrice) rows.push({ label: "Monto", value: formatPrice(data.price, data.currency) });
+  return { kind: "details", title, rows };
 }
 
 /** «noviembre»: el mes de un cobro de la mensualidad, por su día de pago. */
@@ -1066,6 +1102,48 @@ export const emailTemplates = {
         { kind: "button", label: "Abrir mi panel", url: data.panelUrl },
       ],
     }),
+
+  /**
+   * El recordatorio del comprobante de pago (spec 039), al paciente principal: una cita o varias (p. ej. las
+   * de una serie), cada una con su botón «Enviar el comprobante». Las cuentas van una vez si todas las citas
+   * son de agendas con las mismas cuentas; si no, debajo de cada cita. Amable: un recordatorio, nunca una
+   * «deuda», y si ya lo envió por WhatsApp, puede ignorarlo.
+   */
+  paymentReminder: (data: PaymentReminderEmailData): EmailContent => {
+    const items = data.appointments;
+    const first = items[0];
+    const one = items.length === 1;
+    const accountsOf = (item: AppointmentEmailData) => item.payment?.bankAccounts ?? [];
+    const sameAccounts = items.every((item) => JSON.stringify(accountsOf(item)) === JSON.stringify(accountsOf(first)));
+    // En la cabecera, el profesional sólo si todas las citas son con él.
+    const sameProfessional = items.every((item) => item.professionalName === first.professionalName);
+    const brand = sameProfessional ? first : { ...first, professionalName: first.businessName };
+    return clientEmail(brand, {
+      subject: one
+        ? `Recordatorio: envía el comprobante de tu cita en ${first.businessName}`
+        : `Recordatorio: envía el comprobante de tus citas en ${first.businessName}`,
+      preheader: one
+        ? `Tu cita del ${formatLongDate(first.date)}: sube la foto o el PDF de tu transferencia.`
+        : `Tus ${items.length} citas: sube la foto o el PDF de cada transferencia.`,
+      title: "Recordatorio del comprobante de pago",
+      greeting: `Hola ${data.clientName}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: one
+            ? `Te recordamos enviarnos el comprobante de la transferencia de tu cita en ${first.businessName}. Toca «Enviar el comprobante» y sube la foto o el PDF, sin crear una cuenta.`
+            : `Te recordamos enviarnos el comprobante de la transferencia de tus ${items.length} citas en ${first.businessName}. Cada una tiene su botón «Enviar el comprobante»: ahí subes la foto o el PDF, sin crear una cuenta.`,
+        },
+        ...(!one && sameAccounts ? transferAccounts(accountsOf(first)) : []),
+        ...items.flatMap((item, index): EmailBlock[] => [
+          paymentReminderDetails(item, one ? "Tu cita" : `Cita ${index + 1}`),
+          ...(one || !sameAccounts ? transferAccounts(accountsOf(item)) : []),
+          ...(item.payment ? [{ kind: "button", label: "Enviar el comprobante", url: item.payment.url } satisfies EmailBlock] : []),
+        ]),
+        { kind: "note", text: "Si ya lo enviaste por WhatsApp, puedes ignorar este mensaje." },
+      ],
+    });
+  },
 
   appointmentReminder: (data: AppointmentEmailData, when: "hoy" | "mañana" | null): EmailContent =>
     clientEmail(data, {

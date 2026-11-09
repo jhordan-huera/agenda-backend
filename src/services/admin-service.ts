@@ -11,7 +11,12 @@ import {
 import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
-import { CLIENT_REQUIRED_FIELD_OPTIONS, clientRequiredFieldsOf } from "../shared/lib/constants/business.ts";
+import {
+  CLIENT_REQUIRED_FIELD_OPTIONS,
+  clientRequiredFieldsOf,
+  paymentReminderDaysLabel,
+  paymentReminderModeLabel,
+} from "../shared/lib/constants/business.ts";
 import { PLANS, getEffectiveLimits, getPlan } from "../shared/lib/constants/plans.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
 import { formatSupportContact, getFullName, plural } from "../shared/lib/format.ts";
@@ -27,6 +32,7 @@ import {
   planIdSchema,
   planRejectionSchema,
   panelColorsSchema,
+  paymentRemindersSchema,
   platformAdminSchema,
   platformSettingsSchema,
   userPasswordSchema,
@@ -38,6 +44,7 @@ import type {
   AdminBusinessSummary,
   AdminPlanRequest,
   AdminUserSummary,
+  AuditChange,
   AuditLog,
   AuditLogPage,
   BrandColors,
@@ -46,6 +53,7 @@ import type {
   BusinessStatus,
   EmailNotification,
   PlanChangeRequest,
+  PaymentReminderMode,
   PlanId,
   PlatformAdmin,
   PlatformSettings,
@@ -879,6 +887,71 @@ export const adminService = {
         entityId: businessId,
         summary: `${enabled ? "Activó" : "Desactivó"} las citas con varios pacientes en ${business.name}`,
         changes: [{ label: "Citas con varios pacientes", before: label(current.multiClientAppointments), after: label(enabled) }],
+      });
+      return business;
+    });
+  },
+
+  /**
+   * «Pedir el comprobante de pago» de un negocio (spec 039). Sólo el super admin, desde la ficha del negocio
+   * en /admin; el negocio no lo cambia (ni el super admin en modo soporte desde su panel: lo ignora
+   * account-service). Al activarlo, todas las agendas del negocio toman el modo por defecto (`defaultMode`,
+   * obligatorio); con el interruptor encendido se pueden cambiar los días del modo «Antes de la cita». Al
+   * apagarlo no sale ningún recordatorio más, y las agendas y los días se conservan. Va a la actividad del
+   * negocio y a la de la plataforma (`platform.…`), con el antes y el después.
+   */
+  async setPaymentReminders(ctx: RequestContext, businessId: string, input: unknown): Promise<Business> {
+    const actor = authorizeSuperAdmin(ctx);
+    const next = parseInput(paymentRemindersSchema, input ?? {});
+    return transaction(async (db) => {
+      const current = await findBusiness(db, businessId, true);
+      const before = current.paymentReminders;
+      const turningOn = next.enabled && !before.enabled;
+      if (turningOn && !next.defaultMode) {
+        throw new AppError("validation", "Elige el modo por defecto de las agendas: «Antes de la cita» o «Después de la cita».");
+      }
+      // Los días sólo cambian con el interruptor encendido; al apagarlo se conservan.
+      const days = next.enabled ? (next.days ?? before.days) : before.days;
+      if (next.enabled === before.enabled && days === before.days) return current;
+      const business = (await one<Business>(
+        db,
+        `update businesses set payment_reminders = $2, payment_reminder_days = $3 where id = $1 returning ${businessColumns()}`,
+        [businessId, next.enabled, days],
+      ))!;
+      const label = (on: boolean) => (on ? "Sí" : "No");
+      const changes: AuditChange[] = [];
+      if (next.enabled !== before.enabled) {
+        changes.push({ label: "Pedir el comprobante de pago", before: label(before.enabled), after: label(next.enabled) });
+      }
+      if (turningOn) {
+        // Las agendas, del modo que tenían (el de la columna o el de una activación anterior) al de por defecto.
+        const modes = await many<{ mode: PaymentReminderMode }>(
+          db,
+          "select distinct payment_reminder_mode as mode from professionals where business_id = $1 order by 1",
+          [businessId],
+        );
+        await db.query("update professionals set payment_reminder_mode = $2 where business_id = $1", [businessId, next.defaultMode]);
+        changes.push({
+          label: "Modo de las agendas",
+          before: modes.length === 1 ? paymentReminderModeLabel(modes[0].mode) : "Distinto en cada agenda",
+          after: paymentReminderModeLabel(next.defaultMode!),
+        });
+      }
+      if (days !== before.days) {
+        changes.push({ label: "Días del modo «Antes de la cita»", before: paymentReminderDaysLabel(before.days), after: paymentReminderDaysLabel(days) });
+      }
+      await logAudit(db, {
+        businessId,
+        actor,
+        action: "platform.payment_reminders_changed",
+        entityType: "business",
+        entityId: businessId,
+        summary: turningOn
+          ? `Activó «Pedir el comprobante de pago» en ${business.name}: todas las agendas, «${paymentReminderModeLabel(next.defaultMode!)}»`
+          : !next.enabled
+            ? `Desactivó «Pedir el comprobante de pago» en ${business.name}`
+            : `Cambió los días de los recordatorios del comprobante en ${business.name}: ${paymentReminderDaysLabel(days).toLowerCase()}`,
+        changes,
       });
       return business;
     });

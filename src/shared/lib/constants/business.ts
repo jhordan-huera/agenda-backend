@@ -6,6 +6,9 @@ import type {
   ClientRequiredFields,
   DayOfWeek,
   NotificationSettings,
+  PaymentReminderDays,
+  PaymentReminderMode,
+  PaymentReminderSettings,
   ServiceMode,
   TimeRange,
 } from "../../types/index.ts";
@@ -204,6 +207,63 @@ export const CLIENT_REQUIRED_FIELD_OPTIONS: { key: keyof ClientRequiredFields; l
 export function clientRequiredFieldsOf(business: { clientRequiredFields?: ClientRequiredFields } | null | undefined) {
   return { ...DEFAULT_CLIENT_REQUIRED_FIELDS, ...business?.clientRequiredFields };
 }
+
+/**
+ * Recordatorios del comprobante de pago (spec 039): como mucho 3 por cita y uno al día, desde las 9:00 en
+ * la hora del negocio. Los usan la API, la tarjeta del super admin y el modo de cada agenda: si cambian,
+ * cambian aquí.
+ */
+export const PAYMENT_REMINDERS_PER_APPOINTMENT = 3;
+export const PAYMENT_REMINDER_HOUR = 9;
+
+/** Apagado y, al activarlo, los 3 días anteriores a la cita: lo mismo que la migración 055. */
+export const DEFAULT_PAYMENT_REMINDERS: PaymentReminderSettings = { enabled: false, days: "before_three" };
+
+/** El ajuste del negocio (apagado si un backend anterior aún no lo manda). */
+export function paymentRemindersOf(business: { paymentReminders?: PaymentReminderSettings } | null | undefined): PaymentReminderSettings {
+  return { ...DEFAULT_PAYMENT_REMINDERS, ...business?.paymentReminders };
+}
+
+/** Los dos modos de una agenda, en el orden del selector, con su explicación. */
+export const PAYMENT_REMINDER_MODE_OPTIONS: { value: PaymentReminderMode; label: string; description: string }[] = [
+  {
+    value: "before",
+    label: "Antes de la cita",
+    description: "Para quien cobra por adelantado: el paciente recibe el recordatorio antes de su cita.",
+  },
+  {
+    value: "after",
+    label: "Después de la cita",
+    description: "Para quien cobra después de atender: desde el día siguiente a la cita, si sigue sin comprobante.",
+  },
+];
+
+/** Los días del modo «Antes de la cita» (los elige el super admin), con un ejemplo de fechas. */
+export const PAYMENT_REMINDER_DAYS_OPTIONS: { value: PaymentReminderDays; label: string; example: string }[] = [
+  {
+    value: "before_three",
+    label: "Los 3 días anteriores a la cita",
+    example: "Con la cita el viernes: el martes, el miércoles y el jueves.",
+  },
+  {
+    value: "after_booking",
+    label: "Los 3 días siguientes a la reserva",
+    example: "Con una reserva del lunes: el martes, el miércoles y el jueves (si la cita es después).",
+  },
+  {
+    value: "before_and_morning",
+    label: "Los 2 días anteriores y la mañana del mismo día",
+    example: "Con la cita el viernes a las 15:00: el miércoles, el jueves y el viernes a las 9:00.",
+  },
+];
+
+/** «Antes de la cita» o «Después de la cita». */
+export const paymentReminderModeLabel = (mode: PaymentReminderMode) =>
+  PAYMENT_REMINDER_MODE_OPTIONS.find((option) => option.value === mode)?.label ?? mode;
+
+/** «Los 3 días anteriores a la cita»… */
+export const paymentReminderDaysLabel = (days: PaymentReminderDays) =>
+  PAYMENT_REMINDER_DAYS_OPTIONS.find((option) => option.value === days)?.label ?? days;
 
 /**
  * El programa de referidos (spec 023): por cada negocio recomendado que sigue activo a los 30 días de

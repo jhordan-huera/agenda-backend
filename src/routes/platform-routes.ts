@@ -254,6 +254,11 @@ adminRoutes.put(
   "/businesses/:businessId/multi-client-appointments",
   handle((req) => adminService.setMultiClientAppointments(req.ctx, req.params.businessId, req.body?.enabled)),
 );
+// «Pedir el comprobante de pago» (spec 039): { enabled, defaultMode (al activarlo), days }.
+adminRoutes.put(
+  "/businesses/:businessId/payment-reminders",
+  handle((req) => adminService.setPaymentReminders(req.ctx, req.params.businessId, req.body)),
+);
 // La mensualidad del negocio (spec 029): { customFee (el precio especial; null: el de su plan), billingDay,
 // billingStart }. Devuelve la de la ficha.
 adminRoutes.put(

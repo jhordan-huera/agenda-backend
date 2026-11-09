@@ -1,11 +1,11 @@
 import { PROFESSIONAL_ORDER, professionalColumns, scheduleColumns } from "../db/columns.ts";
 import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
-import { BANK_ACCOUNT_TYPE_LABELS, DEFAULT_WEEKLY_SCHEDULE } from "../shared/lib/constants/business.ts";
+import { BANK_ACCOUNT_TYPE_LABELS, DEFAULT_WEEKLY_SCHEDULE, paymentReminderModeLabel } from "../shared/lib/constants/business.ts";
 import { getFullName } from "../shared/lib/format.ts";
 import { hasPermission } from "../shared/lib/permissions.ts";
-import { calendarInvitesSchema, type ProfessionalInput } from "../shared/lib/validations/professional.ts";
-import type { BankAccount, Professional, Schedule } from "../shared/types/index.ts";
+import { calendarInvitesSchema, paymentReminderModeSchema, type ProfessionalInput } from "../shared/lib/validations/professional.ts";
+import type { BankAccount, PaymentReminderMode, Professional, Schedule } from "../shared/types/index.ts";
 import { logAudit } from "./audit.ts";
 import { diffChanges, PROFESSIONAL_FIELDS, type ProfessionalForAudit } from "./audit-changes.ts";
 import { accountsToSave, bankAccountValues, parseProfessionalInput } from "./bank-accounts.ts";
@@ -176,6 +176,34 @@ async function logCalendarInvites(db: Db, actor: Actor, professional: Profession
   });
 }
 
+/** Con el negocio sin «Pedir el comprobante de pago» (spec 039), el modo de las agendas no se usa ni se cambia. */
+const PAYMENT_REMINDERS_OFF_MESSAGE = "Este negocio no tiene activados los recordatorios del comprobante de pago.";
+
+/** El negocio tiene «Pedir el comprobante de pago» (spec 039); si no, 409. */
+async function assertPaymentReminders(db: Db, businessId: string): Promise<void> {
+  const row = await one<{ enabled: boolean }>(db, "select payment_reminders as enabled from businesses where id = $1", [businessId]);
+  if (!row?.enabled) throw new AppError("conflict", PAYMENT_REMINDERS_OFF_MESSAGE);
+}
+
+/**
+ * Cambiar el modo de los recordatorios del comprobante de una agenda va a la actividad del negocio (spec
+ * 039): «Cambió los recordatorios del comprobante de la agenda de Dra. Valeria Cruz: Antes de la cita →
+ * Después de la cita».
+ */
+async function logPaymentReminderMode(db: Db, actor: Actor, professional: Professional, before: PaymentReminderMode): Promise<void> {
+  const from = paymentReminderModeLabel(before);
+  const to = paymentReminderModeLabel(professional.paymentReminderMode);
+  await logAudit(db, {
+    businessId: professional.businessId,
+    actor,
+    action: "professional.payment_reminder_mode_changed",
+    entityType: "professional",
+    entityId: professional.id,
+    summary: `Cambió los recordatorios del comprobante de la agenda de ${professional.displayName}: ${from} → ${to}`,
+    changes: [{ label: "Recordatorios del comprobante", before: from, after: to }],
+  });
+}
+
 /**
  * Al activarlas (o si cambió el email al que llegan), salen enseguida las de las citas de la ventana: las
  * de más lejos, cuando entren (el cron). Las que ya estaban en su calendario se ponen al día aunque estén
@@ -229,13 +257,18 @@ export const professionalService = {
         `select coalesce(max(sort_order), 0) + 1 as "order" from professionals where business_id = $1`,
         [businessId],
       );
+      // El modo de los recordatorios del comprobante (spec 039): el elegido, sólo con el negocio activado; si
+      // no, el de la columna («Antes de la cita»).
+      const remindersOn = Boolean(
+        await one(db, "select 1 from businesses where id = $1 and payment_reminders", [businessId]),
+      );
       const { id } = (await one<{ id: string }>(
         db,
         `insert into professionals
            (business_id, user_id, display_name, title, avatar_url, color, email, all_services,
             notify_new_appointments, daily_agenda, is_active, sort_order, meeting_url, bank_accounts, bank_account,
-            calendar_invites)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            calendar_invites, payment_reminder_mode)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, coalesce($17, 'before'))
          returning id`,
         [
           businessId,
@@ -254,6 +287,7 @@ export const professionalService = {
           // La primera cuenta también en bank_account, para el código anterior (ver bank-accounts.ts).
           ...bankAccountValues(accountsToSave(parsed, [])),
           data.calendarInvites ?? false,
+          remindersOn ? (data.paymentReminderMode ?? null) : null,
         ],
       ))!;
       await saveServices(db, id, data);
@@ -291,11 +325,16 @@ export const professionalService = {
         if (!before.calendarInvites) throw new AppError("validation", CALENDAR_WITHOUT_EMAIL_MESSAGE);
         calendarInvites = false;
       }
+      // El modo de los recordatorios del comprobante (spec 039): sin el campo, el que tenía; sólo cambia con
+      // el negocio activado.
+      const paymentReminderMode = data.paymentReminderMode ?? before.paymentReminderMode;
+      if (paymentReminderMode !== before.paymentReminderMode) await assertPaymentReminders(db, businessId);
       await db.query(
         `update professionals
             set user_id = $2, display_name = $3, title = $4, avatar_url = $5, color = $6, email = $7,
                 all_services = $8, notify_new_appointments = $9, daily_agenda = $10, is_active = $11,
-                meeting_url = $12, bank_accounts = $13, bank_account = $14, calendar_invites = $15
+                meeting_url = $12, bank_accounts = $13, bank_account = $14, calendar_invites = $15,
+                payment_reminder_mode = $16
           where id = $1`,
         [
           professionalId,
@@ -313,6 +352,7 @@ export const professionalService = {
           // La primera cuenta también en bank_account, para el código anterior (ver bank-accounts.ts).
           ...bankAccountValues(accountsToSave(parsed, before.bankAccounts)),
           calendarInvites,
+          paymentReminderMode,
         ],
       );
       await saveServices(db, professionalId, data);
@@ -320,8 +360,9 @@ export const professionalService = {
       const verb = before.isActive && !professional.isActive ? "Desactivó" : !before.isActive && professional.isActive ? "Reactivó" : "Editó";
       const changes = diffChanges(await professionalForAudit(db, before), await professionalForAudit(db, professional), PROFESSIONAL_FIELDS);
       const calendarChanged = professional.calendarInvites !== before.calendarInvites;
-      // Sólo el interruptor: basta su propia entrada (abajo), sin un «Editó» vacío.
-      if (!calendarChanged || changes.length > 0 || verb !== "Editó") {
+      const modeChanged = professional.paymentReminderMode !== before.paymentReminderMode;
+      // Sólo el interruptor o el modo: basta su propia entrada (abajo), sin un «Editó» vacío.
+      if (!(calendarChanged || modeChanged) || changes.length > 0 || verb !== "Editó") {
         await logAudit(db, {
           businessId,
           actor,
@@ -333,6 +374,7 @@ export const professionalService = {
         });
       }
       if (calendarChanged) await logCalendarInvites(db, actor, professional);
+      if (modeChanged) await logPaymentReminderMode(db, actor, professional, before.paymentReminderMode);
       // Recién activadas, o con otro email: las citas de la ventana (y las que ya tenía), a su calendario.
       if (calendarChanged || professional.calendarEmail !== before.calendarEmail) await syncAgendaInvites(db, professional);
       return { professional, previousAvatar: before.avatarUrl };
@@ -360,6 +402,30 @@ export const professionalService = {
       const professional = await findProfessional(db, businessId, professionalId);
       await logCalendarInvites(db, actor, professional);
       await syncAgendaInvites(db, professional);
+      return professional;
+    });
+  },
+
+  /**
+   * El modo de los recordatorios del comprobante de pago de una agenda, solo (spec 039): «Antes de la cita» o
+   * «Después de la cita». Lo cambian las mismas personas que las invitaciones de calendario (spec 027): el
+   * profesional en su agenda y quien gestiona los profesionales en cualquiera (también el super admin en modo
+   * soporte, como propietario); recepción, no. Con el negocio sin «Pedir el comprobante de pago», 409. Va a la
+   * actividad. Vale para los recordatorios siguientes: el de cada día sale a las 9:00.
+   */
+  async setPaymentReminderMode(ctx: RequestContext, businessId: string, professionalId: string, input: unknown): Promise<Professional> {
+    const { mode } = parseInput(paymentReminderModeSchema, input ?? {});
+    return transaction(async (db) => {
+      const actor = await authorize(db, ctx, businessId, undefined, { lock: true });
+      const before = await findProfessional(db, businessId, professionalId);
+      if (!hasPermission(actor.role, "professionals.manage") && before.userId !== actor.userId) {
+        throw new AppError("forbidden", "Sólo puedes cambiar los recordatorios del comprobante de tu propia agenda.");
+      }
+      await assertPaymentReminders(db, businessId);
+      if (mode === before.paymentReminderMode) return before;
+      await db.query("update professionals set payment_reminder_mode = $2 where id = $1", [professionalId, mode]);
+      const professional = await findProfessional(db, businessId, professionalId);
+      await logPaymentReminderMode(db, actor, professional, before.paymentReminderMode);
       return professional;
     });
   },

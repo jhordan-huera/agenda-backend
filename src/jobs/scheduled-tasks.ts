@@ -38,7 +38,7 @@ import { deleteUnusedImageUploads } from "../services/image-service.ts";
 import { deleteStalePendingReceipts, purgeOldReceipts } from "../services/payment-service.ts";
 import { processEmailQueue, scrubEmails, type EmailQueueReport } from "../services/mailer.ts";
 import { maskEmail, shortName } from "../services/masking.ts";
-import { runDailyAgendaJob, runReminderJob } from "../services/notifications.ts";
+import { runDailyAgendaJob, runPaymentReminderJob, runReminderJob } from "../services/notifications.ts";
 import { cleanupPanelNotices } from "../services/panel-notices.ts";
 import { runPushJobs, type PushReport } from "../services/push-notices.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
@@ -112,6 +112,21 @@ export async function queueCalendarInvites(): Promise<QueuedReminders> {
 }
 
 /**
+ * Los recordatorios del comprobante de pago (spec 039): en cada pasada, los negocios activos con «Pedir el
+ * comprobante de pago», cada uno en su transacción. Cada negocio envía los suyos en el primer paso después de
+ * las 9:00 de su hora; los demás pasos de ese día no repiten (runPaymentReminderJob). `now`: el momento (las
+ * pruebas avanzan los días). Devuelve cuántos emails quedaron en cola y en cuántos negocios falló.
+ */
+export async function queuePaymentReminders(now: Date = new Date()): Promise<QueuedReminders> {
+  const businesses = await many<{ id: string }>(pool, "select id from businesses where status = 'active' and payment_reminders");
+  return forEachBusiness(
+    businesses.map(({ id }) => id),
+    "recordatorios de pago",
+    (db, id) => runPaymentReminderJob(db, id, now),
+  );
+}
+
+/**
  * El cobro de las mensualidades (spec 029), en cada pasada: primero el día de pago automático de los negocios
  * de pago que todavía no lo tienen (los nuevos, los que volvieron de Free y, al publicarse los precios, los que
  * ya existían); después el cobro del mes de cada negocio que ya llegó a su día de pago y el email de los tres
@@ -140,8 +155,8 @@ export interface ScheduledTasksReport {
   /** Recordatorios puestos en cola en esta ejecución. */
   reminders: number;
   /**
-   * Negocios en los que falló preparar los recordatorios, la agenda del día, las invitaciones de calendario
-   * o las mensualidades (detalle en el registro).
+   * Negocios en los que falló preparar los recordatorios, la agenda del día, las invitaciones de calendario,
+   * las mensualidades o los recordatorios del comprobante de pago (detalle en el registro).
    */
   reminderFailures: number;
   /**
@@ -149,6 +164,11 @@ export interface ScheduledTasksReport {
    * ventana o cambiaron por otro lado. Sólo la cifra (el registro es público).
    */
   calendarInvites?: number;
+  /**
+   * Recordatorios del comprobante de pago (spec 039) puestos en cola en esta pasada: un email por paciente y
+   * día. Sólo la cifra (el registro es público).
+   */
+  paymentReminders?: number;
   /** Lo que hizo esta ejecución con la cola de emails. */
   emails: EmailQueueReport;
   /** Emails enviados desde la ejecución anterior: también los que salieron al momento (reservas, avisos). */
@@ -313,7 +333,8 @@ async function purgeOldEmailContent(): Promise<number> {
  * Tareas periódicas: recordatorios, reintentos de la cola de emails y limpieza. En producción
  * las ejecuta el cron de GitHub (scripts/cron.ts) directamente contra la base y Gmail, sin
  * pasar por Vercel. En local nada ejecuta esta pasada entera: el servidor (src/jobs/reminders.ts)
- * sólo hace los recordatorios, el paso de las invitaciones de calendario y el envío de la cola.
+ * sólo hace los recordatorios (también los del comprobante de pago), el paso de las invitaciones de
+ * calendario y el envío de la cola.
  */
 export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const started = Date.now();
@@ -323,6 +344,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const calendarInvites = await queueCalendarInvites();
   // Las mensualidades (spec 029), también antes del envío: el recordatorio de los tres días antes sale ya.
   const billing = await runMonthlyBilling();
+  // Los recordatorios del comprobante de pago (spec 039), también antes del envío: salen en esta pasada.
+  const paymentReminders = await queuePaymentReminders();
   const emails = await processEmailQueue({ maxBatches: MAX_EMAIL_BATCHES, deadline: started + EMAIL_BUDGET_MS });
   await deleteExpiredSessions();
   await deleteStalePendingAttachments();
@@ -401,8 +424,9 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const cronLog = await clearCronLog(totals?.at ?? null);
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
-    reminderFailures: reminders.failures + calendarInvites.failures + billing.failures,
+    reminderFailures: reminders.failures + calendarInvites.failures + billing.failures + paymentReminders.failures,
     calendarInvites: calendarInvites.queued,
+    paymentReminders: paymentReminders.queued,
     emails,
     sentSinceLastRun: totals?.sent ?? 0,
     sentEmails: sent.map((email) => ({
