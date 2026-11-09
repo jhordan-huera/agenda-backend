@@ -873,6 +873,8 @@ export async function runPaymentReminderJob(db: Db, businessId: string, at: Date
   let queued = 0;
   for (const [clientId, appointments] of byClient) {
     const items: AppointmentEmailData[] = [];
+    // Sólo cuentan las citas que van en el email.
+    const included: string[] = [];
     let recipient: Recipient | undefined;
     for (const appointment of appointments) {
       const context = await loadAppointmentContext(db, appointment);
@@ -882,13 +884,14 @@ export async function runPaymentReminderJob(db: Db, businessId: string, at: Date
       if (!data.payment) continue;
       recipient ??= main;
       items.push(data);
+      included.push(appointment.id);
     }
     if (!recipient || items.length === 0) continue;
     const inserted = await queueEmail(db, {
       businessId,
       type: "payment_reminder",
       to: recipient.email,
-      appointmentId: appointments[0].id,
+      appointmentId: included[0],
       dedupeKey: `payment-reminder:${clientId}:${now.date}`,
       ...emailTemplates.paymentReminder({ clientName: recipient.name, appointments: items }),
     });
@@ -897,7 +900,7 @@ export async function runPaymentReminderJob(db: Db, businessId: string, at: Date
     await db.query(
       `update appointments set payment_reminders_sent = payment_reminders_sent + 1, payment_reminded_on = $2::date
         where id = any($1::uuid[])`,
-      [appointments.map((appointment) => appointment.id), now.date],
+      [included, now.date],
     );
   }
   return queued;
