@@ -34,4 +34,4 @@ Rutas: `back/` = agenda-backend, `front/` = agenda-front, `beta/` = ~/Documentos
 
 - [X] T015 back: `typecheck` y `npm test`; front: build, lint, `check:contrast` y `check:data-export`; beta: build y lint
 - [X] T016 Recorrido en Chromium a 1440 px en claro y en WebKit a 390 px en oscuro, con capturas
-- [ ] T017 La prueba real: un recordatorio al buzón de pruebas (LOCAL_TEST_INBOX) con la base de prueba y la cuenta de Gmail, como `dev:local`
+- [X] T017 La prueba real: un recordatorio al buzón de pruebas (LOCAL_TEST_INBOX) con la base de prueba y la cuenta de Gmail, como `dev:local`
