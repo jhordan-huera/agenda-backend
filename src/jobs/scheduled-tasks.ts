@@ -131,9 +131,10 @@ export async function queuePaymentReminders(now: Date = new Date()): Promise<Que
 /**
  * El informe mensual al propietario (spec 040), en cada pasada: los negocios activos con propietario y el informe
  * encendido, cada uno en su transacción. Sale del día 1 al 7 desde las 8:00 de su hora, una sola vez por mes
- * (runMonthlyReportJob). `now`: el momento (las pruebas lo mueven). Devuelve cuántos quedaron en cola.
+ * (runMonthlyReportJob). `now`: el momento (las pruebas lo mueven). `anyDay`: el envío a mano desde Actions, que
+ * manda el del mes anterior aunque ya pasó el día 7 (2026-11-10). Devuelve cuántos quedaron en cola.
  */
-export async function queueMonthlyReports(now: Date = new Date()): Promise<QueuedReminders> {
+export async function queueMonthlyReports(now: Date = new Date(), anyDay = false): Promise<QueuedReminders> {
   const businesses = await many<{ id: string }>(
     pool,
     `select id from businesses
@@ -142,7 +143,7 @@ export async function queueMonthlyReports(now: Date = new Date()): Promise<Queue
   return forEachBusiness(
     businesses.map(({ id }) => id),
     "informe mensual",
-    (db, id) => runMonthlyReportJob(db, id, now),
+    (db, id) => runMonthlyReportJob(db, id, now, anyDay),
   );
 }
 
@@ -393,9 +394,10 @@ async function reclaimEmailSpace(): Promise<boolean> {
  * las ejecuta el cron de GitHub (scripts/cron.ts) directamente contra la base y Gmail, sin
  * pasar por Vercel. En local nada ejecuta esta pasada entera: el servidor (src/jobs/reminders.ts)
  * sólo hace los recordatorios (también los del comprobante de pago), el paso de las invitaciones de
- * calendario y el envío de la cola.
+ * calendario y el envío de la cola. `monthlyReportNow`: el informe mensual del mes anterior sale aunque ya pasó
+ * el día 7 (el botón «Enviar el informe mensual ahora» de Actions).
  */
-export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
+export async function runScheduledTasks({ monthlyReportNow = false }: { monthlyReportNow?: boolean } = {}): Promise<ScheduledTasksReport> {
   const started = Date.now();
   const previous = await one<{ ranAt: string }>(pool, 'select ran_at as "ranAt" from cron_runs order by ran_at desc limit 1');
   const reminders = await queueAllReminders();
@@ -406,7 +408,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   // Los recordatorios del comprobante de pago (spec 039), también antes del envío: salen en esta pasada.
   const paymentReminders = await queuePaymentReminders();
   // El informe mensual (spec 040), también antes del envío.
-  const monthlyReports = await queueMonthlyReports();
+  const monthlyReports = await queueMonthlyReports(new Date(), monthlyReportNow);
   const emails = await processEmailQueue({ maxBatches: MAX_EMAIL_BATCHES, deadline: started + EMAIL_BUDGET_MS });
   await deleteExpiredSessions();
   await deleteStalePendingAttachments();

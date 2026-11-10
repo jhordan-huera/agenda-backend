@@ -791,7 +791,11 @@ marca como enviados o, tras 8 intentos, fallidos (con el motivo en `last_error`)
     directamente a la base y a Gmail, pone en cola y envía los recordatorios, reintenta los correos
     que la API no pudo enviar y limpia lo caducado. **Avisa por ntfy** de lo enviado o fallido y da
     señal de vida a healthchecks.io. Cada ejecución queda en la tabla `cron_runs`, y cada lunes a las
-    12:00 (hora de Ecuador) se borran las de antes.
+    12:00 (hora de Ecuador) se borran las de antes. El informe mensual (spec 040) sale solo del día 1
+    al 7; para enviar el del mes anterior otro día: *Actions → Recordatorios y correos → Run workflow*
+    (desde `main`) con la casilla «Enviar el informe mensual del mes anterior ahora», o
+    `gh workflow run cron.yml --ref main -f informe_mensual_ahora=true`. Sale una sola vez por negocio
+    y mes, aunque se pulse otra vez.
   - **Avisos por ntfy de pacientes** (`src/services/booking-alerts.ts`), con los datos a medias:
     - **cada reserva por la página:** dice de cada persona si es «Paciente nuevo» o «Ya era paciente»;
     - **cada cita agendada desde el panel:** lo mismo que una reserva, con quién la agendó y su rol

@@ -12,6 +12,12 @@ on:
     - cron: "3,13,23,33,43,53 * * * *"
   # "Run workflow" en la pestaña Actions, y despertador externo (cron-job.org) por la API de GitHub.
   workflow_dispatch:
+    inputs:
+      informe_mensual_ahora:
+        # El informe sale solo del día 1 al 7; marcado, también sale el del mes anterior otro día (una vez por mes).
+        description: "Enviar el informe mensual del mes anterior ahora (aunque ya pasó el día 7)"
+        type: boolean
+        default: false
 
 # El job sólo lee el código: el token de GitHub de la ejecución no puede escribir en el repositorio.
 permissions:
@@ -67,6 +73,8 @@ jobs:
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ vars.VAPID_SUBJECT }}
+          # Sólo en "Run workflow" con la casilla marcada; en las pasadas programadas va vacía.
+          MONTHLY_REPORT_NOW: ${{ inputs.informe_mensual_ahora }}
         run: node scripts/cron.ts
 
       # Señal de vida para healthchecks.io: si deja de llegar, avisa que el cron se detuvo.

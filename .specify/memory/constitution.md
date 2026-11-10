@@ -215,8 +215,9 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   recordatorios, confirmaciones, cancelaciones con tiempo, pacientes nuevos, comprobantes, ingresos
   estimados y la comparación con el mes de antes. Sólo cifras reales del negocio, contadas como la
   analítica: nunca datos de pacientes, planes, precios de Agenda360 ni cifras estimadas. Sale una vez por
-  mes (hasta el día 7 si el cron no pudo pasar el 1) y lo envía el cron de GitHub. Viene encendido y sólo
-  el propietario lo apaga, en Configuración → Notificaciones.
+  mes (hasta el día 7 si el cron no pudo pasar el 1) y lo envía el cron de GitHub. Otro día del mes, el
+  del mes anterior se puede enviar a mano desde Actions («Run workflow» con su casilla), también una sola
+  vez (2026-11-10). Viene encendido y sólo el propietario lo apaga, en Configuración → Notificaciones.
 - La pantalla «Base de datos» de /admin (spec 024) sólo la ve el super admin principal, con la
   verificación en dos pasos y un límite de peticiones; sólo muestra nombres de tablas, tamaños y
   cifras (las consultas sin valores), nunca datos de filas. Su historial lo guarda el cron una vez
@@ -355,4 +356,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.38.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
+**Versión**: 1.39.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10

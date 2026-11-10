@@ -207,6 +207,19 @@ const again = async (business: string, date = "2029-07-02", time = "09:00") => {
   return reportsOf(business);
 };
 ok((await again(centro, "2029-07-08", "08:00")) === 0, "desde el día 8, ya no sale ese mes");
+// El botón «Enviar el informe mensual ahora» de Actions (2026-11-10): otro día del mes, el del mes anterior.
+const manual = async (date: string, time: string) => (await queueMonthlyReports(at(date, time), true)).queued;
+ok(
+  (await manual("2029-07-10", "07:59")) === 0 && reportsOf(centro) === 0,
+  "a mano, el día 10 antes de las 8:00, nada",
+);
+ok(
+  (await manual("2029-07-10", "18:00")) >= 1 && reportsOf(centro) === 1 && lastReport(centro)?.dedupeKey === `monthly-report:${centro}:2029-06`,
+  "a mano, el día 10 desde las 8:00 sale el de junio",
+  lastReport(centro),
+);
+ok((await manual("2029-07-12", "09:00")) === 0 && reportsOf(centro) === 1, "y apretarlo otra vez no lo repite");
+ok((await run("2029-07-12", "09:00")) === 0, "las pasadas programadas siguen sin enviarlo desde el día 8");
 sql(`update businesses set notification_settings = jsonb_set(notification_settings, '{monthlyReport}', 'false') where id = '${dental}'`);
 ok((await again(dental)) === 0, "con el informe apagado, nada");
 sql(`update businesses set notification_settings = notification_settings - 'monthlyReport', status = 'suspended' where id = '${dental}'`);
