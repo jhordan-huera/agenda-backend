@@ -3,6 +3,7 @@ import { one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import {
   AGENDA_PUSH_KINDS,
+  AGENDA_RECEIPT_PUSH_KINDS,
   MAX_PUSH_DEVICES,
   OWNER_PUSH_KINDS,
   PLATFORM_PUSH_KINDS,
@@ -22,7 +23,8 @@ import { isAllowedPushEndpoint, isValidPushKeys, pushServiceName, sendWebPush } 
  * Los aparatos con avisos en el celular (spec 013, R3): uno por navegador, del usuario y con los tipos
  * que no quiere. Los tienen el propietario de un negocio activo, el super admin (con la verificación en
  * dos pasos, como el resto de /admin) y, desde la spec 017, el rol Profesional con una agenda activa en
- * un negocio activo, sólo para el resumen de las 8 de su agenda. Recepción y los administradores no
+ * un negocio activo, sólo para el resumen de las 8 de su agenda (y, desde la spec 039, en un negocio con
+ * «Pedir el comprobante de pago», el comprobante de sus citas). Recepción y los administradores no
  * los tienen. El aparato se identifica por su dirección (`endpoint`), siempre en el cuerpo: nunca en la
  * URL ni en los registros.
  *
@@ -89,7 +91,9 @@ async function authorizePush(ctx: RequestContext): Promise<PushUser> {
   );
   if (!member) throw new AppError("forbidden", NOT_FOR_ROLE);
   if (!member.professionalId) throw new AppError("forbidden", NO_AGENDA);
-  return { userId: user.id, role: "agenda", kinds: AGENDA_PUSH_KINDS, businessId: member.businessId, actor };
+  // En un negocio con «Pedir el comprobante de pago» (spec 039), también el comprobante de sus citas.
+  const receipts = await one(pool, "select 1 from businesses where id = $1 and payment_reminders", [member.businessId]);
+  return { userId: user.id, role: "agenda", kinds: receipts ? AGENDA_RECEIPT_PUSH_KINDS : AGENDA_PUSH_KINDS, businessId: member.businessId, actor };
 }
 
 /** Qué dice el aviso de prueba y qué abre, según quién lo pide. */

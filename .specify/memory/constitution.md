@@ -96,8 +96,21 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   mismo día, nunca futura; cada cambio queda en la actividad. El contenido y la fecha de registro no se
   modifican (2026-10-28).
 - Cada email al paciente sobre su cita, también los recordatorios, sale con copia al profesional
-  (los recordatorios, desde el 2026-10-13). La copia puede esperar en la cola si un día no hay cupo de
-  Gmail, pero nunca se descarta (2026-10-15).
+  (los recordatorios, desde el 2026-10-13), salvo los recordatorios del comprobante de pago (spec 039).
+  La copia puede esperar en la cola si un día no hay cupo de Gmail, pero nunca se descarta (2026-10-15).
+- «Pedir el comprobante de pago» (spec 039, 2026-11-09) es un interruptor por negocio, apagado al
+  principio, que sólo cambia el super admin desde la ficha del negocio en /admin; el negocio no lo cambia
+  y no se activa para todos. Con él, el paciente principal de una cita Pendiente o Confirmada, con precio,
+  de una agenda con cuentas, sin comprobante ni pago, recibe un recordatorio por email al día, desde las
+  9:00 de la hora del negocio, con el enlace para subirlo: como mucho 3 por cita y un solo email al día con
+  todas sus citas. El comprobante se pide sólo antes de la cita (2026-11-10): en los días que elige el super
+  admin para el negocio (los 3 anteriores a la cita, los 3 siguientes a la reserva o los 2 anteriores y la
+  mañana del mismo día), nunca desde que empieza la cita; una cita que ya empezó, pasó o se completó no
+  recibe nada. Los recordatorios quedan en el historial de emails, no en la actividad. En el panel, la cita
+  que aún no empieza lleva la marca «Sin comprobante» y el profesional se lo puede recordar por WhatsApp, a
+  mano y sin contar en el tope. Al subirse el comprobante, el profesional de la agenda recibe el email y el
+  aviso aunque no tenga activados los avisos de sus citas. Sin el interruptor, el enlace de pago sigue como
+  siempre.
 - Una cita puede tener hasta 3 pacientes (sesiones de pareja), sólo en los negocios que el super
   admin habilite con su interruptor; el negocio no lo cambia. Cada paciente recibe sus avisos, la
   copia al profesional sale una vez y la hora se ocupa una sola vez (2026-10-13).
@@ -155,7 +168,8 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   de plan, y desde el cron los cambios de seguridad en cuentas de super admin y los intentos
   fallidos, además de ntfy. Si los avisos fallan, la reserva y los emails siguen igual (2026-10-14).
   El rol Profesional también puede activarlos, sólo para el resumen de las 8 de la noche de su agenda
-  (2026-10-15). Además, al empezar el día (a cada profesional a la hora de inicio de su horario y al
+  (2026-10-15) y, en los negocios con «Pedir el comprobante de pago», para el aviso del comprobante de
+  pago de sus citas (spec 039, 2026-11-09). Además, al empezar el día (a cada profesional a la hora de inicio de su horario y al
   propietario cuando abre el negocio, si ese día atiende) llega cuántas citas de días anteriores siguen
   sin cerrar, y el super admin recibe por la campana, su celular y ntfy a qué negocios salió cada tanda
   de esos recordatorios, sólo con cifras (2026-10-17).
@@ -314,4 +328,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.31.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-10-29
+**Versión**: 1.32.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10

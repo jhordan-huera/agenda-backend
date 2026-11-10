@@ -183,7 +183,25 @@ export interface Business {
    * para cada negocio; el negocio no lo cambia.
    */
   multiClientAppointments: boolean;
+  /**
+   * «Pedir el comprobante de pago» (spec 039): recordatorios diarios por email al paciente para que suba
+   * el comprobante de su cita. Lo activa el super admin para cada negocio; el negocio no lo cambia. Un
+   * backend anterior no lo manda: el panel lo trata como apagado.
+   */
+  paymentReminders: PaymentReminderSettings;
   createdAt: ISODateTime;
+}
+
+/**
+ * Qué días salen los recordatorios del comprobante, siempre antes de la cita (spec 039): los 3 días anteriores
+ * a la cita, los 3 días siguientes a la reserva, o los 2 días anteriores y la mañana del mismo día.
+ */
+export type PaymentReminderDays = "before_three" | "after_booking" | "before_and_morning";
+
+/** El interruptor del super admin (spec 039) y los días de los recordatorios, que también elige él. */
+export interface PaymentReminderSettings {
+  enabled: boolean;
+  days: PaymentReminderDays;
 }
 
 /** "own": sólo los pacientes con citas en su agenda o que registró él. */
@@ -711,7 +729,12 @@ export type EmailType =
   /** Al propietario: el super admin rechazó el comprobante, con el motivo (spec 029). */
   | "billing_rejected"
   /** Al propietario: el super admin anuló el cobro de un mes, con el motivo (spec 029). */
-  | "billing_voided";
+  | "billing_voided"
+  /**
+   * Al paciente: el recordatorio para que envíe el comprobante de pago, uno al día con todas sus citas
+   * pendientes de comprobante en el negocio (spec 039). Sin copia al profesional.
+   */
+  | "payment_reminder";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -1762,6 +1785,7 @@ export type PublicBusiness = Omit<
   | "professionalScope"
   | "clientRequiredFields"
   | "multiClientAppointments"
+  | "paymentReminders"
   | "createdAt"
 >;
 /** Sin su cuenta, su email ni sus avisos. */

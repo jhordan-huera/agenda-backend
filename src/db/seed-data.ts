@@ -550,6 +550,8 @@ function seedTenant(
     clientRequiredFields: { ...DEFAULT_CLIENT_REQUIRED_FIELDS },
     // Tampoco: apagado por defecto (migración 032); lo activa el super admin.
     multiClientAppointments: false,
+    // Tampoco: apagado por defecto (migración 055); lo activa el super admin.
+    paymentReminders: { enabled: false, days: "before_three" },
     createdAt,
   });
   const professionalBase = { businessId, avatarUrl: null, email: "", meetingUrl: "", bankAccounts: [], allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, calendarInvites: false, calendarEmail: "", isActive: true, createdAt };

@@ -11,7 +11,11 @@ import {
 import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
-import { CLIENT_REQUIRED_FIELD_OPTIONS, clientRequiredFieldsOf } from "../shared/lib/constants/business.ts";
+import {
+  CLIENT_REQUIRED_FIELD_OPTIONS,
+  clientRequiredFieldsOf,
+  paymentReminderDaysLabel,
+} from "../shared/lib/constants/business.ts";
 import { PLANS, getEffectiveLimits, getPlan } from "../shared/lib/constants/plans.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
 import { formatSupportContact, getFullName, plural } from "../shared/lib/format.ts";
@@ -27,6 +31,7 @@ import {
   planIdSchema,
   planRejectionSchema,
   panelColorsSchema,
+  paymentRemindersSchema,
   platformAdminSchema,
   platformSettingsSchema,
   userPasswordSchema,
@@ -38,6 +43,7 @@ import type {
   AdminBusinessSummary,
   AdminPlanRequest,
   AdminUserSummary,
+  AuditChange,
   AuditLog,
   AuditLogPage,
   BrandColors,
@@ -879,6 +885,53 @@ export const adminService = {
         entityId: businessId,
         summary: `${enabled ? "Activó" : "Desactivó"} las citas con varios pacientes en ${business.name}`,
         changes: [{ label: "Citas con varios pacientes", before: label(current.multiClientAppointments), after: label(enabled) }],
+      });
+      return business;
+    });
+  },
+
+  /**
+   * «Pedir el comprobante de pago» de un negocio (spec 039): `{ enabled, days }`. Sólo el super admin, desde la
+   * ficha del negocio en /admin; el negocio no lo cambia (ni el super admin en modo soporte desde su panel: lo
+   * ignora account-service). Los recordatorios salen siempre antes de la cita, en los días que elige aquí, que
+   * se pueden cambiar con el interruptor encendido. Al apagarlo no sale ningún recordatorio más y los días se
+   * conservan. Va a la actividad del negocio y a la de la plataforma (`platform.…`), con el antes y el después.
+   */
+  async setPaymentReminders(ctx: RequestContext, businessId: string, input: unknown): Promise<Business> {
+    const actor = authorizeSuperAdmin(ctx);
+    const next = parseInput(paymentRemindersSchema, input ?? {});
+    return transaction(async (db) => {
+      const current = await findBusiness(db, businessId, true);
+      const before = current.paymentReminders;
+      const turningOn = next.enabled && !before.enabled;
+      // Los días sólo cambian con el interruptor encendido; al apagarlo se conservan.
+      const days = next.enabled ? (next.days ?? before.days) : before.days;
+      if (next.enabled === before.enabled && days === before.days) return current;
+      const business = (await one<Business>(
+        db,
+        `update businesses set payment_reminders = $2, payment_reminder_days = $3 where id = $1 returning ${businessColumns()}`,
+        [businessId, next.enabled, days],
+      ))!;
+      const label = (on: boolean) => (on ? "Sí" : "No");
+      const changes: AuditChange[] = [];
+      if (next.enabled !== before.enabled) {
+        changes.push({ label: "Pedir el comprobante de pago", before: label(before.enabled), after: label(next.enabled) });
+      }
+      if (days !== before.days) {
+        changes.push({ label: "Días de los recordatorios", before: paymentReminderDaysLabel(before.days), after: paymentReminderDaysLabel(days) });
+      }
+      await logAudit(db, {
+        businessId,
+        actor,
+        action: "platform.payment_reminders_changed",
+        entityType: "business",
+        entityId: businessId,
+        summary: turningOn
+          ? `Activó «Pedir el comprobante de pago» en ${business.name}: ${paymentReminderDaysLabel(days).toLowerCase()}`
+          : !next.enabled
+            ? `Desactivó «Pedir el comprobante de pago» en ${business.name}`
+            : `Cambió los días de los recordatorios del comprobante en ${business.name}: ${paymentReminderDaysLabel(days).toLowerCase()}`,
+        changes,
       });
       return business;
     });

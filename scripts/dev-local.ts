@@ -6,7 +6,8 @@
  *   npm run dev:local              # la primera vez crea la base y carga la demo
  *   npm run dev:local -- --reset   # borra los datos y vuelve a cargar la demo
  *
- *   npm run dev:local -- --recordatorios   # también los recordatorios automáticos de las citas demo
+ *   npm run dev:local -- --recordatorios   # también los recordatorios automáticos de las citas demo (y los
+ *                                          # del comprobante de pago de los negocios que lo tengan, spec 039)
  *
  * Cada arranque aplica las migraciones nuevas: así una migración se prueba aquí antes de aplicarla
  * en producción. Del .env sólo lee la cuenta de Gmail (nunca la base, Supabase ni el CAPTCHA): con

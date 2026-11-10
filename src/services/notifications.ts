@@ -1,7 +1,7 @@
 import { config } from "../config.ts";
 import { appointmentColumns, businessColumns } from "../db/columns.ts";
 import { many, one, type Db } from "../db/pool.ts";
-import { canCancelOnline, isFollowUpDate } from "../shared/lib/constants/business.ts";
+import { canCancelOnline, isFollowUpDate, PAYMENT_REMINDERS_PER_APPOINTMENT } from "../shared/lib/constants/business.ts";
 import { emailTemplates, type AppointmentEmailData, type EmailContent, type SeriesEmailDate } from "../shared/lib/email/templates.ts";
 import { joinNames } from "../shared/lib/format.ts";
 import { addDaysISO, getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
@@ -9,6 +9,7 @@ import type { Appointment, BankAccount, Business, EmailType } from "../shared/ty
 import { appointmentClientIds } from "./appointment-clients.ts";
 import { newPatientEmailHold, publicEmailHold } from "./email-limits.ts";
 import { PASSWORD_MASK, scheduleEmailDelivery } from "./mailer.ts";
+import { isPaymentReminderDue, isPaymentReminderTime, type PaymentReminderCandidate } from "./payment-reminder-rules.ts";
 import { isQuietTime, minutesUntilStart, reminderCopyKey, reminderKeyFor, reminderKeySql } from "./reminder-rules.ts";
 
 export { PASSWORD_MASK };
@@ -286,12 +287,22 @@ async function notifyProfessional(
 
 /**
  * El paciente subió un comprobante: aviso al email del negocio y al profesional (si recibe los
- * avisos de sus citas y no es el mismo email).
+ * avisos de sus citas y no es el mismo email). En un negocio con «Pedir el comprobante de pago» (spec 039),
+ * al profesional de la agenda siempre, tenga o no activados esos avisos: es quien lo verifica (a su email de
+ * avisos o, si no tiene, al de su usuario, como la copia).
  */
 export async function notifyReceiptReceived(db: Db, appointment: Appointment): Promise<void> {
   const context = await loadAppointmentContext(db, appointment);
   if (!context) return;
-  const recipients = new Set([context.business.email, context.professionalNotify ? context.professionalEmail : ""].filter(Boolean));
+  const professionalTo = context.business.paymentReminders?.enabled
+    ? context.professionalCopyEmail
+    : context.professionalNotify
+      ? context.professionalEmail
+      : "";
+  // Una vez por dirección (el negocio y el profesional con el mismo email).
+  const recipients = new Map(
+    [context.business.email, professionalTo].filter(Boolean).map((email) => [emailKey(email), email.trim()] as const),
+  ).values();
   const content = emailTemplates.paymentReceiptReceived({
     ...buildEmailData(context, appointment),
     agendaUrl: `${appOrigin()}/dashboard/calendar?date=${appointment.date}&appointment=${appointment.id}`,
@@ -804,4 +815,89 @@ export async function runDailyAgendaJob(db: Db, businessId: string, at?: ZonedNo
     if (inserted) sent++;
   }
   return sent;
+}
+
+/* ------------------------------------------- El comprobante de pago (spec 039) -- */
+
+/**
+ * Los recordatorios del comprobante de pago de un negocio con «Pedir el comprobante de pago» (spec 039), un
+ * paso al día desde las 9:00 de su hora (lo ejecuta el cron de GitHub; en local, src/jobs/reminders.ts):
+ * - **Qué citas:** sólo antes de la cita, Pendientes o Confirmadas que aún no empezaron, con precio, de una
+ *   agenda con cuentas para transferir, sin comprobante ni pago, del paciente principal (appointments.client_id)
+ *   con email, con menos de 3 recordatorios y ninguno hoy, y que tocan hoy según los días que eligió el super
+ *   admin (isPaymentReminderDue). Las otras personas de una sesión en pareja nunca: los datos de pago son del
+ *   principal.
+ * - **Un email al día por paciente** con todas sus citas que tocan hoy, cada una con su botón (clave
+ *   `payment-reminder:<paciente>:<día>`); en la misma transacción, a cada cita se le suma un recordatorio y
+ *   se le anota el día. Si el email ya estaba (otra pasada del mismo día), esas citas no se tocan.
+ * - **Sin copia al profesional** (excepción de la constitución, spec 039) y nada en la actividad: queda en
+ *   el historial de emails. Es del nivel «paciente» del cupo de Gmail: si un día no cabe, espera.
+ * `at`: el momento (las pruebas avanzan los días). Devuelve cuántos emails quedaron en cola.
+ */
+export async function runPaymentReminderJob(db: Db, businessId: string, at: Date = new Date()): Promise<number> {
+  const business = await one<Business>(db, `select ${businessColumns()} from businesses where id = $1`, [businessId]);
+  if (!business || business.status !== "active" || !business.paymentReminders?.enabled) return 0;
+  const now = getZonedNow(business.timezone, at);
+  if (!isPaymentReminderTime(now)) return 0;
+
+  const rows = await many<Appointment & Omit<PaymentReminderCandidate, "days" | "status" | "date" | "startTime">>(
+    db,
+    `select ${appointmentColumns("a")},
+            to_char((a.created_at at time zone $2)::date, 'YYYY-MM-DD') as "bookedOn",
+            a.payment_reminders_sent as sent, to_char(a.payment_reminded_on, 'YYYY-MM-DD') as "remindedOn"
+       from appointments a
+       join professionals p on p.id = a.professional_id
+       join clients c on c.id = a.client_id
+      where a.business_id = $1
+        and a.price > 0 and a.receipt_at is null and a.paid_at is null
+        and a.status in ('pending', 'confirmed')
+        and a.payment_reminders_sent < $4
+        and (a.payment_reminded_on is null or a.payment_reminded_on <> $3::date)
+        and a.date >= $3::date
+        and jsonb_array_length(coalesce(p.bank_accounts, '[]'::jsonb)) > 0
+        and coalesce(c.email, '') <> ''
+      order by a.date, a.start_time`,
+    [businessId, business.timezone, now.date, PAYMENT_REMINDERS_PER_APPOINTMENT],
+  );
+  const due = rows.filter((row) => isPaymentReminderDue({ ...row, days: business.paymentReminders.days }, now));
+
+  const byClient = new Map<string, Appointment[]>();
+  for (const { bookedOn: _bookedOn, sent: _sent, remindedOn: _remindedOn, ...appointment } of due) {
+    byClient.set(appointment.clientId, [...(byClient.get(appointment.clientId) ?? []), appointment]);
+  }
+
+  let queued = 0;
+  for (const [clientId, appointments] of byClient) {
+    const items: AppointmentEmailData[] = [];
+    // Sólo cuentan las citas que van en el email.
+    const included: string[] = [];
+    let recipient: Recipient | undefined;
+    for (const appointment of appointments) {
+      const context = await loadAppointmentContext(db, appointment);
+      const main = context?.recipients.find((candidate) => candidate.clientId === clientId);
+      if (!context || !main?.email) continue;
+      const data = buildEmailData(context, appointment);
+      if (!data.payment) continue;
+      recipient ??= main;
+      items.push(data);
+      included.push(appointment.id);
+    }
+    if (!recipient || items.length === 0) continue;
+    const inserted = await queueEmail(db, {
+      businessId,
+      type: "payment_reminder",
+      to: recipient.email,
+      appointmentId: included[0],
+      dedupeKey: `payment-reminder:${clientId}:${now.date}`,
+      ...emailTemplates.paymentReminder({ clientName: recipient.name, appointments: items }),
+    });
+    if (!inserted) continue;
+    queued++;
+    await db.query(
+      `update appointments set payment_reminders_sent = payment_reminders_sent + 1, payment_reminded_on = $2::date
+        where id = any($1::uuid[])`,
+      [included, now.date],
+    );
+  }
+  return queued;
 }

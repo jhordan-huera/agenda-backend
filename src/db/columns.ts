@@ -22,7 +22,7 @@ export const userColumns = columns({
   createdAt: "created_at",
 });
 
-export const businessColumns = columns({
+const businessOwnColumns = columns({
   id: "id",
   ownerId: "owner_id",
   status: "status",
@@ -48,6 +48,15 @@ export const businessColumns = columns({
   multiClientAppointments: "multi_client_appointments",
   createdAt: "created_at",
 });
+
+/**
+ * Las columnas del negocio y «Pedir el comprobante de pago» (spec 039) como `paymentReminders`:
+ * `{ enabled, days }`. `alias`: el de la tabla businesses en la consulta.
+ */
+export const businessColumns = (alias?: string) => {
+  const c = (column: string) => (alias ? `${alias}.${column}` : column);
+  return `${businessOwnColumns(alias)}, json_build_object('enabled', ${c("payment_reminders")}, 'days', ${c("payment_reminder_days")}) as "paymentReminders"`;
+};
 
 const professionalOwnColumns = columns({
   id: "id",

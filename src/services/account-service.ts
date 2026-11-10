@@ -242,9 +242,10 @@ export const businessService = {
   },
 
   async update(ctx: RequestContext, businessId: string, input: unknown): Promise<Business> {
-    // Los datos obligatorios del paciente y las citas con varios pacientes no se cambian aquí (ni el
-    // negocio ni el super admin en modo soporte): sólo desde /admin (PUT /admin/businesses/:id/
-    // client-required-fields y /multi-client-appointments). Se ignoran.
+    // Los datos obligatorios del paciente, las citas con varios pacientes y «Pedir el comprobante de pago»
+    // (spec 039) no se cambian aquí (ni el negocio ni el super admin en modo soporte): sólo desde /admin
+    // (PUT /admin/businesses/:id/client-required-fields, /multi-client-appointments y /payment-reminders).
+    // Se ignoran.
     const {
       bookingSettings,
       notificationSettings,
@@ -253,6 +254,7 @@ export const businessService = {
       professionalScope,
       clientRequiredFields: _clientRequiredFields,
       multiClientAppointments: _multiClientAppointments,
+      paymentReminders: _paymentReminders,
       ...profile
     } = (input ?? {}) as Record<string, unknown>;
     const profileData = Object.keys(profile).length ? parseInput(businessProfileSchema.partial(), profile) : {};

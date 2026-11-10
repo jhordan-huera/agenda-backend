@@ -420,6 +420,7 @@ function toPublicBusiness({
   professionalScope: _scope,
   clientRequiredFields: _required,
   multiClientAppointments: _multiClient,
+  paymentReminders: _paymentReminders,
   createdAt: _created,
   ...business
 }: Business): PublicBusiness {
