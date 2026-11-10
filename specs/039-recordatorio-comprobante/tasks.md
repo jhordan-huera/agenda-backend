@@ -35,3 +35,9 @@ Rutas: `back/` = agenda-backend, `front/` = agenda-front, `beta/` = ~/Documentos
 - [X] T015 back: `typecheck` y `npm test`; front: build, lint, `check:contrast` y `check:data-export`; beta: build y lint
 - [X] T016 Recorrido en Chromium a 1440 px en claro y en WebKit a 390 px en oscuro, con capturas
 - [X] T017 La prueba real: un recordatorio al buzón de pruebas (LOCAL_TEST_INBOX) con la base de prueba y la cuenta de Gmail, como `dev:local`
+
+## Fase 6: Sólo antes de la cita (cambio del 2026-11-10)
+
+- [X] T018 Migración 055 sin `professionals.payment_reminder_mode`; fuera el modo por agenda (ruta, servicio, campo en Profesionales y «Tu agenda», `PaymentReminderModeField`, tipos, esquemas y actividad); `PUT /admin/businesses/:id/payment-reminders` con `{ enabled, days }` y la tarjeta de /admin sin el modo
+- [X] T019 Reglas y paso diario sólo antes de la cita (pendiente o confirmada, nunca desde que empieza); la marca «Sin comprobante», el filtro y el WhatsApp sólo en citas que aún no han empezado; la constitución 1.32.0 corregida en los dos repos; la beta igual
+- [X] T020 Pruebas: fuera las del modo; una cita completada, pasada o ya empezada no recibe recordatorio; backend `typecheck` y `npm test`; front build, lint y checks; beta build y lint; el recorrido otra vez
