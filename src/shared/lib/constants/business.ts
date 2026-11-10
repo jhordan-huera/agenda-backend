@@ -149,6 +149,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   whatsappOnStatusChange: true,
   whatsappFollowUps: true,
   followUps: true,
+  monthlyReport: true,
 };
 
 /** Emails de seguimiento (Atendida, No asistió): sólo de citas de hoy o de los últimos 7 días (spec 008). */

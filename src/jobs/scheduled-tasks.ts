@@ -39,6 +39,7 @@ import { deleteUnusedImageUploads } from "../services/image-service.ts";
 import { deleteStalePendingReceipts, purgeOldReceipts } from "../services/payment-service.ts";
 import { processEmailQueue, scrubEmails, type EmailQueueReport } from "../services/mailer.ts";
 import { maskEmail, shortName } from "../services/masking.ts";
+import { runMonthlyReportJob } from "../services/monthly-report.ts";
 import { runDailyAgendaJob, runPaymentReminderJob, runReminderJob } from "../services/notifications.ts";
 import { cleanupPanelNotices } from "../services/panel-notices.ts";
 import { runPushJobs, type PushReport } from "../services/push-notices.ts";
@@ -128,6 +129,24 @@ export async function queuePaymentReminders(now: Date = new Date()): Promise<Que
 }
 
 /**
+ * El informe mensual al propietario (spec 040), en cada pasada: los negocios activos con propietario y el informe
+ * encendido, cada uno en su transacción. Sale del día 1 al 7 desde las 8:00 de su hora, una sola vez por mes
+ * (runMonthlyReportJob). `now`: el momento (las pruebas lo mueven). Devuelve cuántos quedaron en cola.
+ */
+export async function queueMonthlyReports(now: Date = new Date()): Promise<QueuedReminders> {
+  const businesses = await many<{ id: string }>(
+    pool,
+    `select id from businesses
+      where status = 'active' and owner_id is not null and coalesce((notification_settings ->> 'monthlyReport')::boolean, true)`,
+  );
+  return forEachBusiness(
+    businesses.map(({ id }) => id),
+    "informe mensual",
+    (db, id) => runMonthlyReportJob(db, id, now),
+  );
+}
+
+/**
  * El cobro de las mensualidades (spec 029), en cada pasada: primero el día de pago automático de los negocios
  * de pago que todavía no lo tienen (los nuevos, los que volvieron de Free y, al publicarse los precios, los que
  * ya existían); después el cobro del mes de cada negocio que ya llegó a su día de pago y el email de los tres
@@ -174,6 +193,8 @@ export interface ScheduledTasksReport {
    * día. Sólo la cifra (el registro es público).
    */
   paymentReminders?: number;
+  /** Informes mensuales (spec 040) puestos en cola en esta pasada. Sólo la cifra (el registro es público). */
+  monthlyReports?: number;
   /** Lo que hizo esta ejecución con la cola de emails. */
   emails: EmailQueueReport;
   /** Emails enviados desde la ejecución anterior: también los que salieron al momento (reservas, avisos). */
@@ -384,6 +405,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const billing = await runMonthlyBilling();
   // Los recordatorios del comprobante de pago (spec 039), también antes del envío: salen en esta pasada.
   const paymentReminders = await queuePaymentReminders();
+  // El informe mensual (spec 040), también antes del envío.
+  const monthlyReports = await queueMonthlyReports();
   const emails = await processEmailQueue({ maxBatches: MAX_EMAIL_BATCHES, deadline: started + EMAIL_BUDGET_MS });
   await deleteExpiredSessions();
   await deleteStalePendingAttachments();
@@ -465,9 +488,10 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     emailContentPurged > 0 && (cronLog !== null || emailContentPurged >= EMAIL_VACUUM_MIN) ? await reclaimEmailSpace() : undefined;
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
-    reminderFailures: reminders.failures + calendarInvites.failures + billing.failures + paymentReminders.failures,
+    reminderFailures: reminders.failures + calendarInvites.failures + billing.failures + paymentReminders.failures + monthlyReports.failures,
     calendarInvites: calendarInvites.queued,
     paymentReminders: paymentReminders.queued,
+    monthlyReports: monthlyReports.queued,
     emails,
     sentSinceLastRun: totals?.sent ?? 0,
     sentEmails: sent.map((email) => ({

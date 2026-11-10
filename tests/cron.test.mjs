@@ -95,7 +95,7 @@ ok(
   "sin Gmail no envía nada: todo sigue en cola (recordatorios y sus copias)",
 );
 ok(
-  /Recordatorios: \d+ · invitaciones de calendario: \d+ · recordatorios de pago: \d+ · reservas por la página: \d+ · pacientes nuevos del panel: \d+ · citas del panel: \d+ · series del panel: \d+ · series canceladas: \d+ · cambios de estado: \d+ · cambios de cuenta: \d+ · importaciones: \d+ · enviados/.test(run.output) &&
+  /Recordatorios: \d+ · invitaciones de calendario: \d+ · recordatorios de pago: \d+ · informes mensuales: \d+ · reservas por la página: \d+ · pacientes nuevos del panel: \d+ · citas del panel: \d+ · series del panel: \d+ · series canceladas: \d+ · cambios de estado: \d+ · cambios de cuenta: \d+ · importaciones: \d+ · enviados/.test(run.output) &&
     // Los recordatorios del comprobante de pago (spec 039) y el cobro de las mensualidades (spec 029): sólo cifras.
     /· mensualidades: cobros \d+ · recordatorios \d+ · comprobantes \d+ \(borrados, más de 12 meses: \d+\)/.test(run.output) &&
     !/@/.test(run.output),

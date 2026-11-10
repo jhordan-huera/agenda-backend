@@ -64,6 +64,7 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   billing_rejected: ["Comprobante de mensualidad rechazado (al propietario)", "Comprobantes de mensualidad rechazados (al propietario)"],
   billing_voided: ["Cobro de mensualidad anulado (al propietario)", "Cobros de mensualidad anulados (al propietario)"],
   professional_daily_agenda: ["Agenda del día (al profesional)", "Agendas del día (al profesional)"],
+  monthly_report: ["Informe mensual (al propietario)", "Informes mensuales (al propietario)"],
   payment_receipt_received: ["Comprobante de pago (al negocio)", "Comprobantes de pago (al negocio)"],
   patient_cancelled: ["Aviso de cancelación del paciente (al negocio)", "Avisos de cancelación del paciente (al negocio)"],
   business_created: ["Negocio creado", "Negocios creados"],
@@ -496,7 +497,7 @@ async function main(): Promise<void> {
 
     console.info(
       `Recordatorios: ${report.reminders} · invitaciones de calendario: ${report.calendarInvites ?? 0} · ` +
-        `recordatorios de pago: ${report.paymentReminders ?? 0} · ` +
+        `recordatorios de pago: ${report.paymentReminders ?? 0} · informes mensuales: ${report.monthlyReports ?? 0} · ` +
         `reservas por la página: ${report.onlineBookings ?? 0} · ` +
         `pacientes nuevos del panel: ${report.panelClients ?? 0} · citas del panel: ${report.panelAppointments ?? 0} · ` +
         `series del panel: ${report.panelSeries ?? 0} · series canceladas: ${report.seriesCancellations ?? 0} · ` +

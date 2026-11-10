@@ -207,6 +207,13 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   datos de pacientes), y se prepara una vez al día con el cron, fuera de Vercel (2026-10-15). Sólo
   salen los negocios activos: un suspendido no está ni en las cifras ni en los totales, y si se suspende
   después de prepararla, sale al momento (2026-11-10).
+- El informe mensual (spec 040, 2026-11-10): el día 1, desde las 8:00 de su hora, el propietario de cada
+  negocio activo con citas el mes anterior recibe por email el resumen de ese mes: citas, reservas online,
+  recordatorios, confirmaciones, cancelaciones con tiempo, pacientes nuevos, comprobantes, ingresos
+  estimados y la comparación con el mes de antes. Sólo cifras reales del negocio, contadas como la
+  analítica: nunca datos de pacientes, planes, precios de Agenda360 ni cifras estimadas. Sale una vez por
+  mes (hasta el día 7 si el cron no pudo pasar el 1) y lo envía el cron de GitHub. Viene encendido y sólo
+  el propietario lo apaga, en Configuración → Notificaciones.
 - La pantalla «Base de datos» de /admin (spec 024) sólo la ve el super admin principal, con la
   verificación en dos pasos y un límite de peticiones; sólo muestra nombres de tablas, tamaños y
   cifras (las consultas sin valores), nunca datos de filas. Su historial lo guarda el cron una vez
@@ -340,4 +347,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.35.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
+**Versión**: 1.36.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
