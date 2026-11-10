@@ -9,12 +9,7 @@ import type { Appointment, BankAccount, Business, EmailType } from "../shared/ty
 import { appointmentClientIds } from "./appointment-clients.ts";
 import { newPatientEmailHold, publicEmailHold } from "./email-limits.ts";
 import { PASSWORD_MASK, scheduleEmailDelivery } from "./mailer.ts";
-import {
-  isPaymentReminderDue,
-  isPaymentReminderTime,
-  PAYMENT_REMINDER_AFTER_DAYS,
-  type PaymentReminderCandidate,
-} from "./payment-reminder-rules.ts";
+import { isPaymentReminderDue, isPaymentReminderTime, type PaymentReminderCandidate } from "./payment-reminder-rules.ts";
 import { isQuietTime, minutesUntilStart, reminderCopyKey, reminderKeyFor, reminderKeySql } from "./reminder-rules.ts";
 
 export { PASSWORD_MASK };
@@ -827,10 +822,11 @@ export async function runDailyAgendaJob(db: Db, businessId: string, at?: ZonedNo
 /**
  * Los recordatorios del comprobante de pago de un negocio con «Pedir el comprobante de pago» (spec 039), un
  * paso al día desde las 9:00 de su hora (lo ejecuta el cron de GitHub; en local, src/jobs/reminders.ts):
- * - **Qué citas:** con precio, de una agenda con cuentas para transferir, sin comprobante ni pago, del paciente
- *   principal (appointments.client_id) con email, con menos de 3 recordatorios y ninguno hoy, y que tocan hoy
- *   según el modo de su agenda y los días del negocio (isPaymentReminderDue). Las otras personas de una
- *   sesión en pareja nunca: los datos de pago son del principal.
+ * - **Qué citas:** sólo antes de la cita, Pendientes o Confirmadas que aún no empezaron, con precio, de una
+ *   agenda con cuentas para transferir, sin comprobante ni pago, del paciente principal (appointments.client_id)
+ *   con email, con menos de 3 recordatorios y ninguno hoy, y que tocan hoy según los días que eligió el super
+ *   admin (isPaymentReminderDue). Las otras personas de una sesión en pareja nunca: los datos de pago son del
+ *   principal.
  * - **Un email al día por paciente** con todas sus citas que tocan hoy, cada una con su botón (clave
  *   `payment-reminder:<paciente>:<día>`); en la misma transacción, a cada cita se le suma un recordatorio y
  *   se le anota el día. Si el email ya estaba (otra pasada del mismo día), esas citas no se tocan.
@@ -846,7 +842,7 @@ export async function runPaymentReminderJob(db: Db, businessId: string, at: Date
 
   const rows = await many<Appointment & Omit<PaymentReminderCandidate, "days" | "status" | "date" | "startTime">>(
     db,
-    `select ${appointmentColumns("a")}, p.payment_reminder_mode as mode,
+    `select ${appointmentColumns("a")},
             to_char((a.created_at at time zone $2)::date, 'YYYY-MM-DD') as "bookedOn",
             a.payment_reminders_sent as sent, to_char(a.payment_reminded_on, 'YYYY-MM-DD') as "remindedOn"
        from appointments a
@@ -854,19 +850,19 @@ export async function runPaymentReminderJob(db: Db, businessId: string, at: Date
        join clients c on c.id = a.client_id
       where a.business_id = $1
         and a.price > 0 and a.receipt_at is null and a.paid_at is null
-        and a.status in ('pending', 'confirmed', 'completed')
+        and a.status in ('pending', 'confirmed')
         and a.payment_reminders_sent < $4
         and (a.payment_reminded_on is null or a.payment_reminded_on <> $3::date)
-        and a.date >= $3::date - $5::int
+        and a.date >= $3::date
         and jsonb_array_length(coalesce(p.bank_accounts, '[]'::jsonb)) > 0
         and coalesce(c.email, '') <> ''
       order by a.date, a.start_time`,
-    [businessId, business.timezone, now.date, PAYMENT_REMINDERS_PER_APPOINTMENT, PAYMENT_REMINDER_AFTER_DAYS],
+    [businessId, business.timezone, now.date, PAYMENT_REMINDERS_PER_APPOINTMENT],
   );
   const due = rows.filter((row) => isPaymentReminderDue({ ...row, days: business.paymentReminders.days }, now));
 
   const byClient = new Map<string, Appointment[]>();
-  for (const { mode: _mode, bookedOn: _bookedOn, sent: _sent, remindedOn: _remindedOn, ...appointment } of due) {
+  for (const { bookedOn: _bookedOn, sent: _sent, remindedOn: _remindedOn, ...appointment } of due) {
     byClient.set(appointment.clientId, [...(byClient.get(appointment.clientId) ?? []), appointment]);
   }
 

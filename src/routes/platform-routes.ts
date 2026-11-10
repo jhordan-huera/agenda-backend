@@ -254,7 +254,7 @@ adminRoutes.put(
   "/businesses/:businessId/multi-client-appointments",
   handle((req) => adminService.setMultiClientAppointments(req.ctx, req.params.businessId, req.body?.enabled)),
 );
-// «Pedir el comprobante de pago» (spec 039): { enabled, defaultMode (al activarlo), days }.
+// «Pedir el comprobante de pago» (spec 039): { enabled, days }.
 adminRoutes.put(
   "/businesses/:businessId/payment-reminders",
   handle((req) => adminService.setPaymentReminders(req.ctx, req.params.businessId, req.body)),

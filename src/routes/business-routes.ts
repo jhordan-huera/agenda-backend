@@ -117,14 +117,6 @@ businessRoutes.patch(
   "/:businessId/professionals/:professionalId/calendar-invites",
   handle((req) => professionalService.setCalendarInvites(req.ctx, req.params.businessId, req.params.professionalId, req.body)),
 );
-// El modo de los recordatorios del comprobante de una agenda (spec 039): { mode }. Los mismos permisos que el
-// calendario; con el negocio sin activar, 409.
-businessRoutes.patch(
-  "/:businessId/professionals/:professionalId/payment-reminder-mode",
-  handle((req) =>
-    professionalService.setPaymentReminderMode(req.ctx, req.params.businessId, req.params.professionalId, req.body),
-  ),
-);
 businessRoutes.put(
   "/:businessId/professionals/:professionalId/schedule",
   handle((req) => scheduleService.saveWeek(req.ctx, req.params.businessId, req.body, req.params.professionalId)),

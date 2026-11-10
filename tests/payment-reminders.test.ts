@@ -1,10 +1,10 @@
-// Recordatorios del comprobante de pago (spec 039). El interruptor «Pedir el comprobante de pago» es sólo del
-// super admin (el propietario y el modo soporte no lo cambian), va a la actividad del negocio y de la
-// plataforma, y al activarlo todas las agendas toman el modo por defecto. El modo de cada agenda lo cambian el
-// profesional en la suya y quien gestiona los profesionales en cualquiera (recepción no; sin activar, 409). El
-// paso diario (queuePaymentReminders, con el momento como parámetro para avanzar los días): los tres juegos de
-// días del modo «Antes», el modo «Después», uno al día desde las 9:00, el tope de 3, nunca el día de la reserva
-// ni después de empezar la cita, y que se detienen con el comprobante, el pago, la cancelación y «No asistió».
+// Recordatorios del comprobante de pago (spec 039), sólo antes de la cita (2026-11-10). El interruptor «Pedir el
+// comprobante de pago» es sólo del super admin (el propietario y el modo soporte no lo cambian), con los días
+// que él elige ({ enabled, days }: ya no hay modo por agenda), y va a la actividad del negocio y de la
+// plataforma. El paso diario (queuePaymentReminders, con el momento como parámetro para avanzar los días): los
+// tres juegos de días, uno al día desde las 9:00, el tope de 3, nunca el día de la reserva ni desde que empieza
+// la cita, nada para una cita Completada, pasada o que ya empezó, y que se detienen con el comprobante, el pago,
+// la cancelación y «No asistió».
 // Un email por paciente y día con todas sus citas; sólo el principal de una sesión en pareja; nada sin email,
 // gratis, sin cuentas o en un negocio sin activar; sin copia al profesional y sin actividad. Al subir el
 // comprobante, el profesional de la agenda recibe el email y el aviso en el celular. El cupo, la etiqueta del
@@ -38,8 +38,6 @@ const SWITCH = `/admin/businesses/${businessId}/payment-reminders`;
 const GYE = sql(`select timezone from businesses where id = '${businessId}'`);
 const businessNow = async () => (await ricardo("GET", B)).body as Business;
 const professionals = async () => (await ricardo("GET", `${B}/professionals`)).body as Professional[];
-const mode = (who: typeof ricardo, professionalId: string, value: unknown) =>
-  who("PATCH", `${B}/professionals/${professionalId}/payment-reminder-mode`, { mode: value });
 const businessAudit = async (action: string) =>
   ((await ricardo("GET", `${B}/audit-logs?action=${action}&limit=100`)).body?.entries ?? []) as AuditLog[];
 const changesOf = (log: AuditLog | undefined) =>
@@ -47,7 +45,7 @@ const changesOf = (log: AuditLog | undefined) =>
     ({ label, before, after }) => `${label}: ${before} → ${after}`,
   );
 
-let agendas = await professionals();
+const agendas = await professionals();
 const ricardoAgenda = agendas.find((p) => p.userId === ricardo.session.userId)!;
 const valeriaAgenda = agendas.find((p) => p.userId === valeria.session.userId)!;
 const andresAgenda = agendas.find((p) => p.userId === null)!;
@@ -162,8 +160,8 @@ ok(
   business.paymentReminders,
 );
 ok(count("select count(*) from businesses where payment_reminders") === 0, "ningún negocio demo lo tiene encendido");
-ok(agendas.every((p) => p.paymentReminderMode === "before"), "las agendas empiezan en «Antes de la cita»", agendas.map((p) => p.paymentReminderMode));
-let r = await ricardo("PUT", SWITCH, { enabled: true, defaultMode: "before", days: "before_three" });
+ok(agendas.every((p) => !("paymentReminderMode" in p)), "las agendas no tienen un modo propio (sólo antes de la cita)", agendas[0]);
+let r = await ricardo("PUT", SWITCH, { enabled: true, days: "before_three" });
 ok(r.status === 403, "el propietario no usa la ruta del super admin: 403", r.status);
 r = await ricardo("PATCH", B, { paymentReminders: { enabled: true, days: "after_booking" } });
 ok(r.status === 200 && r.body.paymentReminders.enabled === false && r.body.paymentReminders.days === "before_three", "ni lo enciende desde su configuración (se ignora)", r.body?.paymentReminders);
@@ -173,10 +171,8 @@ ok(
   "el super admin en modo soporte, desde el panel del negocio, tampoco (se ignora: sólo desde /admin)",
   r.body?.paymentReminders,
 );
-r = await mode(valeria, valeriaAgenda.id, "after");
-ok(r.status === 409 && /no tiene activados/.test(r.body?.error?.message), "sin activar, el modo de una agenda no se cambia: 409", r.body);
-r = await ricardo("PUT", `${B}/professionals/${andresAgenda.id}`, { ...formOf(andresAgenda), paymentReminderMode: "after" });
-ok(r.status === 409, "ni desde la ficha de Profesionales: 409", r.body);
+r = await valeria("PATCH", `${B}/professionals/${valeriaAgenda.id}/payment-reminder-mode`, { mode: "before" });
+ok(r.status === 404, "ya no existe la ruta del modo de una agenda", r.status);
 
 // Una cita que lo cumple todo, en un negocio sin activar: nada.
 const offPatient = patient("Rosa Inactiva Paredes");
@@ -206,22 +202,28 @@ ok(
 
 /* ======================================================================================== */
 console.log("El super admin lo activa");
-r = await admin("PUT", SWITCH, { enabled: true, days: "before_three" });
-ok(r.status === 400 && /modo por defecto/.test(r.body?.error?.message), "al activarlo hay que elegir el modo por defecto: 400", r.body);
-r = await admin("PUT", SWITCH, { enabled: "sí", defaultMode: "before" });
+r = await admin("PUT", SWITCH, { enabled: true, defaultMode: "before", days: "before_three" });
+ok(
+  r.status === 400 && /Sólo se elige si se activa y qué días/.test(r.body?.error?.message) && !(await businessNow()).paymentReminders.enabled,
+  "el PUT de /admin ya no acepta un modo por defecto: 400, y no cambia nada",
+  r.body,
+);
+r = await admin("PUT", SWITCH, { enabled: "sí" });
 ok(r.status === 400, "el interruptor es sí o no: 400", r.body);
-r = await admin("PUT", SWITCH, { enabled: true, defaultMode: "despues", days: "before_three" });
-ok(r.status === 400, "un modo que no existe: 400", r.body);
-r = await admin("PUT", SWITCH, { enabled: true, defaultMode: "after", days: "before_three" });
-ok(r.status === 200 && r.body.paymentReminders.enabled === true && r.body.paymentReminders.days === "before_three", "el super admin lo activa", r.body?.paymentReminders);
-agendas = await professionals();
-ok(agendas.every((p) => p.paymentReminderMode === "after"), "todas las agendas toman el modo por defecto («Después de la cita»)", agendas.map((p) => p.paymentReminderMode));
+r = await admin("PUT", SWITCH, { enabled: true, days: "despues" });
+ok(r.status === 400, "unos días que no existen: 400", r.body);
+r = await admin("PUT", SWITCH, { enabled: true });
+ok(
+  r.status === 200 && r.body.paymentReminders.enabled === true && r.body.paymentReminders.days === "before_three",
+  "el super admin lo activa sin elegir ningún modo (con los días de siempre: los 3 anteriores a la cita)",
+  r.body?.paymentReminders,
+);
 let logs = await businessAudit("platform.payment_reminders_changed");
 ok(
   logs.length === 1 &&
-    logs[0].summary === "Activó «Pedir el comprobante de pago» en Clínica Dental Sonrisa: todas las agendas, «Después de la cita»" &&
+    logs[0].summary === "Activó «Pedir el comprobante de pago» en Clínica Dental Sonrisa: los 3 días anteriores a la cita" &&
     /Super admin/.test(logs[0].actorName) &&
-    JSON.stringify(changesOf(logs[0])) === JSON.stringify(["Pedir el comprobante de pago: No → Sí", "Modo de las agendas: Antes de la cita → Después de la cita"]),
+    JSON.stringify(changesOf(logs[0])) === JSON.stringify(["Pedir el comprobante de pago: No → Sí"]),
   "queda en la actividad del negocio, con el antes y el después",
   logs.map((log) => [log.summary, log.actorName, changesOf(log)]),
 );
@@ -231,12 +233,8 @@ ok(
   "y en la de la plataforma (acciones del super admin)",
   r.status,
 );
-r = await admin("PUT", SWITCH, { enabled: true, defaultMode: "before", days: "before_three" });
-agendas = await professionals();
-ok(
-  r.status === 200 && (await businessAudit("platform.payment_reminders_changed")).length === 1 && agendas.every((p) => p.paymentReminderMode === "after"),
-  "repetir lo mismo no deja otra entrada ni cambia las agendas (el modo por defecto es sólo al activarlo)",
-);
+r = await admin("PUT", SWITCH, { enabled: true, days: "before_three" });
+ok(r.status === 200 && (await businessAudit("platform.payment_reminders_changed")).length === 1, "repetir lo mismo no deja otra entrada");
 ok((await businessNow()).paymentReminders.enabled === true, "el panel del negocio lo ve encendido");
 const profile = (await anonymous()("GET", "/public/businesses/dental-sonrisa")).body;
 ok(profile?.business && !("paymentReminders" in profile.business), "la página de reservas no lo muestra", profile?.business);
@@ -245,51 +243,11 @@ logs = await businessAudit("platform.payment_reminders_changed");
 ok(
   r.status === 200 && r.body.paymentReminders.days === "after_booking" && logs.length === 2 &&
     logs[0].summary === "Cambió los días de los recordatorios del comprobante en Clínica Dental Sonrisa: los 3 días siguientes a la reserva" &&
-    JSON.stringify(changesOf(logs[0])) === JSON.stringify(["Días del modo «Antes de la cita»: Los 3 días anteriores a la cita → Los 3 días siguientes a la reserva"]),
+    JSON.stringify(changesOf(logs[0])) === JSON.stringify(["Días de los recordatorios: Los 3 días anteriores a la cita → Los 3 días siguientes a la reserva"]),
   "los días se cambian con el interruptor encendido, con su entrada (antes → después)",
   logs.map((log) => [log.summary, changesOf(log)]),
 );
 await admin("PUT", SWITCH, { enabled: true, days: "before_three" });
-
-/* ======================================================================================== */
-console.log("El modo de cada agenda");
-r = await mode(valeria, valeriaAgenda.id, "before");
-ok(r.status === 200 && r.body.paymentReminderMode === "before", "Valeria lo cambia en su agenda", r.body);
-logs = await businessAudit("professional.payment_reminder_mode_changed");
-ok(
-  logs.length === 1 &&
-    logs[0].summary === "Cambió los recordatorios del comprobante de la agenda de Dra. Valeria Cruz: Después de la cita → Antes de la cita" &&
-    logs[0].actorName === "Valeria Cruz",
-  "queda en la actividad del negocio, a su nombre",
-  logs.map((log) => [log.summary, log.actorName]),
-);
-r = await mode(valeria, ricardoAgenda.id, "before");
-ok(r.status === 403 && /tu propia agenda/.test(r.body?.error?.message), "el profesional no cambia la de otro: 403", r.body);
-r = await mode(elena, valeriaAgenda.id, "after");
-ok(r.status === 403, "recepción no lo cambia: 403", r.body);
-r = await mode(ricardo, valeriaAgenda.id, "lunes");
-ok(r.status === 400, "un modo que no existe: 400", r.body);
-r = await mode(ricardo, ricardoAgenda.id, "before");
-ok(r.status === 200 && r.body.paymentReminderMode === "before", "el propietario cambia el de cualquier agenda", r.body);
-r = await mode(admin, valeriaAgenda.id, "after");
-ok(r.status === 200 && r.body.paymentReminderMode === "after", "el super admin en modo soporte también (como propietario)", r.body);
-const before = (await businessAudit("professional.payment_reminder_mode_changed")).length;
-r = await mode(admin, valeriaAgenda.id, "after");
-ok(r.status === 200 && (await businessAudit("professional.payment_reminder_mode_changed")).length === before, "repetir el mismo modo no deja otra entrada");
-const andresNow = (await professionals()).find((p) => p.id === andresAgenda.id)!;
-const updatedBefore = (await businessAudit("professional.updated")).length;
-r = await ricardo("PUT", `${B}/professionals/${andresAgenda.id}`, { ...formOf(andresNow), paymentReminderMode: "before" });
-logs = await businessAudit("professional.payment_reminder_mode_changed");
-ok(
-  r.status === 200 && r.body.paymentReminderMode === "before" &&
-    logs[0].summary === "Cambió los recordatorios del comprobante de la agenda de Dr. Andrés Vega: Después de la cita → Antes de la cita" &&
-    (await businessAudit("professional.updated")).length === updatedBefore,
-  "desde la ficha de Profesionales, con su propia entrada y sin un «Editó» vacío",
-  [r.status, r.body?.paymentReminderMode, logs[0]?.summary],
-);
-r = await ricardo("PUT", `${B}/professionals/${andresAgenda.id}`, formOf(andresNow));
-ok(r.status === 200 && r.body.paymentReminderMode === "before", "sin el campo (un front anterior), la ficha conserva el modo", r.body?.paymentReminderMode);
-// Ricardo y Andrés: «Antes de la cita»; Valeria: «Después de la cita».
 
 /* ======================================================================================== */
 console.log("Al subir el comprobante, el profesional de la agenda se entera");
@@ -319,7 +277,7 @@ ok(receiptEmailsTo(ownReceipt) === "ricardo@demo.com", "en la agenda del propiet
 retire([offAppointment]);
 
 /* ======================================================================================== */
-console.log("Modo «Antes»: los 3 días anteriores a la cita");
+console.log("Los 3 días anteriores a la cita");
 const p1 = patient("Ana Martes Salazar");
 const p2 = patient("Bruno Miércoles Ortiz");
 const friday1 = day(1, 5);
@@ -361,7 +319,7 @@ ok(stateOf(a1) === `3|${day(1, 4)}` && stateOf(a2) === `1|${day(1, 4)}`, "Ana ll
 retire([a1, a2]);
 
 /* ======================================================================================== */
-console.log("Modo «Antes»: los 3 días siguientes a la reserva");
+console.log("Los 3 días siguientes a la reserva");
 await admin("PUT", SWITCH, { enabled: true, days: "after_booking" });
 const p3 = patient("Carla Reserva Lejos");
 const p4 = patient("Diego Reserva Cerca");
@@ -376,7 +334,7 @@ ok(stateOf(a3) === `3|${day(2, 4)}` && stateOf(a4) === `2|${day(2, 3)}`, "reserv
 retire([a3, a4]);
 
 /* ======================================================================================== */
-console.log("Modo «Antes»: los 2 días anteriores y la mañana del mismo día");
+console.log("Los 2 días anteriores y la mañana del mismo día");
 await admin("PUT", SWITCH, { enabled: true, days: "before_and_morning" });
 const p5 = patient("Elena Tarde Rivas");
 const p6 = patient("Fabián Temprano Rojas");
@@ -389,22 +347,34 @@ ok(stateOf(a5) === `3|${day(3, 5)}` && stateOf(a6) === `2|${day(3, 4)}`, "nunca 
 retire([a5, a6]);
 
 /* ======================================================================================== */
-console.log("Modo «Después de la cita» (la agenda de Valeria)");
+console.log("Sólo antes de la cita: nada para la Completada, la pasada ni la que ya empezó");
+// Siguen los 2 días anteriores y la mañana del mismo día (como en la sección anterior).
 const p7 = patient("Gabriela Atendida León");
 const p8 = patient("Hugo Confirmado Paz");
-const p9 = patient("Inés Pendiente Mora");
-const p10 = patient("Jorge Antiguo Vela");
-const a7 = appointment({ client: p7, professional: valeriaAgenda.id, date: day(4, 2), start: "10:00", status: "completed" });
-const a8 = appointment({ client: p8, professional: valeriaAgenda.id, date: day(4, 2), start: "11:00", status: "confirmed" });
-const a9 = appointment({ client: p9, professional: valeriaAgenda.id, date: day(4, 2), start: "12:00", status: "pending" });
-const a10 = appointment({ client: p10, professional: valeriaAgenda.id, date: addDaysISO(day(4, 3), -10), start: "10:00", status: "completed" });
-ok((await run(day(4, 2), "18:00")) === 0, "el mismo día de la cita, nada");
-ok((await run(day(4, 3))) === 2 && remindersTo(p7) === 1 && remindersTo(p8) === 1, "desde el día siguiente: la «Completada» y la «Confirmada» sin cerrar");
-ok(remindersTo(p9) === 0 && stateOf(a9) === "0|", "la «Por confirmar», no");
-ok((await run(day(4, 4))) === 2 && (await run(day(4, 5))) === 2 && (await run(day(4, 6))) === 0, "uno por día, hasta 3");
-ok(stateOf(a7) === `3|${day(4, 5)}` && stateOf(a8) === `3|${day(4, 5)}`, "las dos llegaron al tope", [stateOf(a7), stateOf(a8)]);
-ok(remindersTo(p10) === 0 && stateOf(a10) === "0|", "la de hace más de 7 días, no (al activar un negocio, nada de citas viejas)");
-retire([a7, a8, a9, a10]);
+const p9 = patient("Inés Completada Antes");
+const p10 = patient("Jorge Hoy Temprano");
+const p11 = patient("Karen Hoy Tarde");
+const a7 = appointment({ client: p7, date: day(4, 2), start: "10:00", status: "completed" });
+const a8 = appointment({ client: p8, date: day(4, 2), start: "11:00", status: "confirmed" });
+const a9 = appointment({ client: p9, date: day(4, 5), start: "16:00", status: "completed" });
+const a10 = appointment({ client: p10, date: day(4, 5), start: "09:00" });
+const a11 = appointment({ client: p11, date: day(4, 5), start: "15:00" });
+ok((await run(day(4, 2), "18:00")) === 0, "el martes, ni la Completada ni la Confirmada de esa mañana (ya empezaron)");
+ok((await run(day(4, 3))) === 2 && remindersTo(p10) === 1 && remindersTo(p11) === 1, "el miércoles, sólo las dos del viernes que siguen activas");
+ok(
+  remindersTo(p7) === 0 && remindersTo(p8) === 0 && stateOf(a7) === "0|" && stateOf(a8) === "0|",
+  "una cita Completada o pasada sin comprobante no recibe recordatorio (ni la Confirmada sin cerrar)",
+  [stateOf(a7), stateOf(a8)],
+);
+ok(remindersTo(p9) === 0 && stateOf(a9) === "0|", "una Completada, aunque sea más adelante, tampoco");
+ok((await run(day(4, 4))) === 2, "el jueves, las mismas dos");
+ok(
+  (await run(day(4, 5))) === 1 && remindersTo(p10) === 2 && remindersTo(p11) === 3,
+  "el viernes a las 9:30: la de hoy a las 9:00 ya empezó y no recibe nada; la de las 15:00, sí",
+  [remindersTo(p10), remindersTo(p11)],
+);
+ok((await run(day(4, 6))) === 0 && remindersTo(p7) === 0 && remindersTo(p8) === 0, "después de la cita, nunca", [stateOf(a7), stateOf(a8)]);
+retire([a7, a8, a9, a10, a11]);
 
 /* ======================================================================================== */
 console.log("Se detienen con el comprobante, el pago, la cancelación y «No asistió»");
@@ -416,20 +386,20 @@ const p15 = patient("Nicolás No Asistió");
 const a12 = appointment({ client: p12, date: day(5, 5), start: "10:00" });
 const a13 = appointment({ client: p13, date: day(5, 5), start: "11:00" });
 const a14 = appointment({ client: p14, date: day(5, 5), start: "12:00" });
-const a15 = appointment({ client: p15, professional: valeriaAgenda.id, date: day(5, 2), start: "10:00" });
-ok((await run(day(5, 2))) === 3, "el martes, las tres del viernes");
+const a15 = appointment({ client: p15, date: day(5, 5), start: "13:00" });
+ok((await run(day(5, 2))) === 4, "el martes, las cuatro del viernes");
 ok((await uploadReceipt(a12)) === 200, "Karla sube el comprobante");
 r = await ricardo("PATCH", `${B}/appointments/${a13}/payment`, { paid: true });
 ok(r.status === 200 && r.body.paidAt, "el negocio marca pagada la de Luis", r.body);
 r = await ricardo("PATCH", `${B}/appointments/${a14}/status`, { status: "cancelled", notify: false });
 ok(r.status === 200 && r.body.status === "cancelled", "y cancela la de Marta", r.body);
-ok((await run(day(5, 3))) === 1 && remindersTo(p15) === 1, "el miércoles, ninguna de las tres; sí la de Nicolás (modo «Después», del martes)");
 sql(`update appointments set status = 'no_show' where id = '${a15}'`);
-ok((await run(day(5, 4))) === 0 && remindersTo(p15) === 1, "Nicolás quedó en «No asistió»: el jueves, nada");
+ok((await run(day(5, 3))) === 0 && (await run(day(5, 4))) === 0, "el miércoles y el jueves, ninguna (la de Nicolás quedó en «No asistió»)");
 ok(
-  [a12, a13, a14].every((id) => stateOf(id) === `1|${day(5, 2)}`) && remindersTo(p12) === 1 && remindersTo(p13) === 1 && remindersTo(p14) === 1,
+  [a12, a13, a14, a15].every((id) => stateOf(id) === `1|${day(5, 2)}`) &&
+    [p12, p13, p14, p15].every((who) => remindersTo(who) === 1),
   "cada una se quedó en 1",
-  [a12, a13, a14].map(stateOf),
+  [a12, a13, a14, a15].map(stateOf),
 );
 retire([a12, a13, a15]);
 
@@ -489,15 +459,13 @@ ok(
   [r.body?.paymentReminders, logs[0]?.summary],
 );
 ok((await run(day(7, 2))) === 0 && remindersTo(p23) === 0, "no sale ningún recordatorio más");
-ok((await mode(ricardo, ricardoAgenda.id, "after")).status === 409, "y el modo de las agendas ya no se cambia");
 r = await valeria("GET", "/push/config");
 ok(JSON.stringify(r.body?.kinds) === JSON.stringify(AGENDA_PUSH_KINDS), "el rol Profesional vuelve a tener sólo sus resúmenes", r.body?.kinds);
 const offAgain = appointment({ client: patient("Wilson Comprobante Off"), professional: valeriaAgenda.id, date: day(7, 3), start: "10:00" });
 await uploadReceipt(offAgain);
 ok(receiptEmailsTo(offAgain) === "ricardo@demo.com" && comprobantePushes(offAgain) === 0, "y el comprobante vuelve a avisar como antes", receiptEmailsTo(offAgain));
-r = await admin("PUT", SWITCH, { enabled: true, defaultMode: "before" });
-agendas = await professionals();
-ok(r.status === 200 && agendas.every((p) => p.paymentReminderMode === "before"), "al volver a activarlo, las agendas toman el nuevo modo por defecto", agendas.map((p) => p.paymentReminderMode));
+r = await admin("PUT", SWITCH, { enabled: true });
+ok(r.status === 200 && r.body.paymentReminders.enabled === true && r.body.paymentReminders.days === "before_three", "lo vuelve a activar", r.body?.paymentReminders);
 ok((await run(day(7, 2), "10:00")) === 1 && remindersTo(p23) === 1, "y vuelven a salir");
 retire([a23]);
 
@@ -513,22 +481,3 @@ push.close();
 done("de los recordatorios del comprobante de pago");
 process.exit();
 
-/** La ficha de una agenda tal como la manda el formulario de Profesionales. */
-function formOf(p: Professional) {
-  return {
-    displayName: p.displayName,
-    title: p.title,
-    avatarUrl: p.avatarUrl,
-    color: p.color,
-    email: p.email,
-    meetingUrl: p.meetingUrl,
-    bankAccounts: p.bankAccounts,
-    userId: p.userId,
-    allServices: p.allServices,
-    serviceIds: p.serviceIds,
-    notifyNewAppointments: p.notifyNewAppointments,
-    dailyAgenda: p.dailyAgenda,
-    isActive: p.isActive,
-    calendarInvites: p.calendarInvites,
-  };
-}

@@ -193,18 +193,12 @@ export interface Business {
 }
 
 /**
- * Qué días salen los recordatorios del comprobante en el modo «Antes de la cita» (spec 039): los 3 días
- * anteriores a la cita, los 3 días siguientes a la reserva, o los 2 días anteriores y la mañana del mismo día.
+ * Qué días salen los recordatorios del comprobante, siempre antes de la cita (spec 039): los 3 días anteriores
+ * a la cita, los 3 días siguientes a la reserva, o los 2 días anteriores y la mañana del mismo día.
  */
 export type PaymentReminderDays = "before_three" | "after_booking" | "before_and_morning";
 
-/**
- * El modo de los recordatorios del comprobante de una agenda (spec 039): «Antes de la cita» (quien cobra
- * por adelantado) o «Después de la cita» (quien cobra después de atender).
- */
-export type PaymentReminderMode = "before" | "after";
-
-/** El interruptor del super admin (spec 039) y los días del modo «Antes de la cita». */
+/** El interruptor del super admin (spec 039) y los días de los recordatorios, que también elige él. */
 export interface PaymentReminderSettings {
   enabled: boolean;
   days: PaymentReminderDays;
@@ -311,11 +305,6 @@ export interface Professional {
    * si está vacío, el de su usuario. "" = la agenda no tiene email y no puede activarlas.
    */
   calendarEmail: string;
-  /**
-   * El modo de los recordatorios del comprobante de pago de su agenda (spec 039). Sólo cuenta si el negocio
-   * tiene «Pedir el comprobante de pago». Un backend anterior no lo manda.
-   */
-  paymentReminderMode: PaymentReminderMode;
   /** Enlace de su sala de videollamada (Meet, Zoom…) para las citas virtuales ("" = sin enlace). */
   meetingUrl: string;
   /**

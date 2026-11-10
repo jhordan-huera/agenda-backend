@@ -78,8 +78,6 @@ const professionalOwnColumns = columns({
   notifyNewAppointments: "notify_new_appointments",
   dailyAgenda: "daily_agenda",
   calendarInvites: "calendar_invites",
-  // Los recordatorios del comprobante de pago de la agenda (spec 039): «before» o «after».
-  paymentReminderMode: "payment_reminder_mode",
   isActive: "is_active",
   sortOrder: "sort_order",
   createdAt: "created_at",

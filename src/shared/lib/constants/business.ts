@@ -7,7 +7,6 @@ import type {
   DayOfWeek,
   NotificationSettings,
   PaymentReminderDays,
-  PaymentReminderMode,
   PaymentReminderSettings,
   ServiceMode,
   TimeRange,
@@ -209,8 +208,8 @@ export function clientRequiredFieldsOf(business: { clientRequiredFields?: Client
 }
 
 /**
- * Recordatorios del comprobante de pago (spec 039): como mucho 3 por cita y uno al día, desde las 9:00 en
- * la hora del negocio. Los usan la API, la tarjeta del super admin y el modo de cada agenda: si cambian,
+ * Recordatorios del comprobante de pago (spec 039), siempre antes de la cita: como mucho 3 por cita y uno al
+ * día, desde las 9:00 en la hora del negocio. Los usan la API y la tarjeta del super admin: si cambian,
  * cambian aquí.
  */
 export const PAYMENT_REMINDERS_PER_APPOINTMENT = 3;
@@ -224,21 +223,7 @@ export function paymentRemindersOf(business: { paymentReminders?: PaymentReminde
   return { ...DEFAULT_PAYMENT_REMINDERS, ...business?.paymentReminders };
 }
 
-/** Los dos modos de una agenda, en el orden del selector, con su explicación. */
-export const PAYMENT_REMINDER_MODE_OPTIONS: { value: PaymentReminderMode; label: string; description: string }[] = [
-  {
-    value: "before",
-    label: "Antes de la cita",
-    description: "Para quien cobra por adelantado: el paciente recibe el recordatorio antes de su cita.",
-  },
-  {
-    value: "after",
-    label: "Después de la cita",
-    description: "Para quien cobra después de atender: desde el día siguiente a la cita, si sigue sin comprobante.",
-  },
-];
-
-/** Los días del modo «Antes de la cita» (los elige el super admin), con un ejemplo de fechas. */
+/** Qué días salen los recordatorios (los elige el super admin), con un ejemplo de fechas. */
 export const PAYMENT_REMINDER_DAYS_OPTIONS: { value: PaymentReminderDays; label: string; example: string }[] = [
   {
     value: "before_three",
@@ -256,10 +241,6 @@ export const PAYMENT_REMINDER_DAYS_OPTIONS: { value: PaymentReminderDays; label:
     example: "Con la cita el viernes a las 15:00: el miércoles, el jueves y el viernes a las 9:00.",
   },
 ];
-
-/** «Antes de la cita» o «Después de la cita». */
-export const paymentReminderModeLabel = (mode: PaymentReminderMode) =>
-  PAYMENT_REMINDER_MODE_OPTIONS.find((option) => option.value === mode)?.label ?? mode;
 
 /** «Los 3 días anteriores a la cita»… */
 export const paymentReminderDaysLabel = (days: PaymentReminderDays) =>

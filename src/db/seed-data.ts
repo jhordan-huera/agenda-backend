@@ -554,7 +554,7 @@ function seedTenant(
     paymentReminders: { enabled: false, days: "before_three" },
     createdAt,
   });
-  const professionalBase = { businessId, avatarUrl: null, email: "", meetingUrl: "", bankAccounts: [], allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, calendarInvites: false, calendarEmail: "", paymentReminderMode: "before" as const, isActive: true, createdAt };
+  const professionalBase = { businessId, avatarUrl: null, email: "", meetingUrl: "", bankAccounts: [], allServices: true, serviceIds: [], notifyNewAppointments: true, dailyAgenda: true, calendarInvites: false, calendarEmail: "", isActive: true, createdAt };
   db.professionals.push({
     ...professionalBase,
     id: professionalId,
