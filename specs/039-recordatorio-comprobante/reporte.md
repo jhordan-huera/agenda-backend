@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada (2026-11-10) · **Fecha**: 2026-11-10
+**Estado**: Publicada (2026-11-10, PR backend #68 y front #51) · **Fecha**: 2026-11-10
 
 **Repos**: agenda-backend y agenda-front (y la beta) · **Migración**: Sí: `055_recordatorio_comprobante.sql`
 

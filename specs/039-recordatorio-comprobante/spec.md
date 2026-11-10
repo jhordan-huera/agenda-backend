@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/039-recordatorio-comprobante` (rama de trabajo: `dev`) · **Creada**: 2026-11-09
 
-**Estado**: Implementada (2026-11-10). Aprobada el 2026-11-09 y cambiada el 2026-11-10: sólo antes de la cita
+**Estado**: Publicada (2026-11-10, PR backend #68 y front #51). Aprobada el 2026-11-09 y cambiada el 2026-11-10: sólo antes de la cita
 
 **Repos**:
 - **agenda-backend:** el interruptor y los días, el envío diario de los recordatorios, el email y los avisos del
