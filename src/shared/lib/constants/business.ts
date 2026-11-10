@@ -173,7 +173,11 @@ export const canCancelOnline = (
   minutesUntilStart: number,
 ) => settings.allowCancellations && minutesUntilStart > settings.cancellationNoticeHours * 60;
 
-/** Días después de la cita en que su enlace «Tu cita» deja de abrirse (spec 010). */
+/**
+ * Días después de la cita en que sus enlaces privados dejan de abrirse: «Tu cita» (spec 010) y, desde
+ * el 2026-11-10, también el de pago (/pago/:token). Así un enlace viejo, reenviado o filtrado ya no
+ * enseña las cuentas del negocio ni deja subir comprobantes.
+ */
 export const APPOINTMENT_PAGE_DAYS = 30;
 
 /**

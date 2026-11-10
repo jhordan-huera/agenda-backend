@@ -137,6 +137,11 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   antelación; si no, la página da el WhatsApp o el teléfono del negocio. La cancelación avisa
   como todo cambio de estado, y la copia al profesional no lleva los botones del paciente
   (2026-10-14).
+- El enlace de pago (`/pago/:token`) y «Tu cita» son personales y dejan de abrirse 30 días después
+  de la cita; pasado eso, ni el panel ni los emails lo ofrecen. Las dos páginas piden no compartir
+  el enlace y los buscadores no las guardan. El comprobante que sube el paciente se comprueba por
+  su contenido, no sólo por el tipo que declara el navegador: si no es de verdad una foto o un PDF,
+  se rechaza y se borra (auditoría de seguridad, 2026-11-10).
 - Una cita del panel se puede repetir cada semana, cada 2 semanas o cada mes (el mismo día del mes;
   si no existe, el último), de 2 a 24 citas. Antes de crearlas se ve la lista de fechas: las que
   chocan con otra cita o pasan el cupo del plan no se crean a esa hora; las de un bloqueo, un día sin
@@ -328,4 +333,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.32.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
+**Versión**: 1.33.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10

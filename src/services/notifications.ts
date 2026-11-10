@@ -1,7 +1,7 @@
 import { config } from "../config.ts";
 import { appointmentColumns, businessColumns } from "../db/columns.ts";
 import { many, one, type Db } from "../db/pool.ts";
-import { canCancelOnline, isFollowUpDate, PAYMENT_REMINDERS_PER_APPOINTMENT } from "../shared/lib/constants/business.ts";
+import { APPOINTMENT_PAGE_DAYS, canCancelOnline, isFollowUpDate, PAYMENT_REMINDERS_PER_APPOINTMENT } from "../shared/lib/constants/business.ts";
 import { emailTemplates, type AppointmentEmailData, type EmailContent, type SeriesEmailDate } from "../shared/lib/email/templates.ts";
 import { joinNames } from "../shared/lib/format.ts";
 import { addDaysISO, getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
@@ -196,9 +196,13 @@ function buildEmailData(context: AppointmentContext, appointment: Appointment): 
     homeVisit: appointment.homeVisit,
     isVirtual: appointment.isVirtual,
     meetingUrl: appointment.isVirtual ? context.meetingUrl || null : null,
-    // Sólo si hay algo que pagar y aún no se marcó como pagada; con todas las cuentas (vale cualquiera).
+    // Sólo si hay algo que pagar, aún no se marcó como pagada y su enlace todavía se abre (hasta
+    // APPOINTMENT_PAGE_DAYS días después de la cita); con todas las cuentas (vale cualquiera).
     payment:
-      context.bankAccounts.length > 0 && appointment.price > 0 && !appointment.paidAt
+      context.bankAccounts.length > 0 &&
+      appointment.price > 0 &&
+      !appointment.paidAt &&
+      appointment.date >= addDaysISO(getZonedNow(business.timezone).date, -APPOINTMENT_PAGE_DAYS)
         ? { bankAccounts: context.bankAccounts, url: paymentUrl(appointment.paymentToken) }
         : null,
     // En las citas virtuales la hora va con la zona del negocio: el paciente puede estar en otro país.
