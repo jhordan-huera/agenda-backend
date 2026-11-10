@@ -115,17 +115,42 @@ export interface ZonedNow {
   minutes: number;
 }
 
+const dateFormats = new Map<string, Intl.DateTimeFormat>();
+
+/**
+ * Un formato de fechas que se crea una sola vez por idioma, zona y opciones: crearlo cuesta unas 15
+ * veces más que usarlo, y la hora del negocio se calcula en casi cada petición (la CPU de Vercel
+ * tiene tope). Con una zona que no existe lanza el mismo error de siempre y no se guarda.
+ */
+export function cachedDateFormat(locale: string, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = `${locale}|${JSON.stringify(options)}`;
+  let format = dateFormats.get(key);
+  if (!format) {
+    format = new Intl.DateTimeFormat(locale, options);
+    dateFormats.set(key, format);
+  }
+  return format;
+}
+
+/** Los de getZonedNow, por zona: es la más usada y así ni siquiera arma la clave. */
+const zonedNowFormats = new Map<string, Intl.DateTimeFormat>();
+
 /** Fecha y hora actuales en la zona horaria indicada (p. ej. America/Guayaquil). */
 export function getZonedNow(timezone: string, at: Date = new Date()): ZonedNow {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(at);
+  let format = zonedNowFormats.get(timezone);
+  if (!format) {
+    format = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+    zonedNowFormats.set(timezone, format);
+  }
+  const parts = format.formatToParts(at);
   const get = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? "00";
 
