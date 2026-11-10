@@ -28,6 +28,7 @@ import { matchesDeclaredType, SIGNATURE_BYTES } from "./file-signature.ts";
 import { notifyReceiptReceived } from "./notifications.ts";
 import { greetingName } from "./public-booking-service.ts";
 import { notifyReceipt } from "./push-notices.ts";
+import { minutesUntilStart } from "./reminder-rules.ts";
 
 /**
  * Pago por transferencia. Cada cita tiene un enlace privado (/pago/:token) donde el paciente ve
@@ -55,6 +56,17 @@ const NOT_A_RECEIPT = "Ese archivo no es una foto ni un PDF. Sube la foto o el P
 
 /** A una cita cancelada o en la que el paciente no se presentó ya no se le envían comprobantes. */
 const CLOSED_STATUSES = ["cancelled", "no_show"];
+
+/**
+ * Subir el comprobante es confirmar que va (pedido del dueño del producto, 2026-11-10): la cita del
+ * paciente principal queda con «Confirmó que va», como si pulsara «Confirmo que voy», si está pendiente o
+ * confirmada, aún no empieza y no lo había confirmado. Sin el aviso de la confirmación: ya sale el del
+ * comprobante. Un comprobante de una cita que ya pasó no confirma nada.
+ */
+const confirmsAttendance = (appointment: Appointment, timezone: string) =>
+  (appointment.status === "pending" || appointment.status === "confirmed") &&
+  !appointment.clientConfirmations.some((confirmation) => confirmation.clientId === appointment.clientId) &&
+  minutesUntilStart(appointment.date, appointment.startTime, getZonedNow(timezone)) > 0;
 
 interface PaymentContext {
   appointment: Appointment;
@@ -198,7 +210,7 @@ export const paymentService = {
   async completeUpload(token: string, receiptId: string): Promise<PaymentReceipt> {
     const storage = requireReceiptStorage();
     const result = await transaction(async (db) => {
-      const { appointment } = await findByToken(db, token, true);
+      const { appointment, timezone } = await findByToken(db, token, true);
       const receipt = isUuid(receiptId)
         ? await one<{ storagePath: string; status: string; fileName: string; contentType: string }>(
             db,
@@ -229,10 +241,14 @@ export const paymentService = {
           return { receipt: null, rejected: { path: receipt.storagePath, error: new AppError("validation", problem) } };
         }
         await db.query("update payment_receipts set status = 'ready', size_bytes = $2 where id = $1", [receiptId, size]);
+        const confirms = confirmsAttendance(appointment, timezone);
         const updated = (await one<Appointment>(
           db,
-          `update appointments set receipt_at = now() where id = $1 returning ${appointmentColumns()}`,
-          [appointment.id],
+          `update appointments
+              set receipt_at = now(),
+                  client_confirmed_at = case when $2 then coalesce(client_confirmed_at, now()) else client_confirmed_at end
+            where id = $1 returning ${appointmentColumns()}`,
+          [appointment.id, confirms],
         ))!;
         await notifyReceiptReceived(db, updated);
         await logAudit(db, {
@@ -241,7 +257,7 @@ export const paymentService = {
           action: "appointment.receipt_received",
           entityType: "appointment",
           entityId: appointment.id,
-          summary: `Comprobante de pago recibido de ${await describeAppointment(db, updated)}`,
+          summary: `Comprobante de pago recibido de ${await describeAppointment(db, updated)}${confirms ? ". Con eso, confirmó que va" : ""}`,
         });
         // Aviso en el celular del propietario (spec 013).
         await notifyReceipt(db, updated);

@@ -137,7 +137,10 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   otra persona de una sesión tiene el suyo. «Confirmo que voy» es una marca aparte: no cambia el
   estado (confirmar la cita sigue siendo decisión del negocio), no avisa por ntfy (al celular del
   propietario sí, desde el 2026-10-15) y se borra si cambian la fecha, la hora o el profesional, o
-  si la cita se cancela; la actividad dice cuándo se borró. Cancelar desde ahí sólo lo
+  si la cita se cancela; la actividad dice cuándo se borró. Subir el comprobante de pago también
+  es confirmar que va (2026-11-10): la cita del paciente principal queda con «Confirmó que va» si
+  está pendiente o confirmada, aún no empieza y no lo había confirmado, sin otro aviso que el del
+  comprobante; el comprobante de una cita que ya pasó no confirma nada. Cancelar desde ahí sólo lo
   puede el paciente principal, si el negocio tiene «Permitir cancelaciones» y falta más que su
   antelación; si no, la página da el WhatsApp o el teléfono del negocio. La cancelación avisa
   como todo cambio de estado, y la copia al profesional no lleva los botones del paciente
@@ -352,4 +355,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.37.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
+**Versión**: 1.38.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10

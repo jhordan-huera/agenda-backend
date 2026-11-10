@@ -341,7 +341,8 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   (reemplaza la primera y conserva las demás), ambos obsoletos, para los fronts viejos en caché.
   Publicar el backend antes que el front (el front nuevo ya no conoce `bankAccount`). Sin sesión: `GET /public/payments/:token`, `POST
   /public/payments/:token/receipts` (JPG, PNG, WebP, HEIC o PDF, 10 MB; **uno por cita**: enviado,
-  se rechaza otro, también si dos pestañas suben a la vez; no en citas canceladas o "No asistió") y `POST …/receipts/:id/complete` (avisa por email al negocio). En el
+  se rechaza otro, también si dos pestañas suben a la vez; no en citas canceladas o "No asistió") y `POST …/receipts/:id/complete` (avisa por email al negocio; si la cita está pendiente o confirmada y aún
+  no empieza, también guarda `client_confirmed_at`: subir el comprobante es confirmar que va, 2026-11-10). En el
   panel: `GET /businesses/:id/appointments/:id/receipts`, `GET /businesses/:id/payment-receipts/:id/url`
   (URL firmada de 5 min) y `PATCH /businesses/:id/appointments/:id/payment` (`{ paid }`). Los
   comprobantes se borran con la cita (al eliminar el paciente o el negocio, también sus archivos) y,
