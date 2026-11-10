@@ -120,6 +120,11 @@ export interface NotificationSettings {
    * traen: cuenta como encendido.
    */
   followUps: boolean;
+  /**
+   * Informe mensual al propietario (spec 040): el día 1, el resumen del mes anterior por email. Encendido por
+   * defecto; sólo lo cambia el propietario. Los negocios guardados antes no lo traen: cuenta como encendido.
+   */
+  monthlyReport: boolean;
 }
 
 /**
@@ -734,7 +739,8 @@ export type EmailType =
    * Al paciente: el recordatorio para que envíe el comprobante de pago, uno al día con todas sus citas
    * pendientes de comprobante en el negocio (spec 039). Sin copia al profesional.
    */
-  | "payment_reminder";
+  | "payment_reminder"
+  | "monthly_report";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -1635,7 +1641,7 @@ export interface AnalyticsSnapshot {
   /** El periodo en la hora de Ecuador: desde (incluido) y hasta (hoy, sin incluir). */
   from: ISODate;
   to: ISODate;
-  /** Una por negocio, activos y suspendidos (la página filtra). */
+  /** Una por negocio activo: los suspendidos no salen en la analítica (2026-11-10; las fotos de antes sí los traen). */
   businesses: BusinessAnalytics[];
   /** Una por tipo con negocios activos, más «Sin tipo» si hace falta. */
   categories: CategoryAnalytics[];

@@ -299,6 +299,9 @@ export const businessService = {
         assignments.push(`booking_settings = $${values.length}`);
       }
       if (notifications) {
+        // El informe mensual (spec 040) sólo lo cambia el propietario: si lo manda otra persona del equipo o el
+        // super admin en modo soporte, se conserva el guardado (sin el campo guardado, encendido).
+        if (previous?.ownerId !== actor.userId) notifications.monthlyReport = previous?.notificationSettings.monthlyReport ?? true;
         values.push(notifications);
         assignments.push(`notification_settings = $${values.length}`);
       }

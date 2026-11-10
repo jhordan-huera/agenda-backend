@@ -621,7 +621,7 @@ export function buildCategories(
     );
 }
 
-/** Los totales de la plataforma (de todos los negocios) y la adopción de cada función (sólo los activos). */
+/** Los totales de la plataforma y la adopción de cada función, de los negocios activos (los únicos de la foto). */
 export function buildPlatform(businesses: BusinessAnalytics[]): PlatformTotals {
   const active = businesses.filter((business) => business.status === "active");
   const sum = (pick: (business: BusinessAnalytics) => number) => businesses.reduce((total, business) => total + pick(business), 0);
@@ -660,7 +660,8 @@ export async function buildSnapshot(days: AnalyticsPeriodDays, now: Date = new D
   const activityOf = byId(activity);
   const beforeAfterOf = byId(beforeAfter);
 
-  const businesses = base.map((row): BusinessAnalytics => {
+  // Sólo los activos: los suspendidos no salen en la analítica (decisión del dueño del producto, 2026-11-10).
+  const businesses = base.filter((row) => row.status === "active").map((row): BusinessAnalytics => {
     const a = appointmentsOf.get(row.id);
     const act = activityOf.get(row.id);
     const ba = beforeAfterOf.get(row.id);
@@ -863,10 +864,19 @@ export async function businessAnalytics(businessId: string, db: Db = pool): Prom
 }
 
 export const analyticsService = {
-  /** GET /api/admin/analytics?days=30|90: la última foto de ese periodo, o `{ snapshot: null }` si aún no hay. */
+  /**
+   * GET /api/admin/analytics?days=30|90: la última foto de ese periodo, o `{ snapshot: null }` si aún no hay.
+   * La foto es de una vez al día: un negocio suspendido (o eliminado) después de prepararla se quita al
+   * leerla, y los totales de la plataforma se vuelven a sumar sin él.
+   */
   async getSnapshot(ctx: RequestContext, query: { days?: unknown }): Promise<{ snapshot: AnalyticsSnapshot | null }> {
     authorizeSuperAdmin(ctx);
     const days = Number(parseInput(periodSchema, query.days ?? "30")) as AnalyticsPeriodDays;
-    return { snapshot: await latestSnapshot(days) };
+    const snapshot = await latestSnapshot(days);
+    if (!snapshot) return { snapshot: null };
+    const active = new Set((await many<{ id: string }>(pool, "select id from businesses where status = 'active'")).map((row) => row.id));
+    if (snapshot.businesses.every((business) => business.status === "active" && active.has(business.id))) return { snapshot };
+    const businesses = snapshot.businesses.filter((business) => business.status === "active" && active.has(business.id));
+    return { snapshot: { ...snapshot, businesses, platform: buildPlatform(businesses) } };
   },
 };

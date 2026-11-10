@@ -11,6 +11,7 @@ import {
   purgeOldBillingReceipts,
   queueBillingReminder,
   unscheduledBusinessIds,
+  voidSuspendedCharges,
 } from "../services/billing-service.ts";
 import {
   billingReceiptNotice,
@@ -38,6 +39,7 @@ import { deleteUnusedImageUploads } from "../services/image-service.ts";
 import { deleteStalePendingReceipts, purgeOldReceipts } from "../services/payment-service.ts";
 import { processEmailQueue, scrubEmails, type EmailQueueReport } from "../services/mailer.ts";
 import { maskEmail, shortName } from "../services/masking.ts";
+import { runMonthlyReportJob } from "../services/monthly-report.ts";
 import { runDailyAgendaJob, runPaymentReminderJob, runReminderJob } from "../services/notifications.ts";
 import { cleanupPanelNotices } from "../services/panel-notices.ts";
 import { runPushJobs, type PushReport } from "../services/push-notices.ts";
@@ -127,6 +129,24 @@ export async function queuePaymentReminders(now: Date = new Date()): Promise<Que
 }
 
 /**
+ * El informe mensual al propietario (spec 040), en cada pasada: los negocios activos con propietario y el informe
+ * encendido, cada uno en su transacción. Sale del día 1 al 7 desde las 8:00 de su hora, una sola vez por mes
+ * (runMonthlyReportJob). `now`: el momento (las pruebas lo mueven). Devuelve cuántos quedaron en cola.
+ */
+export async function queueMonthlyReports(now: Date = new Date()): Promise<QueuedReminders> {
+  const businesses = await many<{ id: string }>(
+    pool,
+    `select id from businesses
+      where status = 'active' and owner_id is not null and coalesce((notification_settings ->> 'monthlyReport')::boolean, true)`,
+  );
+  return forEachBusiness(
+    businesses.map(({ id }) => id),
+    "informe mensual",
+    (db, id) => runMonthlyReportJob(db, id, now),
+  );
+}
+
+/**
  * El cobro de las mensualidades (spec 029), en cada pasada: primero el día de pago automático de los negocios
  * de pago que todavía no lo tienen (los nuevos, los que volvieron de Free y, al publicarse los precios, los que
  * ya existían); después el cobro del mes de cada negocio que ya llegó a su día de pago y el email de los tres
@@ -135,7 +155,10 @@ export async function queuePaymentReminders(now: Date = new Date()): Promise<Que
  */
 export async function runMonthlyBilling(
   at: Date = new Date(),
-): Promise<{ schedules: number; charges: number; reminders: number; failures: number }> {
+): Promise<{ schedules: number; charges: number; reminders: number; voided: number; failures: number }> {
+  // Los cobros sin pagar de los negocios suspendidos se anulan (2026-11-10): al suspender ya se hace, y esto
+  // recoge los de los que ya estaban suspendidos.
+  const { count: voided } = await voidSuspendedCharges(pool);
   const schedules = await forEachBusiness(await unscheduledBusinessIds(pool), "día de pago automático", (db, id) =>
     ensureBillingSchedule(db, id, at),
   );
@@ -146,6 +169,7 @@ export async function runMonthlyBilling(
     schedules: schedules.queued,
     charges: charges.queued,
     reminders: reminders.queued,
+    voided,
     failures: schedules.failures + charges.failures + reminders.failures,
   };
 }
@@ -169,6 +193,8 @@ export interface ScheduledTasksReport {
    * día. Sólo la cifra (el registro es público).
    */
   paymentReminders?: number;
+  /** Informes mensuales (spec 040) puestos en cola en esta pasada. Sólo la cifra (el registro es público). */
+  monthlyReports?: number;
   /** Lo que hizo esta ejecución con la cola de emails. */
   emails: EmailQueueReport;
   /** Emails enviados desde la ejecución anterior: también los que salieron al momento (reservas, avisos). */
@@ -208,7 +234,8 @@ export interface ScheduledTasksReport {
    * días antes, los comprobantes que llegaron desde la ejecución anterior y los de más de 12 meses que se
    * borraron (null: sin almacenamiento). Sólo cifras: el registro es público.
    */
-  billing?: { charges: number; reminders: number; receipts: number; receiptsPurged: number | null };
+  /** `voided`: cobros sin pagar de negocios suspendidos que esta pasada anuló (2026-11-10). */
+  billing?: { charges: number; reminders: number; receipts: number; receiptsPurged: number | null; voided?: number };
   /** El aviso de cada comprobante de mensualidad (hasta MAX_BILLING_RECEIPT_NOTICES), con el negocio y el monto. */
   billingReceiptNotices?: BookingNotice[];
   /** Cambios de seguridad en cuentas de super admin desde la ejecución anterior (spec 009). */
@@ -241,8 +268,13 @@ export interface ScheduledTasksReport {
   databaseStats?: DatabaseStatsRefresh;
   /** Registros de auditoría borrados por antigüedad (purge_audit_logs: sesiones 90 días, acciones 5 meses, historia clínica 5 años). */
   auditPurged: number;
-  /** Emails con más de EMAIL_CONTENT_DAYS días a los que se les borró el contenido. */
+  /** Emails enviados (o fallidos) antes del último lunes a las 12:00 a los que se les borró el contenido. */
   emailContentPurged: number;
+  /**
+   * Si se le devolvió el espacio a la tabla de los emails (VACUUM FULL): en la pasada del lunes al
+   * mediodía o cuando se vacían muchos de golpe. Sólo cuando se intentó.
+   */
+  emailSpaceReclaimed?: boolean;
   /** Comprobantes de pago borrados por antigüedad (null: sin almacenamiento configurado). */
   receiptsPurged: number | null;
   /** Logos y fotos subidos hace más de 24 h que nadie usa, borrados (null: sin almacenamiento). */
@@ -312,21 +344,48 @@ const MAX_EMAIL_BATCHES = 30;
 const EMAIL_BUDGET_MS = 6 * 60_000;
 
 /** Días que se guarda el contenido de cada email (para revisarlo en Actividad → Emails). */
-export const EMAIL_CONTENT_DAYS = 30;
+/**
+ * El último lunes a las 12:00, hora de Ecuador, en SQL ($1: la hora de la pasada o null para ahora;
+ * $2: la zona). Restar 12 horas antes de truncar a la semana da el último lunes a las 12:00.
+ */
+const LAST_MONDAY_NOON_SQL = `((date_trunc('week', (coalesce($1::timestamptz, now()) at time zone $2) - interval '12 hours')
+                       + interval '12 hours') at time zone $2)`;
+
+/** Emails vaciados de una vez a partir de los cuales se devuelve el espacio aunque no sea lunes. */
+const EMAIL_VACUUM_MIN = 50;
 
 /**
- * El contenido de un email (texto y HTML, unos 6 KB) es lo que más ocupa en la base. Pasados
- * EMAIL_CONTENT_DAYS días se borra y queda sólo el registro: a quién, qué tipo, el asunto, cuándo
- * y si se envió. Los que siguen en cola no se tocan.
+ * El contenido de un email (texto y HTML, unos 6 KB) es lo que más ocupa en la base. Se borra cada
+ * lunes al mediodía, como el registro del cron (decisión del dueño del producto, 2026-11-10; antes, a
+ * los 30 días): los enviados o fallidos antes del último lunes a las 12:00 se quedan sin contenido.
+ * La fila no se borra: es el registro (a quién, qué tipo, el asunto, cuándo y si se envió) y sirve
+ * para no repetir los recordatorios, contar el cupo de Gmail, la analítica y el historial del negocio.
+ * Los que siguen en cola no se tocan.
  */
 async function purgeOldEmailContent(): Promise<number> {
   const result = await pool.query(
     `update notifications set body = '', html = null, calendar = null
-      where status <> 'queued' and created_at < now() - make_interval(days => $1)
+      where status <> 'queued' and coalesce(sent_at, created_at) < ${LAST_MONDAY_NOON_SQL}
         and (body <> '' or html is not null or calendar is not null)`,
-    [EMAIL_CONTENT_DAYS],
+    [null, DEFAULT_TIMEZONE],
   );
   return result.rowCount ?? 0;
+}
+
+/**
+ * Devuelve a la base el espacio de los contenidos borrados. Con un VACUUM normal quedaba reservado: los
+ * emails de la semana están al final de la tabla y PostgreSQL no puede recortarla. VACUUM FULL la
+ * reescribe con lo que queda (unos KB, en milisegundos). Si falla, el cron sigue y el espacio se
+ * reutiliza.
+ */
+async function reclaimEmailSpace(): Promise<boolean> {
+  return pool.query("vacuum (full) notifications").then(
+    () => true,
+    (error: unknown) => {
+      console.error("[cron] No se pudo devolver el espacio de los emails:", error instanceof Error ? error.message : error);
+      return false;
+    },
+  );
 }
 
 /**
@@ -346,6 +405,8 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
   const billing = await runMonthlyBilling();
   // Los recordatorios del comprobante de pago (spec 039), también antes del envío: salen en esta pasada.
   const paymentReminders = await queuePaymentReminders();
+  // El informe mensual (spec 040), también antes del envío.
+  const monthlyReports = await queueMonthlyReports();
   const emails = await processEmailQueue({ maxBatches: MAX_EMAIL_BATCHES, deadline: started + EMAIL_BUDGET_MS });
   await deleteExpiredSessions();
   await deleteStalePendingAttachments();
@@ -422,11 +483,15 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     return { status: "failed", sizeBytes: null, purged: 0 };
   });
   const cronLog = await clearCronLog(totals?.at ?? null);
+  // El lunes al mediodía (la pasada que borra el registro del cron) o si se vaciaron muchos de golpe.
+  const emailSpaceReclaimed =
+    emailContentPurged > 0 && (cronLog !== null || emailContentPurged >= EMAIL_VACUUM_MIN) ? await reclaimEmailSpace() : undefined;
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
-    reminderFailures: reminders.failures + calendarInvites.failures + billing.failures + paymentReminders.failures,
+    reminderFailures: reminders.failures + calendarInvites.failures + billing.failures + paymentReminders.failures + monthlyReports.failures,
     calendarInvites: calendarInvites.queued,
     paymentReminders: paymentReminders.queued,
+    monthlyReports: monthlyReports.queued,
     emails,
     sentSinceLastRun: totals?.sent ?? 0,
     sentEmails: sent.map((email) => ({
@@ -451,6 +516,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     billing: {
       charges: billing.charges,
       reminders: billing.reminders,
+      voided: billing.voided,
       receipts: billingReceipts.total,
       receiptsPurged: billingReceiptsPurged,
     },
@@ -466,6 +532,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     databaseStats,
     auditPurged: purged?.deleted ?? 0,
     emailContentPurged,
+    ...(emailSpaceReclaimed !== undefined && { emailSpaceReclaimed }),
     receiptsPurged,
     unusedImagesDeleted,
     rateLimitsPurged,
@@ -489,12 +556,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
  * de toda la semana anterior (2,2 MB el 2026-10-27). Si VACUUM falla, el cron sigue: el espacio se reutiliza.
  */
 async function clearCronLog(at: string | null): Promise<{ deleted: number; vacuumed: boolean } | null> {
-  const result = await pool.query(
-    `delete from cron_runs
-      where ran_at < ((date_trunc('week', (coalesce($1::timestamptz, now()) at time zone $2) - interval '12 hours')
-                       + interval '12 hours') at time zone $2)`,
-    [at, DEFAULT_TIMEZONE],
-  );
+  const result = await pool.query(`delete from cron_runs where ran_at < ${LAST_MONDAY_NOON_SQL}`, [at, DEFAULT_TIMEZONE]);
   const deleted = result.rowCount ?? 0;
   if (deleted === 0) return null;
   const vacuumed = await pool.query("vacuum cron_runs").then(

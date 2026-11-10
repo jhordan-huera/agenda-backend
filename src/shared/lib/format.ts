@@ -4,7 +4,7 @@
 import { format } from "date-fns/format";
 import { es } from "date-fns/locale/es";
 import { DEFAULT_CURRENCY, DEFAULT_TIMEZONE } from "./constants/app.ts";
-import { getZonedNow, parseISODate } from "./time.ts";
+import { cachedDateFormat, getZonedNow, parseISODate } from "./time.ts";
 import type { ISODate, Service, TimeString } from "../types/index.ts";
 
 export function formatCurrency(amount: number, currency: string = DEFAULT_CURRENCY): string {
@@ -55,21 +55,19 @@ export function toZonedDate(iso: string, timezone: string = DEFAULT_TIMEZONE): I
 
 /** "4 oct 2026, 14:35" en la zona horaria del negocio (timestamps de auditoría y emails). */
 export function formatDateTime(iso: string, timezone: string = DEFAULT_TIMEZONE): string {
-  return new Intl.DateTimeFormat("es-EC", { dateStyle: "medium", timeStyle: "short", timeZone: timezone }).format(
-    new Date(iso),
-  );
+  return cachedDateFormat("es-EC", { dateStyle: "medium", timeStyle: "short", timeZone: timezone }).format(new Date(iso));
 }
 
 /** "14:35" de un instante, en la zona horaria del negocio (p. ej. la llegada de un paciente). */
 export function formatClockTime(iso: string, timezone: string = DEFAULT_TIMEZONE): string {
-  return new Intl.DateTimeFormat("es-EC", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: timezone }).format(
+  return cachedDateFormat("es-EC", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: timezone }).format(
     new Date(iso),
   );
 }
 
 /** "14 oct" de un instante, en la zona horaria del negocio (p. ej. cuándo confirmó que va un paciente). */
 export function formatDayMonth(iso: string, timezone: string = DEFAULT_TIMEZONE): string {
-  return new Intl.DateTimeFormat("es-EC", { day: "numeric", month: "short", timeZone: timezone }).format(new Date(iso));
+  return cachedDateFormat("es-EC", { day: "numeric", month: "short", timeZone: timezone }).format(new Date(iso));
 }
 
 export function formatTimeRange(start: TimeString, end: TimeString): string {

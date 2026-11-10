@@ -213,8 +213,19 @@ await checkAudience("«Nueva reserva» en la agenda sin usuario del Dr. Vega", o
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const payToken: string = valeriaBooking.body.payment?.token;
+// Antes del comprobante: subirlo ya confirma que va (2026-11-10).
+let r = await visitor()("POST", `/public/appointments/${payToken}/confirm`);
+ok(r.status === 200 && r.body.already === false, "«Confirmo que voy»", r.body);
+await checkAudience("«El paciente confirmó»", ofAppointment("patient_confirm", valeriaBookingId), { kind: "patient_confirm", agendaId: valeriaAgenda.id });
+ok(
+  (await bell(valeria, bellPath)).find(ofAppointment("patient_confirm", valeriaBookingId))?.body ===
+    `${whenText(valeriaBooking.slot.date, valeriaBooking.slot.startTime)} · Juan Pérez López`,
+  "«El paciente confirmó · {día} {hora} · Juan Pérez López»",
+);
+await visitor()("POST", `/public/appointments/${payToken}/confirm`);
+ok(count(`select count(*) from panel_notices where kind = 'patient_confirm' and appointment_id = '${valeriaBookingId}'`) === 1, "confirmar otra vez no repite el aviso");
 const payer = visitor();
-let r = await payer("POST", `/public/payments/${payToken}/receipts`, { fileName: "transferencia.png", contentType: "image/png", sizeBytes: PNG.length });
+r = await payer("POST", `/public/payments/${payToken}/receipts`, { fileName: "transferencia.png", contentType: "image/png", sizeBytes: PNG.length });
 if (r.status === 200) {
   await fetch(ORIGIN + r.body.upload.url, { method: "PUT", headers: r.body.upload.headers, body: PNG });
   r = await payer("POST", `/public/payments/${payToken}/receipts/${r.body.receipt.id}/complete`);
@@ -225,16 +236,6 @@ ok(
   (await bell(elena, bellPath)).find(ofAppointment("receipt", valeriaBookingId))?.body === `Juan Pérez López · ${whenText(valeriaBooking.slot.date, valeriaBooking.slot.startTime)}`,
   "«Comprobante de pago · Juan Pérez López · {día} {hora}»",
 );
-r = await visitor()("POST", `/public/appointments/${payToken}/confirm`);
-ok(r.status === 200 && r.body.already === false, "«Confirmo que voy»", r.body);
-await checkAudience("«El paciente confirmó»", ofAppointment("patient_confirm", valeriaBookingId), { kind: "patient_confirm", agendaId: valeriaAgenda.id });
-ok(
-  (await bell(valeria, bellPath)).find(ofAppointment("patient_confirm", valeriaBookingId))?.body ===
-    `${whenText(valeriaBooking.slot.date, valeriaBooking.slot.startTime)} · Juan Pérez López`,
-  "«El paciente confirmó · {día} {hora} · Juan Pérez López»",
-);
-await visitor()("POST", `/public/appointments/${payToken}/confirm`);
-ok(count(`select count(*) from panel_notices where kind = 'patient_confirm' and appointment_id = '${valeriaBookingId}'`) === 1, "confirmar otra vez no repite el aviso");
 r = await visitor()("POST", `/public/appointments/${payToken}/cancel`);
 ok(r.status === 200, "«Cancelar mi cita» desde el email", r.body);
 await checkAudience("«Cita cancelada por el paciente»", ofAppointment("patient_cancel", valeriaBookingId), { kind: "patient_cancel", agendaId: valeriaAgenda.id });

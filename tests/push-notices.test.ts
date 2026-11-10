@@ -406,17 +406,7 @@ const uploadReceipt = async () => {
   await fetch(ORIGIN + request.body.upload.url, { method: "PUT", headers: request.body.upload.headers, body: PNG });
   return payer("POST", `/public/payments/${payToken}/receipts/${request.body.receipt.id}/complete`);
 };
-r = await uploadReceipt();
-const receiptPush = await receive(jhordanDevice, withTag(`comprobante-${paidId}`));
-ok(
-  r.status === 200 && receiptPush?.payload?.title === "Comprobante de pago" &&
-    receiptPush.payload.body === `Pedro P. · ${whenText(paidBooking.slot.date, paidBooking.slot.startTime)}`,
-  "«Comprobante de pago · Pedro P. · {día} {hora}»",
-  [r.status, receiptPush?.payload],
-);
-r = await uploadReceipt();
-await sleep(1500);
-ok(r.status === 409 && queuedFor(jhordanDevice, `comprobante-${paidId}`) === 1, "una segunda subida descartada no avisa", r.body);
+// Antes del comprobante: subirlo ya confirma que va (2026-11-10).
 r = await visitor()("POST", `/public/appointments/${payToken}/confirm`);
 const confirmPush = r.status === 200 ? await receive(jhordanDevice, (payload) => payload.tag?.startsWith(`confirmo-${paidId}-`) ?? false) : undefined;
 ok(
@@ -434,6 +424,17 @@ ok(
   "confirmar otra vez no repite el aviso",
   r.body,
 );
+r = await uploadReceipt();
+const receiptPush = await receive(jhordanDevice, withTag(`comprobante-${paidId}`));
+ok(
+  r.status === 200 && receiptPush?.payload?.title === "Comprobante de pago" &&
+    receiptPush.payload.body === `Pedro P. · ${whenText(paidBooking.slot.date, paidBooking.slot.startTime)}`,
+  "«Comprobante de pago · Pedro P. · {día} {hora}»",
+  [r.status, receiptPush?.payload],
+);
+r = await uploadReceipt();
+await sleep(1500);
+ok(r.status === 409 && queuedFor(jhordanDevice, `comprobante-${paidId}`) === 1, "una segunda subida descartada no avisa", r.body);
 r = await visitor()("POST", `/public/appointments/${payToken}/cancel`);
 const cancelPush = await receive(jhordanDevice, withTag(`cancelada-${paidId}`));
 ok(

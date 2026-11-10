@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config.ts";
 import { IMAGE_MAX_BYTES, IMAGE_TYPES } from "../shared/lib/validations/images.ts";
@@ -35,6 +35,8 @@ export interface FileStorage {
   pathOfPublicUrl(url: string): string | null;
   /** Tamaño del archivo subido, o null si no existe. */
   sizeOf(objectPath: string): Promise<number | null>;
+  /** Los primeros `bytes` del archivo (para ver qué es de verdad), o null si no existe. */
+  readHead(objectPath: string, bytes: number): Promise<Buffer | null>;
   /** Borra los archivos (los que no existan se ignoran). */
   remove(objectPaths: string[]): Promise<void>;
   /** Todos los archivos de una carpeta ("<negocio>/"), también los de sus subcarpetas. */
@@ -64,6 +66,28 @@ function pathAfter(base: string, url: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Lee sólo el principio de una descarga y la corta: si el servidor no respeta `Range` y manda el
+ * archivo entero, igual no se baja más de lo necesario.
+ */
+async function readPrefix(response: Response, bytes: number): Promise<Buffer> {
+  const reader = response.body?.getReader();
+  if (!reader) return Buffer.alloc(0);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (total < bytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.length;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return Buffer.concat(chunks).subarray(0, bytes);
 }
 
 /* ------------------------------------------------------------- Supabase Storage -- */
@@ -106,6 +130,13 @@ function supabaseStorage(baseUrl: string, key: string, spec: BucketSpec): FileSt
       },
     ));
 
+  const signDownload = async (objectPath: string) => {
+    const { signedURL } = await request<{ signedURL: string }>("POST", `/object/sign/${bucket}/${encodePath(objectPath)}`, {
+      expiresIn: DOWNLOAD_URL_SECONDS,
+    });
+    return `${api}${signedURL}`;
+  };
+
   return {
     kind: "supabase",
     bucket,
@@ -116,12 +147,7 @@ function supabaseStorage(baseUrl: string, key: string, spec: BucketSpec): FileSt
       });
       return { url: `${api}${url}`, headers: { "Content-Type": contentType, "x-upsert": "false" } };
     },
-    async createDownloadUrl(objectPath) {
-      const { signedURL } = await request<{ signedURL: string }>("POST", `/object/sign/${bucket}/${encodePath(objectPath)}`, {
-        expiresIn: DOWNLOAD_URL_SECONDS,
-      });
-      return `${api}${signedURL}`;
-    },
+    createDownloadUrl: (objectPath) => signDownload(objectPath),
     publicUrl: (objectPath) => publicBase + encodePath(objectPath),
     pathOfPublicUrl: (url) => pathAfter(publicBase, url),
     async sizeOf(objectPath) {
@@ -134,6 +160,23 @@ function supabaseStorage(baseUrl: string, key: string, spec: BucketSpec): FileSt
       });
       const found = objects.find((object) => object.name === name);
       return found ? (found.metadata?.size ?? null) : null;
+    },
+    async readHead(objectPath, bytes) {
+      // Con la misma URL firmada con que el negocio abre el archivo (la que ya se usa en producción).
+      let url: string;
+      try {
+        url = await signDownload(objectPath);
+      } catch (error) {
+        if (error instanceof Error && /Supabase Storage (400|404)/.test(error.message)) return null;
+        throw error;
+      }
+      const response = await fetch(url, { headers: { Range: `bytes=0-${bytes - 1}` }, signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
+        if (response.status === 400 || response.status === 404) return null;
+        throw new Error(`Supabase Storage ${response.status} al leer el archivo`);
+      }
+      return readPrefix(response, bytes);
     },
     async remove(objectPaths) {
       // Hasta 1.000 archivos por petición.
@@ -252,6 +295,17 @@ function localStorage(spec: BucketSpec): FileStorage {
         (info) => info.size,
         () => null,
       );
+    },
+    async readHead(objectPath, bytes) {
+      const handle = await open(localFilePath(bucket, objectPath), "r").catch(() => null);
+      if (!handle) return null;
+      try {
+        const buffer = Buffer.alloc(bytes);
+        const { bytesRead } = await handle.read(buffer, 0, bytes, 0);
+        return buffer.subarray(0, bytesRead);
+      } finally {
+        await handle.close();
+      }
     },
     async remove(objectPaths) {
       await Promise.all(objectPaths.map((objectPath) => rm(localFilePath(bucket, objectPath), { force: true })));

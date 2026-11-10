@@ -3,7 +3,9 @@ import { z } from "zod";
 import { appointmentColumns, paymentReceiptColumns } from "../db/columns.ts";
 import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
+import { APPOINTMENT_PAGE_DAYS } from "../shared/lib/constants/business.ts";
 import { isPriceVisible } from "../shared/lib/format.ts";
+import { addDaysISO, getZonedNow } from "../shared/lib/time.ts";
 import {
   RECEIPT_MAX_BYTES,
   RECEIPT_RETENTION_MONTHS,
@@ -22,9 +24,11 @@ import { describeAppointment, logAudit } from "./audit.ts";
 import { withLegacyBankAccount } from "./bank-accounts.ts";
 import { authorize, parseInput, type RequestContext } from "./context.ts";
 import { receiptStorage, type FileStorage } from "./file-storage.ts";
+import { matchesDeclaredType, SIGNATURE_BYTES } from "./file-signature.ts";
 import { notifyReceiptReceived } from "./notifications.ts";
 import { greetingName } from "./public-booking-service.ts";
 import { notifyReceipt } from "./push-notices.ts";
+import { minutesUntilStart } from "./reminder-rules.ts";
 
 /**
  * Pago por transferencia. Cada cita tiene un enlace privado (/pago/:token) donde el paciente ve
@@ -32,6 +36,10 @@ import { notifyReceipt } from "./push-notices.ts";
  * (uno por cita), sin sesión: el token es la autorización. El archivo va directo del navegador al
  * bucket privado de comprobantes; el negocio lo abre con una URL firmada de unos minutos y marca la
  * cita como pagada.
+ *
+ * El enlace deja de abrirse APPOINTMENT_PAGE_DAYS días después de la cita, como «Tu cita» (2026-11-10).
+ * Al terminar la subida se comprueba por sus primeros bytes que el archivo sea de verdad una foto o un
+ * PDF: el tipo que declara el navegador no basta.
  */
 
 const EXTENSIONS: Record<string, string> = {
@@ -43,9 +51,22 @@ const EXTENSIONS: Record<string, string> = {
 };
 
 const ALREADY_SENT = "Ya enviaste el comprobante de esta cita. Si te equivocaste de archivo, escríbele al negocio por WhatsApp.";
+const NOT_UPLOADED = "El comprobante no terminó de subirse. Vuelve a intentarlo.";
+const NOT_A_RECEIPT = "Ese archivo no es una foto ni un PDF. Sube la foto o el PDF del comprobante.";
 
 /** A una cita cancelada o en la que el paciente no se presentó ya no se le envían comprobantes. */
 const CLOSED_STATUSES = ["cancelled", "no_show"];
+
+/**
+ * Subir el comprobante es confirmar que va (pedido del dueño del producto, 2026-11-10): la cita del
+ * paciente principal queda con «Confirmó que va», como si pulsara «Confirmo que voy», si está pendiente o
+ * confirmada, aún no empieza y no lo había confirmado. Sin el aviso de la confirmación: ya sale el del
+ * comprobante. Un comprobante de una cita que ya pasó no confirma nada.
+ */
+const confirmsAttendance = (appointment: Appointment, timezone: string) =>
+  (appointment.status === "pending" || appointment.status === "confirmed") &&
+  !appointment.clientConfirmations.some((confirmation) => confirmation.clientId === appointment.clientId) &&
+  minutesUntilStart(appointment.date, appointment.startTime, getZonedNow(timezone)) > 0;
 
 interface PaymentContext {
   appointment: Appointment;
@@ -65,7 +86,10 @@ interface PaymentContext {
   bankAccounts: BankAccount[];
 }
 
-/** La cita de un enlace de pago (con su negocio, servicio y agenda); un enlace inválido no existe. */
+/**
+ * La cita de un enlace de pago (con su negocio, servicio y agenda). Un enlace inválido, de un negocio
+ * suspendido o de una cita de hace más de APPOINTMENT_PAGE_DAYS días no existe.
+ */
 async function findByToken(db: Db, token: string, lock = false): Promise<PaymentContext> {
   const appointment = /^[0-9a-f]{32}$/.test(token)
     ? await one<Appointment>(
@@ -87,7 +111,12 @@ async function findByToken(db: Db, token: string, lock = false): Promise<Payment
       )
     : null;
   // Un negocio suspendido no se distingue de un enlace inexistente.
-  if (!appointment || !details || details.businessStatus !== "active") {
+  if (
+    !appointment ||
+    !details ||
+    details.businessStatus !== "active" ||
+    appointment.date < addDaysISO(getZonedNow(details.timezone).date, -APPOINTMENT_PAGE_DAYS)
+  ) {
     throw new AppError("not_found", "Este enlace de pago no existe o ya no está disponible.");
   }
   return { appointment, ...details };
@@ -174,15 +203,18 @@ export const paymentService = {
     });
   },
 
-  /** El navegador terminó de subir: se comprueba que el archivo llegó y se avisa al negocio. */
+  /**
+   * El navegador terminó de subir: se comprueba que el archivo llegó, que no pasa de 10 MB y que es de
+   * verdad una foto o un PDF, y se avisa al negocio. Si no lo es, se borran el archivo y su registro.
+   */
   async completeUpload(token: string, receiptId: string): Promise<PaymentReceipt> {
     const storage = requireReceiptStorage();
     const result = await transaction(async (db) => {
-      const { appointment } = await findByToken(db, token, true);
+      const { appointment, timezone } = await findByToken(db, token, true);
       const receipt = isUuid(receiptId)
-        ? await one<{ storagePath: string; status: string; fileName: string }>(
+        ? await one<{ storagePath: string; status: string; fileName: string; contentType: string }>(
             db,
-            `select storage_path as "storagePath", status, file_name as "fileName" from payment_receipts
+            `select storage_path as "storagePath", status, file_name as "fileName", content_type as "contentType" from payment_receipts
               where id = $1 and appointment_id = $2 for update`,
             [receiptId, appointment.id],
           )
@@ -193,19 +225,30 @@ export const paymentService = {
         const alreadySent = await one(db, "select 1 from payment_receipts where appointment_id = $1 and status = 'ready'", [appointment.id]);
         if (alreadySent) {
           await db.query("delete from payment_receipts where id = $1", [receiptId]);
-          return { receipt: null, discarded: receipt.storagePath, tooLarge: null };
+          return { receipt: null, rejected: { path: receipt.storagePath, error: new AppError("conflict", ALREADY_SENT) } };
         }
         const size = await storage.sizeOf(receipt.storagePath);
-        if (size === null) throw new AppError("conflict", "El comprobante no terminó de subirse. Vuelve a intentarlo.");
-        if (size > RECEIPT_MAX_BYTES) {
+        if (size === null) throw new AppError("conflict", NOT_UPLOADED);
+        let problem: string | null = null;
+        if (size > RECEIPT_MAX_BYTES) problem = "El archivo supera los 10 MB.";
+        else {
+          const head = await storage.readHead(receipt.storagePath, SIGNATURE_BYTES);
+          if (head === null) throw new AppError("conflict", NOT_UPLOADED);
+          if (!matchesDeclaredType(head, receipt.contentType)) problem = NOT_A_RECEIPT;
+        }
+        if (problem) {
           await db.query("delete from payment_receipts where id = $1", [receiptId]);
-          return { receipt: null, discarded: null, tooLarge: receipt.storagePath };
+          return { receipt: null, rejected: { path: receipt.storagePath, error: new AppError("validation", problem) } };
         }
         await db.query("update payment_receipts set status = 'ready', size_bytes = $2 where id = $1", [receiptId, size]);
+        const confirms = confirmsAttendance(appointment, timezone);
         const updated = (await one<Appointment>(
           db,
-          `update appointments set receipt_at = now() where id = $1 returning ${appointmentColumns()}`,
-          [appointment.id],
+          `update appointments
+              set receipt_at = now(),
+                  client_confirmed_at = case when $2 then coalesce(client_confirmed_at, now()) else client_confirmed_at end
+            where id = $1 returning ${appointmentColumns()}`,
+          [appointment.id, confirms],
         ))!;
         await notifyReceiptReceived(db, updated);
         await logAudit(db, {
@@ -214,23 +257,20 @@ export const paymentService = {
           action: "appointment.receipt_received",
           entityType: "appointment",
           entityId: appointment.id,
-          summary: `Comprobante de pago recibido de ${await describeAppointment(db, updated)}`,
+          summary: `Comprobante de pago recibido de ${await describeAppointment(db, updated)}${confirms ? ". Con eso, confirmó que va" : ""}`,
         });
         // Aviso en el celular del propietario (spec 013).
         await notifyReceipt(db, updated);
       }
       const ready = await one<PaymentReceipt>(db, `select ${paymentReceiptColumns()} from payment_receipts where id = $1`, [receiptId]);
-      return { receipt: ready!, discarded: null, tooLarge: null };
+      return { receipt: ready!, rejected: null };
     });
-    if (result.discarded) {
-      await removeReceiptFiles([result.discarded]);
-      throw new AppError("conflict", ALREADY_SENT);
+    // Después de confirmar el borrado del registro: el archivo rechazado tampoco se queda.
+    if (result.rejected) {
+      await removeReceiptFiles([result.rejected.path]);
+      throw result.rejected.error;
     }
-    if (!result.receipt) {
-      await removeReceiptFiles([result.tooLarge!]);
-      throw new AppError("validation", "El archivo supera los 10 MB.");
-    }
-    return result.receipt;
+    return result.receipt!;
   },
 
   /* ------------------------------------------------------------- Panel -- */

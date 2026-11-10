@@ -14,7 +14,8 @@ import { BASE, agent, checks, count, fakeNtfy, fakePushService, login, runCron, 
 import { EMAIL_PRIORITY, emailTypesOf } from "../src/services/email-limits.ts";
 import { AGENDA_PUSH_KINDS, AGENDA_RECEIPT_PUSH_KINDS } from "../src/shared/lib/constants/push.ts";
 import { addDaysISO, getDayOfWeek, getZonedNow } from "../src/shared/lib/time.ts";
-import type { AuditLog, Business, Professional } from "../src/shared/types/index.ts";
+import type { AuditLog, Business, PaymentReminderDays, Professional } from "../src/shared/types/index.ts";
+import { isPaymentReminderDue } from "../src/services/payment-reminder-rules.ts";
 
 const { ok, done } = checks();
 const push = await fakePushService();
@@ -314,8 +315,24 @@ ok(
 );
 ok((await run(day(1, 3))) === 1 && remindersTo(p2) === 0, "el miércoles, el de Ana; el de Bruno no: reservó ese mismo día");
 ok((await run(day(1, 4))) === 2 && remindersTo(p2) === 1, "el jueves, los dos");
-ok((await run(day(1, 5))) === 0 && (await run(day(1, 6))) === 0, "el viernes (el día de la cita) y después, nada");
-ok(stateOf(a1) === `3|${day(1, 4)}` && stateOf(a2) === `1|${day(1, 4)}`, "Ana llegó al tope de 3; Bruno, 1", [stateOf(a1), stateOf(a2)]);
+ok(
+  (await run(day(1, 5))) === 1 && remindersTo(p1) === 3 && remindersTo(p2) === 2,
+  "el viernes, el día de la cita antes de que empiece, también entra (2026-11-10): Bruno, que no llegó a 3; Ana ya tiene 3",
+  [remindersTo(p1), remindersTo(p2)],
+);
+ok((await run(day(1, 6))) === 0, "después de la cita, nada");
+ok(stateOf(a1) === `3|${day(1, 4)}` && stateOf(a2) === `2|${day(1, 5)}`, "Ana llegó al tope de 3; Bruno, 2", [stateOf(a1), stateOf(a2)]);
+const dueToday = (days: PaymentReminderDays, sent: number, minutes = 9 * 60 + 30) =>
+  isPaymentReminderDue(
+    { days, status: "confirmed", date: "2026-06-05", startTime: "15:00", bookedOn: "2026-05-01", sent, remindedOn: null },
+    { date: "2026-06-05", minutes },
+  );
+ok(
+  (["before_three", "after_booking", "before_and_morning"] as const).every((days) => dueToday(days, 0) && dueToday(days, 2)) &&
+    !dueToday("before_three", 3) &&
+    !dueToday("after_booking", 0, 15 * 60),
+  "con las tres opciones, la cita de hoy que todavía no empieza recibe uno si no tiene 3; la que ya empezó, no",
+);
 retire([a1, a2]);
 
 /* ======================================================================================== */
@@ -440,7 +457,10 @@ ok(
   "nada para un paciente sin email, una cita gratis, una agenda sin cuentas ni un negocio sin activar",
   [noEmail, free, noAccounts, otherBusiness].map(stateOf),
 );
-ok((await run(day(6, 3))) === 2 && buttons(lastReminderTo(p16)!.html) >= 2 && !lastReminderTo(p16)!.body.includes(`/pago/${tokenOf(series[0])}`), "el miércoles, Olga recibe uno con las 2 que faltan (la de hoy ya no)");
+ok(
+  (await run(day(6, 3))) === 2 && buttons(lastReminderTo(p16)!.html) >= 3 && lastReminderTo(p16)!.body.includes(`/pago/${tokenOf(series[0])}`),
+  "el miércoles, Olga recibe uno con las 3: la de hoy a las 10:00 también entra, todavía no empieza (2026-11-10)",
+);
 ok((await run(day(6, 4))) === 2 && remindersTo(p16) === 3 && stateOf(series[2]) === `3|${day(6, 4)}`, "el jueves, el de la última: un email al día");
 sql(`update professionals set bank_accounts = '${andresAccounts.replaceAll("'", "''")}' where id = '${andresAgenda.id}'`);
 retire([...series, couple, noEmail, free, noAccounts]);

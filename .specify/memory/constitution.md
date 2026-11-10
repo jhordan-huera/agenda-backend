@@ -73,6 +73,10 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   no se cierra hasta subir el comprobante: no hay «Más tarde» ni días de gracia. Sólo se bloquea el panel
   del propietario: su equipo y su página de reservas siguen funcionando. La factura del SRI y el cobro
   con tarjeta quedan fuera por ahora.
+- A un negocio suspendido no se le cobra (2026-11-10): al suspenderlo, sus cobros sin pagar (por pagar,
+  atrasados o rechazados) pasan a «Anulados» con el motivo «Negocio suspendido», sin email y con su
+  entrada en la actividad; los que están en revisión se quedan. Si se reactiva, empieza limpio: los meses
+  que pasó suspendido no se cobran.
 - Los precios de los planes están en /admin → Planes, no en el código, y los cambia el super admin (los
   de partida: Pro $14,99; Business $29,99 con 3 agendas y $8 por cada agenda más, las contratadas o, sin
   tope, las activas; Free sin cobros). La mensualidad de cada negocio sale sola de su plan y sus agendas,
@@ -105,7 +109,8 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   9:00 de la hora del negocio, con el enlace para subirlo: como mucho 3 por cita y un solo email al día con
   todas sus citas. El comprobante se pide sólo antes de la cita (2026-11-10): en los días que elige el super
   admin para el negocio (los 3 anteriores a la cita, los 3 siguientes a la reserva o los 2 anteriores y la
-  mañana del mismo día), nunca desde que empieza la cita; una cita que ya empezó, pasó o se completó no
+  mañana del mismo día) y, con cualquiera de ellas, el mismo día de la cita si todavía no empieza y no le
+  llegaron 3 (2026-11-10); nunca desde que empieza la cita: una cita que ya empezó, pasó o se completó no
   recibe nada. Los recordatorios quedan en el historial de emails, no en la actividad. En el panel, la cita
   que aún no empieza lleva la marca «Sin comprobante» y el profesional se lo puede recordar por WhatsApp, a
   mano y sin contar en el tope. Al subirse el comprobante, el profesional de la agenda recibe el email y el
@@ -132,11 +137,19 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   otra persona de una sesión tiene el suyo. «Confirmo que voy» es una marca aparte: no cambia el
   estado (confirmar la cita sigue siendo decisión del negocio), no avisa por ntfy (al celular del
   propietario sí, desde el 2026-10-15) y se borra si cambian la fecha, la hora o el profesional, o
-  si la cita se cancela; la actividad dice cuándo se borró. Cancelar desde ahí sólo lo
+  si la cita se cancela; la actividad dice cuándo se borró. Subir el comprobante de pago también
+  es confirmar que va (2026-11-10): la cita del paciente principal queda con «Confirmó que va» si
+  está pendiente o confirmada, aún no empieza y no lo había confirmado, sin otro aviso que el del
+  comprobante; el comprobante de una cita que ya pasó no confirma nada. Cancelar desde ahí sólo lo
   puede el paciente principal, si el negocio tiene «Permitir cancelaciones» y falta más que su
   antelación; si no, la página da el WhatsApp o el teléfono del negocio. La cancelación avisa
   como todo cambio de estado, y la copia al profesional no lleva los botones del paciente
   (2026-10-14).
+- El enlace de pago (`/pago/:token`) y «Tu cita» son personales y dejan de abrirse 30 días después
+  de la cita; pasado eso, ni el panel ni los emails lo ofrecen. Las dos páginas piden no compartir
+  el enlace y los buscadores no las guardan. El comprobante que sube el paciente se comprueba por
+  su contenido, no sólo por el tipo que declara el navegador: si no es de verdad una foto o un PDF,
+  se rechaza y se borra (auditoría de seguridad, 2026-11-10).
 - Una cita del panel se puede repetir cada semana, cada 2 semanas o cada mes (el mismo día del mes;
   si no existe, el último), de 2 a 24 citas. Antes de crearlas se ve la lista de fechas: las que
   chocan con otra cita o pasan el cupo del plan no se crean a esa hora; las de un bloqueo, un día sin
@@ -194,7 +207,16 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 
   Leer no se registra en la actividad (2026-10-15).
 - La analítica de /admin (spec 016) sólo la ve el super admin, sólo con cifras por negocio (nunca
-  datos de pacientes), y se prepara una vez al día con el cron, fuera de Vercel (2026-10-15).
+  datos de pacientes), y se prepara una vez al día con el cron, fuera de Vercel (2026-10-15). Sólo
+  salen los negocios activos: un suspendido no está ni en las cifras ni en los totales, y si se suspende
+  después de prepararla, sale al momento (2026-11-10).
+- El informe mensual (spec 040, 2026-11-10): el día 1, desde las 8:00 de su hora, el propietario de cada
+  negocio activo con citas el mes anterior recibe por email el resumen de ese mes: citas, reservas online,
+  recordatorios, confirmaciones, cancelaciones con tiempo, pacientes nuevos, comprobantes, ingresos
+  estimados y la comparación con el mes de antes. Sólo cifras reales del negocio, contadas como la
+  analítica: nunca datos de pacientes, planes, precios de Agenda360 ni cifras estimadas. Sale una vez por
+  mes (hasta el día 7 si el cron no pudo pasar el 1) y lo envía el cron de GitHub. Viene encendido y sólo
+  el propietario lo apaga, en Configuración → Notificaciones.
 - La pantalla «Base de datos» de /admin (spec 024) sólo la ve el super admin principal, con la
   verificación en dos pasos y un límite de peticiones; sólo muestra nombres de tablas, tamaños y
   cifras (las consultas sin valores), nunca datos de filas. Su historial lo guarda el cron una vez
@@ -207,6 +229,11 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - En la portada no hay testimonios, cifras ni precios inventados. Un testimonio sólo sale con el permiso
   de quien lo da, y las integraciones que se muestran son sólo las reales, con iconos propios y sin logos
   de marcas (spec 032, 2026-10-22).
+- Las páginas por especialidad (/psicologos, /fisioterapeutas y /odontologos, spec 041, 2026-11-10) siguen
+  las mismas reglas que la portada: sólo funciones que existen, sin testimonios, cifras ni precios
+  inventados, sin nombres de clientes, sin planes ni precios, sin la LOPDP y sin funciones paradas. Cada
+  una tiene su título y su descripción para Google y para la vista previa al compartirla, y lo comprueba
+  `npm run check:specialties`.
 - La marca de Agenda360 es tomate (#c2410c) con un durazno suave de resaltado: el logo y el icono, la
   portada y el login, el panel por defecto y los emails. Una sola gama: el botón principal de la portada
   es el principal de la marca, sin otro color aparte. Los negocios y los super admin con colores propios
@@ -328,4 +355,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.32.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
+**Versión**: 1.38.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10

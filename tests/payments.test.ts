@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { cedulaFor } from "./helpers/cedula.mjs";
+import { fileKindOf, matchesDeclaredType } from "../src/services/file-signature.ts";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
 import type { Professional, PublicBusinessProfile } from "../src/shared/types/index.ts";
@@ -143,9 +144,9 @@ const profile: PublicBusinessProfile = (await visitor("GET", `/public/businesses
 const now = getZonedNow(profile.business.timezone);
 const context = { ...profile, settings: profile.business.bookingSettings, now };
 const slots: { date: string; startTime: string }[] = [];
-for (let d = 1; d < 40 && slots.length < 6; d++) {
+for (let d = 1; d < 40 && slots.length < 9; d++) {
   const date = addDaysISO(now.date, d);
-  for (const startTime of getAvailableSlots(date, Math.max(paid.durationMinutes, 30), scopeToProfessional(context, professional.id)).filter((_, i) => i % 3 === 0).slice(0, 6 - slots.length)) {
+  for (const startTime of getAvailableSlots(date, Math.max(paid.durationMinutes, 30), scopeToProfessional(context, professional.id)).filter((_, i) => i % 3 === 0).slice(0, 9 - slots.length)) {
     slots.push({ date, startTime });
   }
 }
@@ -224,6 +225,20 @@ console.log("Panel");
 const appointmentId: string = booking.appointmentId;
 r = await owner("GET", `${B}/appointments/${appointmentId}`);
 ok(r.body.receiptAt && r.body.paidAt === null && r.body.paymentToken === token, "la cita marca el comprobante recibido", r.body);
+ok(
+  r.body.clientConfirmations?.length === 1 && r.body.clientConfirmations[0].clientId === r.body.clientId && ["pending", "confirmed"].includes(r.body.status),
+  "subir el comprobante es confirmar que va: la cita queda con «Confirmó que va», sin cambiar su estado",
+  r.body.clientConfirmations,
+);
+r = await anonymous("GET", `/public/appointments/${token}`);
+ok(r.status === 200 && r.body.confirmedAt !== null, "y «Tu cita» lo muestra confirmado", r.body);
+ok(
+  sql(`select count(*) from panel_notices where kind = 'patient_confirm' and appointment_id = '${appointmentId}'`) === "0" &&
+    sql(`select count(*) from push_messages where kind = 'patient_confirm' and tag like 'confirmo-${appointmentId}-%'`) === "0",
+  "sin el aviso de «El paciente confirmó»: ya sale el del comprobante",
+);
+r = await anonymous("POST", `/public/appointments/${token}/confirm`);
+ok(r.status === 200 && r.body.already === true, "pulsar después «Confirmo que voy» no cambia nada", r.body);
 r = await owner("GET", `${B}/appointments/${appointmentId}/receipts`);
 ok(r.status === 200 && r.body.length === 1 && r.body[0].contentType === "image/png", "lista de comprobantes", r.body);
 r = await owner("GET", `${B}/payment-receipts/${r.body[0].id}/url`);
@@ -232,7 +247,11 @@ ok(file.ok && Buffer.from(await file.arrayBuffer()).equals(PNG), "se abre con un
 r = await visitor("GET", `${B}/payment-receipts/${pending.receipt.id}/url`);
 ok(r.status === 401, "sin sesión no se abre", r.status);
 const audit = (await owner("GET", `${B}/audit-logs?entityId=${appointmentId}`)).body.entries.map((e: { summary: string }) => e.summary);
-ok(audit.some((s: string) => /Comprobante de pago recibido de Paciente pago1/.test(s)), "la actividad registra el comprobante", audit);
+ok(
+  audit.some((s: string) => /Comprobante de pago recibido de Paciente pago1.*Con eso, confirmó que va$/.test(s)),
+  "la actividad registra el comprobante y que con eso confirmó que va",
+  audit,
+);
 r = await owner("PATCH", `${B}/appointments/${appointmentId}/payment`, { paid: "sí" });
 ok(r.status === 400, "valor inválido → 400", r.body);
 r = await owner("PATCH", `${B}/appointments/${appointmentId}/payment`, { paid: true });
@@ -265,6 +284,110 @@ const cancelToken = r.body.payment.token;
 await owner("PATCH", `${B}/appointments/${r.body.appointmentId}/status`, { status: "cancelled" });
 r = await anonymous("POST", `/public/payments/${cancelToken}/receipts`, receiptInput);
 ok(r.status === 409, "cita cancelada: no se envían comprobantes", r.body);
+
+console.log("Seguridad del enlace (auditoría del 2026-11-10)");
+// Caduca 30 días después de la cita, como «Tu cita».
+r = await book(paid.id, slots[6], "caduca1");
+const oldLink = { token: r.body.payment.token as string, id: r.body.appointmentId as string };
+sql(`update appointments set date = '${addDaysISO(now.date, -30)}' where id = '${oldLink.id}'`);
+r = await anonymous("GET", `/public/payments/${oldLink.token}`);
+ok(r.status === 200, "una cita de hace 30 días: el enlace todavía se abre", r.status);
+const lateReceipt = (await anonymous("POST", `/public/payments/${oldLink.token}/receipts`, receiptInput)).body;
+await put(lateReceipt.upload, PNG);
+r = await anonymous("POST", `/public/payments/${oldLink.token}/receipts/${lateReceipt.receipt.id}/complete`);
+ok(
+  r.status === 200 && sql(`select receipt_at is not null and client_confirmed_at is null from appointments where id = '${oldLink.id}'`) === "t",
+  "el comprobante de una cita que ya pasó se recibe, pero no la marca como «Confirmó que va»",
+  r.body,
+);
+sql(`update appointments set date = '${addDaysISO(now.date, -31)}' where id = '${oldLink.id}'`);
+r = await anonymous("GET", `/public/payments/${oldLink.token}`);
+ok(r.status === 404, "de hace 31 días: ya no se abre (404, como un enlace que no existe)", r.status);
+r = await anonymous("POST", `/public/payments/${oldLink.token}/receipts`, receiptInput);
+ok(r.status === 404, "y no deja subir comprobantes", r.status);
+
+sql(`update businesses set status = 'suspended' where id = '${session.businessId}'`);
+const suspendedPage = (await anonymous("GET", `/public/payments/${twoTabs}`)).status;
+const suspendedUpload = (await anonymous("POST", `/public/payments/${twoTabs}/receipts`, receiptInput)).status;
+sql(`update businesses set status = 'active' where id = '${session.businessId}'`);
+ok(suspendedPage === 404 && suspendedUpload === 404, "negocio suspendido: el enlace no se abre ni deja subir (404)", [suspendedPage, suspendedUpload]);
+
+r = await book(paid.id, slots[7], "intentos1");
+const attemptsToken = r.body.payment.token;
+const attempts: number[] = [];
+for (let i = 0; i < 5; i++) attempts.push((await anonymous("POST", `/public/payments/${attemptsToken}/receipts`, receiptInput)).status);
+r = await anonymous("POST", `/public/payments/${attemptsToken}/receipts`, receiptInput);
+ok(
+  attempts.every((status) => status === 200) && r.status === 409 && /Demasiados intentos/.test(r.body.error.message),
+  "5 intentos sin terminar: el sexto → 409",
+  [attempts, r.body],
+);
+
+// El contenido manda, no el tipo que declara el navegador.
+r = await book(paid.id, slots[8], "falso1");
+const fakeToken = r.body.payment.token;
+const uploadAs = async (input: { fileName: string; contentType: string }, content: Buffer) => {
+  const request = (await anonymous("POST", `/public/payments/${fakeToken}/receipts`, { ...input, sizeBytes: content.length })).body;
+  await put(request.upload, content);
+  const file = join(process.env.LOCAL_STORAGE_DIR!, "comprobantes", sql(`select storage_path from payment_receipts where id = '${request.receipt.id}'`));
+  const done = await anonymous("POST", `/public/payments/${fakeToken}/receipts/${request.receipt.id}/complete`);
+  return { ...done, id: request.receipt.id as string, file };
+};
+const HTML = Buffer.from("<!doctype html><html><body><script>alert(1)</script></body></html>");
+let upload = await uploadAs(receiptInput, HTML);
+ok(upload.status === 400 && /no es una foto ni un PDF/.test(upload.body.error.message), "una página web con nombre de foto → 400", upload.body);
+ok(
+  !existsSync(upload.file) && sql(`select count(*) from payment_receipts where id = '${upload.id}'`) === "0",
+  "y se borran el archivo y su registro",
+  upload.file,
+);
+upload = await uploadAs({ fileName: "banco.pdf", contentType: "application/pdf" }, PNG);
+ok(upload.status === 400 && !existsSync(upload.file), "una foto que dice ser PDF → 400", upload.body);
+ok(
+  sql(`select receipt_at is null and client_confirmed_at is null from appointments where payment_token = '${fakeToken}'`) === "t",
+  "un archivo rechazado no cuenta como comprobante ni confirma que va",
+);
+// Ya había confirmado desde su email: se queda la hora de esa confirmación.
+sql(`update appointments set client_confirmed_at = '2020-01-02T03:04:05Z' where payment_token = '${fakeToken}'`);
+const PDF = Buffer.from("%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n");
+upload = await uploadAs({ fileName: "banco.pdf", contentType: "application/pdf" }, PDF);
+ok(upload.status === 200 && upload.body.contentType === "application/pdf" && existsSync(upload.file), "un PDF de verdad sí pasa", upload.body);
+ok(
+  sql(`select client_confirmed_at = '2020-01-02T03:04:05Z' from appointments where payment_token = '${fakeToken}'`) === "t",
+  "si ya había confirmado que va, se queda la hora de su confirmación",
+);
+
+const bytes = (...parts: (string | number[])[]) =>
+  Buffer.concat(parts.map((part) => (typeof part === "string" ? Buffer.from(part, "latin1") : Buffer.from(part))));
+const heif = (major: string, ...compatible: string[]) => bytes([0, 0, 0, 16 + 4 * compatible.length], "ftyp", major, [0, 0, 0, 0], ...compatible);
+ok(
+  fileKindOf(PNG) === "image" && fileKindOf(bytes([0xff, 0xd8, 0xff, 0xe0], "JFIF")) === "image" && fileKindOf(bytes("RIFF", [1, 2, 3, 4], "WEBPVP8 ")) === "image",
+  "reconoce PNG, JPG y WebP por sus primeros bytes",
+);
+ok(
+  fileKindOf(heif("heic", "mif1", "heic")) === "image" && fileKindOf(heif("mif1", "heic")) === "image" && fileKindOf(heif("isom", "mp41")) === null,
+  "la foto HEIC del iPhone sí; un video MP4 no",
+);
+ok(fileKindOf(bytes("%PDF-1.7\n")) === "pdf" && fileKindOf(bytes("\r\n  %PDF-1.4")) === "pdf", "un PDF, también con algo antes de «%PDF-»");
+ok(
+  fileKindOf(bytes("<html>")) === null && fileKindOf(bytes("MZ", [0x90, 0])) === null && fileKindOf(Buffer.alloc(0)) === null,
+  "una página web, un programa o un archivo vacío, no",
+);
+ok(
+  matchesDeclaredType(PNG, "image/jpeg") && !matchesDeclaredType(PNG, "application/pdf") && !matchesDeclaredType(bytes("%PDF-1.7"), "image/png"),
+  "una foto por una foto (aunque cambie el formato) y un PDF por un PDF",
+);
+
+// El comprobante sólo lo abre el equipo del negocio de la cita.
+const otherOwner = agent();
+const otherSession = (await otherOwner("POST", "/auth/login", { email: "ricardo@demo.com", password: "demo1234", remember: true })).body;
+const foreignPanel = (await otherOwner("GET", `${B}/payment-receipts/${pending.receipt.id}/url`)).status;
+const foreignOwnBusiness = (await otherOwner("GET", `/businesses/${otherSession.businessId}/payment-receipts/${pending.receipt.id}/url`)).status;
+ok(
+  otherSession.businessId && otherSession.businessId !== session.businessId && [403, 404].includes(foreignPanel) && foreignOwnBusiness === 404,
+  "el equipo de otro negocio no abre el comprobante",
+  [foreignPanel, foreignOwnBusiness],
+);
 
 console.log("Borrar al paciente borra sus comprobantes");
 const clientId = sql(`select client_id from appointments where id = '${appointmentId}'`);

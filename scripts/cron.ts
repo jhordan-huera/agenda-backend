@@ -64,6 +64,7 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   billing_rejected: ["Comprobante de mensualidad rechazado (al propietario)", "Comprobantes de mensualidad rechazados (al propietario)"],
   billing_voided: ["Cobro de mensualidad anulado (al propietario)", "Cobros de mensualidad anulados (al propietario)"],
   professional_daily_agenda: ["Agenda del día (al profesional)", "Agendas del día (al profesional)"],
+  monthly_report: ["Informe mensual (al propietario)", "Informes mensuales (al propietario)"],
   payment_receipt_received: ["Comprobante de pago (al negocio)", "Comprobantes de pago (al negocio)"],
   patient_cancelled: ["Aviso de cancelación del paciente (al negocio)", "Avisos de cancelación del paciente (al negocio)"],
   business_created: ["Negocio creado", "Negocios creados"],
@@ -401,8 +402,8 @@ export function describePushLine(report: ScheduledTasksReport, problem: string |
  */
 export function describeBillingLine(report: ScheduledTasksReport): string {
   if (!report.billing) return "";
-  const { charges, reminders, receipts, receiptsPurged } = report.billing;
-  return ` · mensualidades: cobros ${charges} · recordatorios ${reminders} · comprobantes ${receipts} (borrados, más de 12 meses: ${
+  const { charges, reminders, receipts, receiptsPurged, voided } = report.billing;
+  return ` · mensualidades: cobros ${charges} · recordatorios ${reminders}${voided ? ` · anulados de suspendidos ${voided}` : ""} · comprobantes ${receipts} (borrados, más de 12 meses: ${
     receiptsPurged ?? "sin almacenamiento"
   })`;
 }
@@ -472,7 +473,7 @@ async function main(): Promise<void> {
   const { pool } = await import("../src/db/pool.ts");
   const { disableImmediateDelivery, scrubEmails } = await import("../src/services/mailer.ts");
   const { disableImmediatePushDelivery } = await import("../src/services/push-delivery.ts");
-  const { runScheduledTasks, EMAIL_CONTENT_DAYS } = await import("../src/jobs/scheduled-tasks.ts");
+  const { runScheduledTasks } = await import("../src/jobs/scheduled-tasks.ts");
   // Este proceso envía él mismo, al final, lo que pone en cola (emails y avisos en el celular).
   disableImmediateDelivery();
   disableImmediatePushDelivery();
@@ -496,7 +497,7 @@ async function main(): Promise<void> {
 
     console.info(
       `Recordatorios: ${report.reminders} · invitaciones de calendario: ${report.calendarInvites ?? 0} · ` +
-        `recordatorios de pago: ${report.paymentReminders ?? 0} · ` +
+        `recordatorios de pago: ${report.paymentReminders ?? 0} · informes mensuales: ${report.monthlyReports ?? 0} · ` +
         `reservas por la página: ${report.onlineBookings ?? 0} · ` +
         `pacientes nuevos del panel: ${report.panelClients ?? 0} · citas del panel: ${report.panelAppointments ?? 0} · ` +
         `series del panel: ${report.panelSeries ?? 0} · series canceladas: ${report.seriesCancellations ?? 0} · ` +
@@ -507,7 +508,8 @@ async function main(): Promise<void> {
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +
         `esperan el cupo de Gmail: ${report.emails.waiting ?? 0} · ` +
         `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ` +
-        `emails sin contenido (más de ${EMAIL_CONTENT_DAYS} días): ${report.emailContentPurged} · ` +
+        `emails sin contenido (de antes del lunes a las 12:00): ${report.emailContentPurged}` +
+        `${report.emailSpaceReclaimed === undefined ? "" : report.emailSpaceReclaimed ? " (espacio devuelto)" : " (no se pudo devolver el espacio)"} · ` +
         `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"}` +
         `${describeBillingLine(report)}` +
         `${describePanelLine(report)}` +

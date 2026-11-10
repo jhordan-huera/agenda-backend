@@ -38,7 +38,9 @@ export interface PaymentReminderCandidate {
  * - en los días que eligió el super admin:
  *   - `before_three`: los 3 días anteriores a la cita;
  *   - `after_booking`: los 3 días siguientes a la reserva;
- *   - `before_and_morning`: los 2 días anteriores y el mismo día, si la cita es más tarde.
+ *   - `before_and_morning`: los 2 días anteriores y el mismo día, si la cita es más tarde;
+ * - y, con cualquiera de las tres, el mismo día de la cita antes de que empiece, si todavía no le llegaron 3
+ *   (decisión del dueño del producto, 2026-11-10: las citas de hoy también entran).
  */
 export function isPaymentReminderDue(appointment: PaymentReminderCandidate, now: ZonedNow): boolean {
   const today = now.date;
@@ -49,9 +51,11 @@ export function isPaymentReminderDue(appointment: PaymentReminderCandidate, now:
   const daysToAppointment = daysBetween(today, appointment.date);
   // Nunca desde que empieza la cita.
   if (daysToAppointment < 0 || (daysToAppointment === 0 && timeToMinutes(appointment.startTime) <= now.minutes)) return false;
+  // El día de la cita, antes de que empiece, siempre entra (2026-11-10).
+  if (daysToAppointment === 0) return true;
   switch (appointment.days) {
     case "before_three":
-      return daysToAppointment >= 1 && daysToAppointment <= 3;
+      return daysToAppointment <= 3;
     case "after_booking":
       return daysBetween(appointment.bookedOn, today) <= 3;
     case "before_and_morning":

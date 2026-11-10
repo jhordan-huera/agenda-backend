@@ -3,6 +3,7 @@ import { APP_NAME } from "../constants/app.ts";
 import { BANK_ACCOUNT_TYPE_LABELS, describeTimezone, formatUsdAmount } from "../constants/business.ts";
 import { capitalize, formatDate, formatLongDate, formatPrice, formatShortDate, formatTimeRange, joinNames } from "../format.ts";
 import { describeHomeVisit, getDirectionsUrl, getPlaceMapsUrl, hasMapPoint } from "../maps.ts";
+import { addDaysISO } from "../time.ts";
 import type { BankAccount, BillingPaidMethod, HomeVisitAddress, ISODate } from "../../types/index.ts";
 import { composeEmail, type EmailBlock, type EmailContent, type EmailMessage } from "./layout.ts";
 
@@ -114,6 +115,44 @@ export interface CalendarInviteEmailData {
  * (las cuentas de su agenda y el enlace para subir el comprobante). Sólo al paciente principal: nunca lleva
  * copia al profesional.
  */
+/**
+ * El informe mensual del propietario (spec 040): sólo cifras de su negocio, del mes calendario anterior. Nunca
+ * datos de pacientes, ni planes ni precios de Agenda360. Las cifras en 0 no salen.
+ */
+export interface MonthlyReportEmailData {
+  firstName: string;
+  businessName: string;
+  /** El primer día del mes del informe. */
+  month: ISODate;
+  /** Citas sin las canceladas. */
+  appointments: number;
+  /** De ésas, las que llegaron por la página de reservas. */
+  online: number;
+  reminders: number;
+  confirmations: number;
+  /** Canceladas con 24 h o más de anticipación: la hora quedó libre. */
+  timelyCancellations: number;
+  newClients: number;
+  receipts: number;
+  /** La suma del precio de las citas completadas. */
+  revenue: number;
+  currency: string;
+  /** Citas del mes anterior a ése (0: sin comparación). */
+  previousAppointments: number;
+  reportsUrl: string;
+  /** El enlace del programa de referidos del negocio (null: no tiene). */
+  referralUrl: string | null;
+}
+
+/** «Tuviste 12 % más citas que en septiembre.», o null si el mes anterior no tuvo citas. */
+function monthComparison(data: MonthlyReportEmailData): string | null {
+  if (data.previousAppointments <= 0) return null;
+  const previous = formatDate(addDaysISO(data.month, -1), "MMMM");
+  const change = Math.round(((data.appointments - data.previousAppointments) / data.previousAppointments) * 100);
+  if (change === 0) return `Tuviste las mismas citas que en ${previous}.`;
+  return `Tuviste ${Math.abs(change)} % ${change > 0 ? "más" : "menos"} citas que en ${previous}.`;
+}
+
 export interface PaymentReminderEmailData {
   clientName: string;
   appointments: AppointmentEmailData[];
@@ -1109,6 +1148,47 @@ export const emailTemplates = {
    * son de agendas con las mismas cuentas; si no, debajo de cada cita. Amable: un recordatorio, nunca una
    * «deuda», y si ya lo envió por WhatsApp, puede ignorarlo.
    */
+  /**
+   * El informe mensual al propietario (spec 040), el día 1: lo que Agenda360 hizo por su negocio el mes anterior.
+   * Sólo las cifras que no están en 0, la comparación con el mes de antes, el botón a Reportes y, si tiene, su
+   * enlace de referidos (sin descuentos ni precios).
+   */
+  monthlyReport: (data: MonthlyReportEmailData): EmailContent => {
+    const month = formatDate(data.month, "MMMM");
+    const counts: [label: string, value: number][] = [
+      ["Citas gestionadas", data.appointments],
+      ["Reservas por tu página", data.online],
+      ["Recordatorios enviados", data.reminders],
+      ["Pacientes que confirmaron que van", data.confirmations],
+      ["Cancelaciones con tiempo (la hora quedó libre)", data.timelyCancellations],
+      ["Pacientes nuevos", data.newClients],
+      ["Comprobantes de pago recibidos", data.receipts],
+    ];
+    const rows = counts.filter(([, value]) => value > 0).map(([label, value]) => ({ label, value: String(value) }));
+    if (data.revenue > 0) rows.push({ label: "Ingresos estimados (citas completadas)", value: formatPrice(data.revenue, data.currency) });
+    const comparison = monthComparison(data);
+    const blocks: EmailBlock[] = [
+      { kind: "text", text: `Esto es lo que ${APP_NAME} hizo por ${data.businessName} en ${month}:` },
+      { kind: "details", rows },
+      ...(comparison ? [{ kind: "text", text: comparison } satisfies EmailBlock] : []),
+      { kind: "button", label: "Ver mis reportes", url: data.reportsUrl },
+    ];
+    if (data.referralUrl) {
+      blocks.push(
+        { kind: "text", text: "¿Conoces a otro profesional al que le sirva? Compártele tu enlace:" },
+        { kind: "link", label: "Tu enlace de recomendación", url: data.referralUrl },
+      );
+    }
+    blocks.push({ kind: "note", text: "Si no quieres recibir este resumen, apágalo en Configuración → Notificaciones." });
+    return platformEmail({
+      subject: `Tu mes de ${month} en ${APP_NAME}`,
+      preheader: `${data.businessName}: ${data.appointments === 1 ? "1 cita" : `${data.appointments} citas`} en ${month}.`,
+      title: `Tu mes de ${month}`,
+      greeting: `Hola ${data.firstName}:`,
+      blocks,
+    });
+  },
+
   paymentReminder: (data: PaymentReminderEmailData): EmailContent => {
     const items = data.appointments;
     const first = items[0];

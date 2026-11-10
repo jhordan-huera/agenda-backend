@@ -101,6 +101,8 @@ export const notificationSettingsSchema = z.object({
   whatsappFollowUps: z.boolean().default(true),
   // Emails de Atendida y No asistió (spec 008): encendido también en los negocios guardados antes.
   followUps: z.boolean().default(true),
+  // Informe mensual al propietario (spec 040): encendido también en los negocios guardados antes.
+  monthlyReport: z.boolean().default(true),
 });
 
 /** Datos del negocio pedidos en el onboarding (pasos 1–3). */

@@ -18,6 +18,7 @@ import {
 } from "../shared/lib/constants/business.ts";
 import { PLANS, getEffectiveLimits, getPlan } from "../shared/lib/constants/plans.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
+import { formatUsdAmount } from "../shared/lib/constants/business.ts";
 import { formatSupportContact, getFullName, plural } from "../shared/lib/format.ts";
 import { ROLE_LABELS } from "../shared/lib/permissions.ts";
 import { getZonedNow } from "../shared/lib/time.ts";
@@ -64,7 +65,7 @@ import { createUserAccount, hashPassword, isEmailRegistered } from "./accounts.t
 import { discardedEmailSql, emailQuotaStatus } from "./email-limits.ts";
 import { ADMIN_AUDIT_QUERY, parseAuditFilters, queryAuditLogs } from "./activity-service.ts";
 import { businessAnalytics } from "./analytics-service.ts";
-import { adminBusinessBilling, billingCounts, ensureBillingSchedule } from "./billing-service.ts";
+import { adminBusinessBilling, billingCounts, ensureBillingSchedule, voidSuspendedCharges } from "./billing-service.ts";
 import { findTeamMember, listTeamMembers } from "./account-service.ts";
 import { logAudit } from "./audit.ts";
 import { insertBusiness, isSlugTaken } from "./business-factory.ts";
@@ -640,7 +641,10 @@ export const adminService = {
     });
   },
 
-  /** Suspender bloquea el panel y la página pública del negocio; reactivar lo devuelve a la normalidad. */
+  /**
+   * Suspender bloquea el panel y la página pública del negocio y anula sus cobros sin pagar (2026-11-10: a un
+   * suspendido no se le cobra); reactivar lo devuelve a la normalidad y los cobros siguen desde el próximo mes.
+   */
   async setBusinessStatus(ctx: RequestContext, businessId: string, status: unknown): Promise<Business> {
     const actor = authorizeSuperAdmin(ctx);
     const next = parseInput(businessStatusSchema, status);
@@ -654,6 +658,7 @@ export const adminService = {
       ))!;
 
       const suspended = next === "suspended";
+      const voided = suspended ? await voidSuspendedCharges(db, { businessId, actorId: actor.userId }) : { count: 0, total: 0 };
       const owner = await one<User>(db, `select ${userColumns()} from users where id = $1`, [business.ownerId]);
       if (owner) {
         const supportContact = formatSupportContact(await getPlatformSettings(db));
@@ -672,7 +677,11 @@ export const adminService = {
         action: suspended ? "platform.business_suspended" : "platform.business_reactivated",
         entityType: "business",
         entityId: businessId,
-        summary: `${suspended ? "Suspendió" : "Reactivó"} el negocio ${business.name}`,
+        summary:
+          `${suspended ? "Suspendió" : "Reactivó"} el negocio ${business.name}` +
+          (voided.count > 0
+            ? ` y anuló ${voided.count === 1 ? "su cobro" : `sus ${voided.count} cobros`} sin pagar (${formatUsdAmount(voided.total)})`
+            : ""),
       });
       return business;
     });

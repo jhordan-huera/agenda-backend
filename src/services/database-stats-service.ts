@@ -70,7 +70,7 @@ export const QUERY_TEXT_MAX = 160;
 /**
  * Cada tabla de Agenda360 en palabras, con su regla de borrado tal como está en el código (spec 024):
  * - cron_runs: cada lunes a las 12:00 se borran las pasadas de antes (src/jobs/scheduled-tasks.ts);
- * - notifications: EMAIL_CONTENT_DAYS = 30 (purgeOldEmailContent; los que siguen en cola no se tocan);
+ * - notifications: el contenido, cada lunes a las 12:00 (purgeOldEmailContent; los que siguen en cola no se tocan);
  * - audit_logs: purge_audit_logs (migración 026): 5 meses, las sesiones 90 días y la historia clínica 5 años;
  * - sessions y login_challenges: deleteExpiredSessions, al caducar;
  * - panel_notices: NOTICE_DAYS = 30 (cleanupPanelNotices; sus lecturas, en cascada);
@@ -85,7 +85,7 @@ export const QUERY_TEXT_MAX = 160;
  * Las que no están aquí salen con su nombre técnico y sin regla.
  */
 export const TABLE_INFO: Record<string, { label: string; retention: string }> = {
-  notifications: { label: "Emails (cola e historial)", retention: "El contenido a los 30 días; queda el registro" },
+  notifications: { label: "Emails (cola e historial)", retention: "El contenido, cada lunes al mediodía; queda el registro" },
   audit_logs: { label: "Actividad", retention: "5 meses (las sesiones, 90 días; la historia clínica, 5 años)" },
   cron_runs: { label: "Registro del cron", retention: "Cada lunes al mediodía" },
   appointments: { label: "Citas", retention: "Nunca" },

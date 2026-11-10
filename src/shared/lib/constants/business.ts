@@ -11,6 +11,7 @@ import type {
   ServiceMode,
   TimeRange,
 } from "../../types/index.ts";
+import { cachedDateFormat } from "../time.ts";
 
 /**
  * Zonas horarias admitidas, con el país del negocio: prefijo telefónico (enlaces de
@@ -72,7 +73,7 @@ export function describeTimezone(timezone: string, at: Date = new Date()): strin
   let offset = "";
   try {
     offset =
-      new Intl.DateTimeFormat("en-US", { timeZone: timezone, timeZoneName: "shortOffset" })
+      cachedDateFormat("en-US", { timeZone: timezone, timeZoneName: "shortOffset" })
         .formatToParts(at)
         .find((part) => part.type === "timeZoneName")?.value ?? "";
   } catch {
@@ -148,6 +149,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   whatsappOnStatusChange: true,
   whatsappFollowUps: true,
   followUps: true,
+  monthlyReport: true,
 };
 
 /** Emails de seguimiento (Atendida, No asistió): sólo de citas de hoy o de los últimos 7 días (spec 008). */
@@ -173,7 +175,11 @@ export const canCancelOnline = (
   minutesUntilStart: number,
 ) => settings.allowCancellations && minutesUntilStart > settings.cancellationNoticeHours * 60;
 
-/** Días después de la cita en que su enlace «Tu cita» deja de abrirse (spec 010). */
+/**
+ * Días después de la cita en que sus enlaces privados dejan de abrirse: «Tu cita» (spec 010) y, desde
+ * el 2026-11-10, también el de pago (/pago/:token). Así un enlace viejo, reenviado o filtrado ya no
+ * enseña las cuentas del negocio ni deja subir comprobantes.
+ */
 export const APPOINTMENT_PAGE_DAYS = 30;
 
 /**
@@ -223,17 +229,20 @@ export function paymentRemindersOf(business: { paymentReminders?: PaymentReminde
   return { ...DEFAULT_PAYMENT_REMINDERS, ...business?.paymentReminders };
 }
 
-/** Qué días salen los recordatorios (los elige el super admin), con un ejemplo de fechas. */
+/**
+ * Qué días salen los recordatorios (los elige el super admin), con un ejemplo de fechas. Con las tres, el día de
+ * la cita también entra antes de que empiece, si aún no le llegaron 3 (2026-11-10).
+ */
 export const PAYMENT_REMINDER_DAYS_OPTIONS: { value: PaymentReminderDays; label: string; example: string }[] = [
   {
     value: "before_three",
     label: "Los 3 días anteriores a la cita",
-    example: "Con la cita el viernes: el martes, el miércoles y el jueves.",
+    example: "Con la cita el viernes: el martes, el miércoles y el jueves (y el viernes antes de la cita, si aún no le llegaron 3).",
   },
   {
     value: "after_booking",
     label: "Los 3 días siguientes a la reserva",
-    example: "Con una reserva del lunes: el martes, el miércoles y el jueves (si la cita es después).",
+    example: "Con una reserva del lunes: el martes, el miércoles y el jueves, y el día de la cita antes de que empiece si aún no le llegaron 3.",
   },
   {
     value: "before_and_morning",

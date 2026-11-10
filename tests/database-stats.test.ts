@@ -55,7 +55,7 @@ ok(!failed(size) && Math.abs(size.sizeBytes - realSize) < 2 * MB && size.limitBy
 const tables = r.stats.tables as DatabaseTables;
 const emails = tables.app.find((table) => table.name === "notifications");
 ok(
-  emails?.label === "Emails (cola e historial)" && emails.retention === "El contenido a los 30 días; queda el registro",
+  emails?.label === "Emails (cola e historial)" && emails.retention === "El contenido, cada lunes al mediodía; queda el registro",
   "cada tabla en palabras y con su regla de borrado («Emails (cola e historial)»)",
   emails,
 );
