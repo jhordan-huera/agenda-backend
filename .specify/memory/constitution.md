@@ -226,6 +226,11 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - En la portada no hay testimonios, cifras ni precios inventados. Un testimonio sólo sale con el permiso
   de quien lo da, y las integraciones que se muestran son sólo las reales, con iconos propios y sin logos
   de marcas (spec 032, 2026-10-22).
+- Las páginas por especialidad (/psicologos, /fisioterapeutas y /odontologos, spec 041, 2026-11-10) siguen
+  las mismas reglas que la portada: sólo funciones que existen, sin testimonios, cifras ni precios
+  inventados, sin nombres de clientes, sin planes ni precios, sin la LOPDP y sin funciones paradas. Cada
+  una tiene su título y su descripción para Google y para la vista previa al compartirla, y lo comprueba
+  `npm run check:specialties`.
 - La marca de Agenda360 es tomate (#c2410c) con un durazno suave de resaltado: el logo y el icono, la
   portada y el login, el panel por defecto y los emails. Una sola gama: el botón principal de la portada
   es el principal de la marca, sin otro color aparte. Los negocios y los super admin con colores propios
@@ -347,4 +352,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.36.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
+**Versión**: 1.37.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
