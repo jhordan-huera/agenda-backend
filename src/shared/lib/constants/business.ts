@@ -228,17 +228,20 @@ export function paymentRemindersOf(business: { paymentReminders?: PaymentReminde
   return { ...DEFAULT_PAYMENT_REMINDERS, ...business?.paymentReminders };
 }
 
-/** Qué días salen los recordatorios (los elige el super admin), con un ejemplo de fechas. */
+/**
+ * Qué días salen los recordatorios (los elige el super admin), con un ejemplo de fechas. Con las tres, el día de
+ * la cita también entra antes de que empiece, si aún no le llegaron 3 (2026-11-10).
+ */
 export const PAYMENT_REMINDER_DAYS_OPTIONS: { value: PaymentReminderDays; label: string; example: string }[] = [
   {
     value: "before_three",
     label: "Los 3 días anteriores a la cita",
-    example: "Con la cita el viernes: el martes, el miércoles y el jueves.",
+    example: "Con la cita el viernes: el martes, el miércoles y el jueves (y el viernes antes de la cita, si aún no le llegaron 3).",
   },
   {
     value: "after_booking",
     label: "Los 3 días siguientes a la reserva",
-    example: "Con una reserva del lunes: el martes, el miércoles y el jueves (si la cita es después).",
+    example: "Con una reserva del lunes: el martes, el miércoles y el jueves, y el día de la cita antes de que empiece si aún no le llegaron 3.",
   },
   {
     value: "before_and_morning",

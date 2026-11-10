@@ -109,7 +109,8 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   9:00 de la hora del negocio, con el enlace para subirlo: como mucho 3 por cita y un solo email al día con
   todas sus citas. El comprobante se pide sólo antes de la cita (2026-11-10): en los días que elige el super
   admin para el negocio (los 3 anteriores a la cita, los 3 siguientes a la reserva o los 2 anteriores y la
-  mañana del mismo día), nunca desde que empieza la cita; una cita que ya empezó, pasó o se completó no
+  mañana del mismo día) y, con cualquiera de ellas, el mismo día de la cita si todavía no empieza y no le
+  llegaron 3 (2026-11-10); nunca desde que empieza la cita: una cita que ya empezó, pasó o se completó no
   recibe nada. Los recordatorios quedan en el historial de emails, no en la actividad. En el panel, la cita
   que aún no empieza lleva la marca «Sin comprobante» y el profesional se lo puede recordar por WhatsApp, a
   mano y sin contar en el tope. Al subirse el comprobante, el profesional de la agenda recibe el email y el
@@ -339,4 +340,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.34.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
+**Versión**: 1.35.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
