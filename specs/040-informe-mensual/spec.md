@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/040-informe-mensual` (rama de trabajo: `dev`) · **Creada**: 2026-11-10
 
-**Estado**: Aprobada (2026-11-10, «lo acepto con todo lo recomendado»)
+**Estado**: Implementada (2026-11-10). Aprobada el 2026-11-10, «lo acepto con todo lo recomendado»
 
 **Repos**:
 - **agenda-backend:** el cálculo del mes, el envío mensual en el cron, el ajuste del propietario y la plantilla del

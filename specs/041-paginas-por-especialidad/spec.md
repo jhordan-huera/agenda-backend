@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/041-paginas-por-especialidad` (rama de trabajo: `dev`) · **Creada**: 2026-11-10
 
-**Estado**: Aprobada (2026-11-10, «acepto con lo recomendado», después de ver el prototipo de /psicologos en `prototipo/`)
+**Estado**: Implementada (2026-11-10). Aprobada el 2026-11-10 («acepto con lo recomendado», después de ver el prototipo de /psicologos en `prototipo/`)
 
 **Repos**:
 - **agenda-front:** las páginas, los enlaces desde la portada y el pie, el título y la descripción para compartir
