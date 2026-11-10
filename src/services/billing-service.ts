@@ -174,6 +174,33 @@ const BILLABLE_SQL = `b.status = 'active' and b.owner_id is not null and s.plan 
                       and (s.monthly_fee is null or s.monthly_fee > 0)
                       and s.billing_day is not null and s.billing_start is not null`;
 
+/** El motivo con que se anulan los cobros de un negocio al suspenderlo. */
+export const SUSPENDED_VOID_REASON = "Negocio suspendido";
+
+/**
+ * Anula los cobros que esperan el comprobante (por pagar, atrasados o rechazados) de los negocios
+ * suspendidos: a un negocio suspendido no se le cobra y, si se reactiva, empieza limpio (decisión del dueño
+ * del producto, 2026-11-10). Los «En revisión» se quedan: el comprobante ya llegó y el super admin lo
+ * revisa. Sus descuentos de referidos quedan libres, como al anular a mano. Sin email al propietario: su
+ * negocio está suspendido. Con `businessId`, sólo los de ese negocio (al suspenderlo, con quién lo hizo);
+ * sin él, los de todos (el cron, para los que ya estaban suspendidos). Devuelve cuántos y su total.
+ */
+export async function voidSuspendedCharges(
+  db: Db,
+  options: { businessId?: string; actorId?: string | null } = {},
+): Promise<{ count: number; total: number }> {
+  const rows = await many<{ amount: number }>(
+    db,
+    `update billing_charges c set status = 'void', void_reason = $1, reviewed_by = $2, updated_at = now()
+       from businesses b
+      where b.id = c.business_id and b.status <> 'active' and c.status = any($3::text[])
+        and ($4::uuid is null or c.business_id = $4::uuid)
+      returning c.amount::float8 as amount`,
+    [SUSPENDED_VOID_REASON, options.actorId ?? null, AWAITING_RECEIPT, options.businessId ?? null],
+  );
+  return { count: rows.length, total: Math.round(rows.reduce((sum, row) => sum + row.amount, 0) * 100) / 100 };
+}
+
 /** Los negocios que generan cobros, para el cron. */
 export async function billableBusinessIds(db: Db): Promise<string[]> {
   const rows = await many<{ id: string }>(

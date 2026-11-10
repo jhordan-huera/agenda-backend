@@ -301,7 +301,12 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
 console.log("La foto");
 ok(snapshot.periodDays === 30 && snapshot.from === day(-30) && snapshot.to === T, "el periodo: los 30 días antes de hoy", [snapshot.from, snapshot.to]);
-ok(snapshot.businesses.length === count("select count(*) from businesses"), "un negocio por cada negocio (activos y suspendidos)", snapshot.businesses.length);
+ok(
+  snapshot.businesses.length === count("select count(*) from businesses where status = 'active'") &&
+    snapshot.businesses.every((biz) => biz.status === "active"),
+  "un negocio por cada negocio activo: los suspendidos no salen (2026-11-10)",
+  snapshot.businesses.length,
+);
 
 console.log("Las cifras de A (contadas a mano)");
 const a = of(A);
@@ -361,13 +366,13 @@ const a90 = of(A, snapshot90);
 ok(a90.appointments === 72 && a90.growth === "new" && a90.previousAppointments === 0, "en 90 días: 72 citas y «nuevo» (antes no tenía)", [a90.appointments, a90.growth]);
 
 console.log("Los demás negocios");
-const [b, c, e, f, g, h] = [B, C, E, F, G, H].map((biz) => of(biz));
+const [b, c, e, f, g] = [B, C, E, F, G].map((biz) => of(biz));
 ok(b.noShowRate === 0.05 && b.averageTicket === 30 && b.growth === 0 && b.onlineRate === 0, "B: 1 de 20 no asistió, ticket $30, crecimiento 0 y sin reservas online", b);
 ok(c.noShowRate === 0.1 && c.onlineRate === 0.5 && c.averageTicket === 20, "C: 2 de 20 no asistió, 10 de 20 online y ticket $20", c);
 ok(e.noShowRate === 0.4 && e.onlineRate === 0.25, "E: 8 de 20 no asistió y 5 de 20 online", e);
 ok(f.fewData && f.noShowRate === 0.4 && f.appointments === 5, "F: 5 citas, «pocos datos» (su tasa se ve, con la marca)", f);
 ok(g.growth === "new" && g.appointments === 0 && g.fewData, "G (de hace 5 días): «nuevo», con ceros", g);
-ok(h.status === "suspended" && h.appointments === 15, "H: suspendido, en la foto con sus cifras", h);
+ok(of(H) === undefined && of(H, snapshot90) === undefined, "H: suspendido, no está en la foto (ni en la de 90 días)", of(H));
 const s = of(S);
 ok(same(s.agendas, { active: 2, contracted: 2 }) && s.features.multiAgenda, "S (Business): 2 de 2 agendas contratadas, varias agendas", s.agendas);
 const u = of(U);
@@ -450,7 +455,6 @@ ok(
   "K: crítico (10), con sus motivos",
   of(K).health,
 );
-ok(h.health.reasons.every((reason) => reason !== "Sin reservas online"), "un suspendido no resta por la página de reservas (no está activa)", h.health);
 
 console.log("Cada regla de la salud (R4)");
 const healthy = {
@@ -538,9 +542,9 @@ ok(
   snapshot.platform.appointments === sumOf((biz) => biz.value.appointments) &&
     snapshot.platform.appointments ===
       count(`select count(*) from appointments a join businesses b on b.id = a.business_id
-              where a.date >= ('${NOW.toISOString()}'::timestamptz at time zone b.timezone)::date - 30
+              where b.status = 'active' and a.date >= ('${NOW.toISOString()}'::timestamptz at time zone b.timezone)::date - 30
                 and a.date < ('${NOW.toISOString()}'::timestamptz at time zone b.timezone)::date`),
-  "citas gestionadas: todas las del periodo, de todos los negocios",
+  "citas gestionadas: todas las del periodo, de los negocios activos",
   snapshot.platform.appointments,
 );
 ok(
@@ -551,7 +555,7 @@ ok(
   "reservas online, recordatorios, confirmaciones y pacientes nuevos",
   snapshot.platform,
 );
-ok(same(snapshot.platform.businesses, { active: active.length, total: snapshot.businesses.length }), "negocios activos y en total");
+ok(same(snapshot.platform.businesses, { active: active.length, total: active.length }), "negocios: sólo los activos");
 const adoption = snapshot.platform.adoption;
 ok(
   Object.entries(adoption).every(([key, value]) => value.businesses === active.filter((biz) => biz.features[key as keyof BusinessAnalytics["features"]]).length) &&
@@ -657,6 +661,23 @@ ok((await admin("GET", "/admin/analytics?days=90")).body.snapshot.periodDays ===
 ok((await admin("GET", "/admin/analytics")).body.snapshot.periodDays === 30, "sin days, la de 30");
 insertAppointments(A, [{ offset: -1, status: "completed", client: A.clients[0] }]);
 ok(of(A, (await admin("GET", "/admin/analytics")).body.snapshot).appointments === 40, "la página lee la foto: no recalcula (la cita nueva sale mañana)");
+const beforeSuspend = (await admin("GET", "/admin/analytics")).body.snapshot as AnalyticsSnapshot;
+sql(`update businesses set status = 'suspended' where id = '${B.id}'`);
+const afterSuspend = (await admin("GET", "/admin/analytics")).body.snapshot as AnalyticsSnapshot;
+sql(`update businesses set status = 'active' where id = '${B.id}'`);
+ok(
+  of(B, beforeSuspend) !== undefined &&
+    of(B, afterSuspend) === undefined &&
+    afterSuspend.businesses.length === beforeSuspend.businesses.length - 1 &&
+    afterSuspend.platform.appointments === beforeSuspend.platform.appointments - of(B, beforeSuspend).value.appointments &&
+    afterSuspend.platform.businesses.active === beforeSuspend.platform.businesses.active - 1,
+  "un negocio suspendido después de la foto sale de la página enseguida, y los totales se suman sin él",
+  [beforeSuspend.platform, afterSuspend.platform],
+);
+ok(
+  same((await admin("GET", "/admin/analytics")).body.snapshot, beforeSuspend),
+  "al reactivarlo vuelve, tal como estaba en la foto",
+);
 const detail = (await admin("GET", `/admin/businesses/${A.id}`)).body as AdminBusinessDetail;
 ok(
   detail.analytics?.business.id === A.id && detail.analytics.periodDays === 30 && detail.analytics.category?.id === TYPE_A && detail.analytics.category.medians.noShowRate === 0.15,

@@ -987,6 +987,71 @@ console.log("La purga de los comprobantes de más de 12 meses");
   ok(sql(`select status from billing_charges where id = '${chargeId}'`) === "paid", "y el cobro queda como historial");
 }
 
+/* ---------------------------------------------- Un negocio suspendido ---- */
+
+console.log("Suspender un negocio anula sus cobros sin pagar (2026-11-10)");
+{
+  const insertCharge = (due: string, status: string) =>
+    sql(`insert into billing_charges (business_id, due_date, base_amount, amount, status, rejection_reason)
+         values ('${FISIO}', '${due}', 14.99, 14.99, '${status}', ${status === "rejected" ? "'No se ve el monto'" : "null"}) returning id`);
+  const statusOf = (id: string) => sql(`select status || ' | ' || coalesce(void_reason, '') from billing_charges where id = '${id}'`);
+  sql(`delete from billing_charges where business_id = '${FISIO}'`);
+  const due = insertCharge(addDaysISO(today(), -2), "due");
+  const late = insertCharge(addDaysISO(today(), -40), "due");
+  const rejected = insertCharge(addDaysISO(today(), -70), "rejected");
+  const review = insertCharge(addDaysISO(today(), -100), "in_review");
+  const paid = insertCharge(addDaysISO(today(), -130), "paid");
+  const voidedEmails = emails("billing_voided");
+  const adminId = sql("select id from users where email = 'admin@demo.com'");
+
+  let r = await admin("PATCH", `/admin/businesses/${FISIO}/status`, { status: "suspended" });
+  ok(
+    r.status === 200 && [due, late, rejected].every((id) => statusOf(id) === "void | Negocio suspendido"),
+    "por pagar, atrasado y rechazado pasan a «Anulados», con el motivo «Negocio suspendido»",
+    [r.status, ...[due, late, rejected].map(statusOf)],
+  );
+  ok(statusOf(review) === "in_review |" && statusOf(paid) === "paid |", "el que está en revisión y el pagado no se tocan", [statusOf(review), statusOf(paid)]);
+  ok(
+    sql(`select string_agg(distinct reviewed_by::text, ',') from billing_charges where id in ('${due}', '${late}', '${rejected}')`) === adminId,
+    "queda quién lo hizo",
+  );
+  ok(emails("billing_voided") === voidedEmails, "sin email al propietario: su negocio está suspendido");
+  ok(
+    /Suspendió el negocio .+ y anuló sus 3 cobros sin pagar \(\$44,97\)/.test(lastAudit("platform.business_suspended")),
+    "la actividad lo dice, con el total",
+    lastAudit("platform.business_suspended"),
+  );
+  const [dueList, overdueList, voidList] = await Promise.all([adminList("due"), adminList("overdue"), adminList("void")]);
+  ok(
+    ![...dueList.charges, ...overdueList.charges].some((charge) => charge.business.id === FISIO) &&
+      voidList.charges.filter((charge) => charge.business.id === FISIO).length === 3,
+    "ya no salen en «Por pagar» ni en «Atrasados»; sí en «Anulados»",
+  );
+
+  // El cron recoge los cobros sin pagar de los negocios que ya estaban suspendidos (antes de este cambio).
+  const old = insertCharge(addDaysISO(today(), -160), "due");
+  const result = await tasks.runMonthlyBilling();
+  ok(
+    result.voided >= 1 && statusOf(old) === "void | Negocio suspendido" && sql(`select reviewed_by is null from billing_charges where id = '${old}'`) === "t",
+    "el cron anula los que quedaban de negocios ya suspendidos",
+    [result, statusOf(old)],
+  );
+  ok(statusOf(review) === "in_review |", "y tampoco toca el que está en revisión", statusOf(review));
+
+  r = await admin("PATCH", `/admin/businesses/${FISIO}/status`, { status: "active" });
+  ok(
+    r.status === 200 && [due, late, rejected, old].every((id) => statusOf(id).startsWith("void")),
+    "al reactivarlo siguen anulados: empieza limpio",
+    [due, late, rejected, old].map(statusOf),
+  );
+  const afterReactivate = await tasks.runMonthlyBilling();
+  ok(
+    count(`select count(*) from billing_charges where business_id = '${FISIO}' and status = 'due' and due_date < '${addDaysISO(today(), -30)}'`) === 0,
+    "y no se le crean cobros de los meses que pasó suspendido",
+    afterReactivate,
+  );
+}
+
 /* ------------------------------------------------------------- La campana ---- */
 
 console.log("La campana de /admin acepta el aviso nuevo");

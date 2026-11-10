@@ -11,6 +11,7 @@ import {
   purgeOldBillingReceipts,
   queueBillingReminder,
   unscheduledBusinessIds,
+  voidSuspendedCharges,
 } from "../services/billing-service.ts";
 import {
   billingReceiptNotice,
@@ -135,7 +136,10 @@ export async function queuePaymentReminders(now: Date = new Date()): Promise<Que
  */
 export async function runMonthlyBilling(
   at: Date = new Date(),
-): Promise<{ schedules: number; charges: number; reminders: number; failures: number }> {
+): Promise<{ schedules: number; charges: number; reminders: number; voided: number; failures: number }> {
+  // Los cobros sin pagar de los negocios suspendidos se anulan (2026-11-10): al suspender ya se hace, y esto
+  // recoge los de los que ya estaban suspendidos.
+  const { count: voided } = await voidSuspendedCharges(pool);
   const schedules = await forEachBusiness(await unscheduledBusinessIds(pool), "día de pago automático", (db, id) =>
     ensureBillingSchedule(db, id, at),
   );
@@ -146,6 +150,7 @@ export async function runMonthlyBilling(
     schedules: schedules.queued,
     charges: charges.queued,
     reminders: reminders.queued,
+    voided,
     failures: schedules.failures + charges.failures + reminders.failures,
   };
 }
@@ -208,7 +213,8 @@ export interface ScheduledTasksReport {
    * días antes, los comprobantes que llegaron desde la ejecución anterior y los de más de 12 meses que se
    * borraron (null: sin almacenamiento). Sólo cifras: el registro es público.
    */
-  billing?: { charges: number; reminders: number; receipts: number; receiptsPurged: number | null };
+  /** `voided`: cobros sin pagar de negocios suspendidos que esta pasada anuló (2026-11-10). */
+  billing?: { charges: number; reminders: number; receipts: number; receiptsPurged: number | null; voided?: number };
   /** El aviso de cada comprobante de mensualidad (hasta MAX_BILLING_RECEIPT_NOTICES), con el negocio y el monto. */
   billingReceiptNotices?: BookingNotice[];
   /** Cambios de seguridad en cuentas de super admin desde la ejecución anterior (spec 009). */
@@ -486,6 +492,7 @@ export async function runScheduledTasks(): Promise<ScheduledTasksReport> {
     billing: {
       charges: billing.charges,
       reminders: billing.reminders,
+      voided: billing.voided,
       receipts: billingReceipts.total,
       receiptsPurged: billingReceiptsPurged,
     },

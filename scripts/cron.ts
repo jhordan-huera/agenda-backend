@@ -401,8 +401,8 @@ export function describePushLine(report: ScheduledTasksReport, problem: string |
  */
 export function describeBillingLine(report: ScheduledTasksReport): string {
   if (!report.billing) return "";
-  const { charges, reminders, receipts, receiptsPurged } = report.billing;
-  return ` · mensualidades: cobros ${charges} · recordatorios ${reminders} · comprobantes ${receipts} (borrados, más de 12 meses: ${
+  const { charges, reminders, receipts, receiptsPurged, voided } = report.billing;
+  return ` · mensualidades: cobros ${charges} · recordatorios ${reminders}${voided ? ` · anulados de suspendidos ${voided}` : ""} · comprobantes ${receipts} (borrados, más de 12 meses: ${
     receiptsPurged ?? "sin almacenamiento"
   })`;
 }

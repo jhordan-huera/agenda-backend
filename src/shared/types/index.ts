@@ -1635,7 +1635,7 @@ export interface AnalyticsSnapshot {
   /** El periodo en la hora de Ecuador: desde (incluido) y hasta (hoy, sin incluir). */
   from: ISODate;
   to: ISODate;
-  /** Una por negocio, activos y suspendidos (la página filtra). */
+  /** Una por negocio activo: los suspendidos no salen en la analítica (2026-11-10; las fotos de antes sí los traen). */
   businesses: BusinessAnalytics[];
   /** Una por tipo con negocios activos, más «Sin tipo» si hace falta. */
   categories: CategoryAnalytics[];

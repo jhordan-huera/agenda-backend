@@ -73,6 +73,10 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   no se cierra hasta subir el comprobante: no hay «Más tarde» ni días de gracia. Sólo se bloquea el panel
   del propietario: su equipo y su página de reservas siguen funcionando. La factura del SRI y el cobro
   con tarjeta quedan fuera por ahora.
+- A un negocio suspendido no se le cobra (2026-11-10): al suspenderlo, sus cobros sin pagar (por pagar,
+  atrasados o rechazados) pasan a «Anulados» con el motivo «Negocio suspendido», sin email y con su
+  entrada en la actividad; los que están en revisión se quedan. Si se reactiva, empieza limpio: los meses
+  que pasó suspendido no se cobran.
 - Los precios de los planes están en /admin → Planes, no en el código, y los cambia el super admin (los
   de partida: Pro $14,99; Business $29,99 con 3 agendas y $8 por cada agenda más, las contratadas o, sin
   tope, las activas; Free sin cobros). La mensualidad de cada negocio sale sola de su plan y sus agendas,
@@ -199,7 +203,9 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 
   Leer no se registra en la actividad (2026-10-15).
 - La analítica de /admin (spec 016) sólo la ve el super admin, sólo con cifras por negocio (nunca
-  datos de pacientes), y se prepara una vez al día con el cron, fuera de Vercel (2026-10-15).
+  datos de pacientes), y se prepara una vez al día con el cron, fuera de Vercel (2026-10-15). Sólo
+  salen los negocios activos: un suspendido no está ni en las cifras ni en los totales, y si se suspende
+  después de prepararla, sale al momento (2026-11-10).
 - La pantalla «Base de datos» de /admin (spec 024) sólo la ve el super admin principal, con la
   verificación en dos pasos y un límite de peticiones; sólo muestra nombres de tablas, tamaños y
   cifras (las consultas sin valores), nunca datos de filas. Su historial lo guarda el cron una vez
@@ -333,4 +339,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.33.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
+**Versión**: 1.34.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
