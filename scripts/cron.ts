@@ -472,7 +472,7 @@ async function main(): Promise<void> {
   const { pool } = await import("../src/db/pool.ts");
   const { disableImmediateDelivery, scrubEmails } = await import("../src/services/mailer.ts");
   const { disableImmediatePushDelivery } = await import("../src/services/push-delivery.ts");
-  const { runScheduledTasks, EMAIL_CONTENT_DAYS } = await import("../src/jobs/scheduled-tasks.ts");
+  const { runScheduledTasks } = await import("../src/jobs/scheduled-tasks.ts");
   // Este proceso envía él mismo, al final, lo que pone en cola (emails y avisos en el celular).
   disableImmediateDelivery();
   disableImmediatePushDelivery();
@@ -507,7 +507,8 @@ async function main(): Promise<void> {
         `reintentos: ${report.emails.retrying} · fallidos: ${report.emails.failed} · en cola: ${report.pending} · ` +
         `esperan el cupo de Gmail: ${report.emails.waiting ?? 0} · ` +
         `alertas de seguridad: ${report.security.length} · auditoría depurada: ${report.auditPurged} · ` +
-        `emails sin contenido (más de ${EMAIL_CONTENT_DAYS} días): ${report.emailContentPurged} · ` +
+        `emails sin contenido (de antes del lunes a las 12:00): ${report.emailContentPurged}` +
+        `${report.emailSpaceReclaimed === undefined ? "" : report.emailSpaceReclaimed ? " (espacio devuelto)" : " (no se pudo devolver el espacio)"} · ` +
         `comprobantes borrados (más de 3 meses): ${report.receiptsPurged ?? "sin almacenamiento"}` +
         `${describeBillingLine(report)}` +
         `${describePanelLine(report)}` +

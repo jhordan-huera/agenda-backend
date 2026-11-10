@@ -604,8 +604,10 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 - **Página de reservas en la CDN**: `GET /public/businesses/:slug` responde con
   `Cache-Control: public, s-maxage=30, stale-while-revalidate=60`; Vercel la sirve sin llegar a la
   API en los picos de visitas. La reserva vuelve a comprobar la hora al confirmarla.
-- **Contenido de los emails**: el cron borra el texto y el HTML de los emails con más de 30 días
-  (`EMAIL_CONTENT_DAYS`) y deja el registro (a quién, tipo, asunto, fecha y estado).
+- **Contenido de los emails**: cada lunes a las 12:00 (hora de Ecuador) el cron borra el texto y el
+  HTML de los emails enviados antes y devuelve su espacio (`VACUUM FULL`). Deja el registro (a quién,
+  tipo, asunto, fecha y estado), que sirve para no repetir recordatorios, el cupo de Gmail, la
+  analítica y el historial del negocio. Antes del 2026-11-10 era a los 30 días.
 - **Conexiones**: en Vercel, 3 por instancia por defecto (`DATABASE_POOL_MAX`); en local, 10.
 - **Aviso de espacio**: la copia de seguridad semanal informa el tamaño de la base y avisa por ntfy
   (prioridad alta) si pasa de 350 MB (`DATABASE_WARN_MB`) de los 500 MB del plan gratis de Supabase.
@@ -1304,7 +1306,7 @@ enlace y la API les responde 403. La beta no la lleva.
     (opcional, 1024 por defecto). Sin el esquema `storage` (en local), `files` es `null`.
   - **`tables`:** cada tabla con sus datos, índices, textos largos (toast) y filas estimadas. Las de
     `public` llevan su nombre en palabras y su regla de borrado (`TABLE_INFO`, sacada del código: el
-    contenido de los emails a los 30 días, la actividad a los 5 meses, el registro del cron a los 30
+    contenido de los emails cada lunes al mediodía, la actividad a los 5 meses, el registro del cron a los 30
     días, los avisos de la campana a los 30, los del celular a los 7, los comprobantes a los 3 meses de
     la cita, las fotos de la analítica a los 30 días…); la prueba falla si una tabla nueva no está. Las
     de Supabase van aparte, por grupo (inicio de sesión, almacenamiento y lo interno), y el catálogo de

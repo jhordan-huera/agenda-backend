@@ -103,7 +103,7 @@ ok(!/s-maxage/.test(r.headers.get("cache-control") ?? ""), "un enlace que no exi
 r = await owner("GET", `${B}/appointments`);
 ok(!/public|s-maxage/.test(r.headers.get("cache-control") ?? ""), "los datos del panel nunca son públicos", r.headers.get("cache-control"));
 
-console.log("Contenido de los emails viejos");
+console.log("Contenido de los emails: se borra cada lunes al mediodía (2026-11-10)");
 const insert = (label, days, status) =>
   sql(`insert into notifications (business_id, type, to_email, subject, body, html, status, created_at, sent_at)
        values ('${session.businessId}', 'appointment_confirmed', 'prueba-${label}@example.com', 'Asunto ${label}', 'Cuerpo ${label}', '<p>${label}</p>',
@@ -112,7 +112,18 @@ const insert = (label, days, status) =>
 const oldSent = insert("vieja", 100, "sent");
 const monthOld = insert("mes", 40, "sent");
 const oldQueued = insert("encola", 100, "queued");
-const recent = insert("reciente", 10, "sent");
+const lastWeek = insert("semana", 10, "sent");
+const failedOld = insert("fallido", 10, "failed");
+const thisWeek = insert("hoy", 0, "sent");
+// Una semana de emails con su HTML (~6 KB cada uno) y una pasada de antes del lunes a las 12:00 en el registro:
+// así ésta es la pasada del lunes, la que devuelve el espacio.
+sql(`insert into notifications (business_id, type, to_email, subject, body, html, status, created_at, sent_at)
+     select '${session.businessId}', 'appointment_reminder', 'relleno-' || i || '@example.com', 'Relleno', 'Cuerpo de relleno',
+            (select string_agg(md5(i::text || '-' || j::text), '') from generate_series(1, 190) j), 'sent',
+            now() - interval '9 days', now() - interval '9 days'
+       from generate_series(1, 400) i`);
+sql("insert into cron_runs (ran_at, report) values (now() - interval '8 days', '{\"prueba\": \"semana pasada\"}')");
+const emailsBefore = Number(sql("select pg_total_relation_size('notifications')"));
 const run = await new Promise((resolve) => {
   let output = "";
   const child = spawn(process.execPath, ["scripts/cron.ts"], {
@@ -133,11 +144,27 @@ const run = await new Promise((resolve) => {
   child.on("exit", (code) => resolve({ code, output }));
 });
 const row = (id) => sql(`select subject || '|' || body || '|' || coalesce(html, 'NULL') || '|' || to_email from notifications where id = '${id}'`);
-ok(run.code === 0 && /emails sin contenido \(más de 30 días\): [1-9]/.test(run.output), "el cron lo cuenta en su registro", run.output.slice(-300));
-ok(row(oldSent) === "Asunto vieja||NULL|prueba-vieja@example.com", "pasados los 30 días se borra el contenido y queda el registro", row(oldSent));
-ok(row(monthOld) === "Asunto mes||NULL|prueba-mes@example.com", "uno de 40 días también queda sin contenido", row(monthOld));
+const emailsAfter = Number(sql("select pg_total_relation_size('notifications')"));
+ok(
+  run.code === 0 && /emails sin contenido \(de antes del lunes a las 12:00\): [1-9]\d* \(espacio devuelto\)/.test(run.output),
+  "el cron lo cuenta en su registro y devuelve el espacio",
+  run.output.slice(-400),
+);
+ok(row(lastWeek) === "Asunto semana||NULL|prueba-semana@example.com", "uno de la semana pasada se queda sin contenido y queda el registro", row(lastWeek));
+ok(row(oldSent).startsWith("Asunto vieja||NULL") && row(monthOld).startsWith("Asunto mes||NULL"), "los más viejos, también", [row(oldSent), row(monthOld)]);
+ok(row(failedOld).startsWith("Asunto fallido||NULL"), "y uno que falló", row(failedOld));
 ok(row(oldQueued).includes("Cuerpo encola"), "uno que sigue en cola no se toca", row(oldQueued));
-ok(row(recent).includes("Cuerpo reciente"), "uno reciente no se toca", row(recent));
+ok(row(thisWeek).includes("Cuerpo hoy"), "uno enviado después del lunes a las 12:00 conserva el contenido hasta el lunes siguiente", row(thisWeek));
+ok(
+  sql("select count(*) from notifications where to_email like 'relleno-%'") === "400",
+  "las filas no se borran: sirven para no repetir los recordatorios, el cupo de Gmail y la analítica",
+  null,
+);
+ok(
+  emailsBefore > 3 * emailsAfter,
+  `la tabla devuelve el espacio: de ${Math.round(emailsBefore / 1024)} KB a ${Math.round(emailsAfter / 1024)} KB`,
+  { emailsBefore, emailsAfter },
+);
 
 console.log(failures ? `\n${failures} prueba(s) fallaron` : "\nTodas las pruebas de rendimiento pasaron");
 process.exitCode = failures ? 1 : 0;
