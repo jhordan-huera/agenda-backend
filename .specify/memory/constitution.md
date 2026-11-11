@@ -30,6 +30,9 @@ Agenda360 guarda datos de salud (historia clínica, citas, contacto de pacientes
 - La analítica (Vercel Analytics / Speed Insights) recibe rutas sin identificadores ni tokens y sin
   parámetros.
 - Las páginas públicas (reservas, pago y «Tu cita») no exponen datos internos del negocio ni de otros pacientes.
+- El mapa del local en la página de reservas es el propio (OpenFreeMap) si el negocio marcó su punto. Si sólo
+  escribió la dirección, es un mapa de Google con esa dirección (2026-11-11). Los dos se cargan cuando el paciente
+  baja hasta ellos, y Google sale entre los proveedores de /privacidad.
 - La historia clínica sólo la ven el propietario y los miembros que él autoriza; ni el soporte de la
   plataforma (spec 025, 2026-10-19).
 - El super admin no tiene un calendario con las citas de los negocios: el de /admin sólo lleva cifras
@@ -359,4 +362,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.40.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-11
+**Versión**: 1.41.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-11

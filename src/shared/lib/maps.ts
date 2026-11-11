@@ -27,6 +27,15 @@ export function getPlaceMapsUrl(place: MapPlace): string {
     : getMapsUrl(place.address);
 }
 
+/**
+ * El mapa de Google de una dirección escrita, para mostrarlo dentro de la página (sin clave de API). Lo usa la
+ * página de reservas cuando el negocio no marcó su punto: Google entiende direcciones como «Montufar 140 y
+ * Quito. Sangolquí», que el buscador de OpenStreetMap no encuentra (2026-11-11).
+ */
+export function getEmbeddedMapUrl(address: string): string {
+  return `https://maps.google.com/maps?q=${encodeURIComponent(address)}&t=m&z=16&hl=es&output=embed`;
+}
+
 /** Indicaciones para llegar al lugar desde la ubicación actual. */
 export function getDirectionsUrl(place: MapPlace): string {
   const destination = hasMapPoint(place) ? `${place.lat},${place.lng}` : place.address;
