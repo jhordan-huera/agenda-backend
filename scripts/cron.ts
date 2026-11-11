@@ -483,7 +483,8 @@ async function main(): Promise<void> {
     let report: ScheduledTasksReport;
     for (let attempt = 0; ; attempt++) {
       try {
-        report = await runScheduledTasks();
+        // El botón «Enviar el informe mensual ahora» de Actions (2026-11-10).
+        report = await runScheduledTasks({ monthlyReportNow: process.env.MONTHLY_REPORT_NOW === "true" });
         break;
       } catch (error) {
         // Sin direcciones de email: el registro de Actions es público y el aviso va a ntfy.

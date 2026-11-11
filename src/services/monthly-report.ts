@@ -93,11 +93,12 @@ export async function monthStats(db: Db, businessId: string, timezone: string, m
  * encendido, es del día 1 al MONTHLY_REPORT_LAST_DAY desde las MONTHLY_REPORT_HOUR de su hora, no salió ya este mes
  * (la clave `monthly-report:<negocio>:<AAAA-MM>`) y el mes tuvo citas. Devuelve 1 si lo puso en la cola.
  */
-export async function runMonthlyReportJob(db: Db, businessId: string, at: Date = new Date()): Promise<number> {
+export async function runMonthlyReportJob(db: Db, businessId: string, at: Date = new Date(), anyDay = false): Promise<number> {
   const business = await one<Business>(db, `select ${businessColumns()} from businesses where id = $1`, [businessId]);
   if (!business || business.status !== "active" || !business.ownerId || business.notificationSettings.monthlyReport === false) return 0;
   const now = getZonedNow(business.timezone, at);
-  if (Number(now.date.slice(8, 10)) > MONTHLY_REPORT_LAST_DAY || now.minutes < MONTHLY_REPORT_HOUR * 60) return 0;
+  // `anyDay`: el envío a mano desde Actions (2026-11-10) sale cualquier día del mes, siempre del mes anterior.
+  if ((!anyDay && Number(now.date.slice(8, 10)) > MONTHLY_REPORT_LAST_DAY) || now.minutes < MONTHLY_REPORT_HOUR * 60) return 0;
 
   const month = previousMonthOf(now.date);
   const dedupeKey = `monthly-report:${businessId}:${month.key}`;
