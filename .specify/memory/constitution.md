@@ -236,6 +236,11 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - En la portada no hay testimonios, cifras ni precios inventados. Un testimonio sólo sale con el permiso
   de quien lo da, y las integraciones que se muestran son sólo las reales, con iconos propios y sin logos
   de marcas (spec 032, 2026-10-22).
+- La portada es el «Panel de marca» (spec 043, 2026-11-11): el bloque tomate con la agenda de la semana de
+  ejemplo y, debajo, «Hecho para», las funciones, «Tus datos», las preguntas y el cierre. Ella y las páginas
+  por especialidad usan una sola familia de letra (Schibsted Grotesk), sin mayúsculas espaciadas, letra
+  monoespaciada ni palabras sueltas en cursiva, con un solo movimiento al cargar y las ilustraciones quietas.
+  Lo comprueba `npm run check:landing`.
 - Las páginas por especialidad (/psicologos, /fisioterapeutas y /odontologos, spec 041, 2026-11-10) siguen
   las mismas reglas que la portada: sólo funciones que existen, sin testimonios, cifras ni precios
   inventados, sin nombres de clientes, sin planes ni precios, sin la LOPDP y sin funciones paradas. Cada
@@ -362,4 +367,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.41.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-11
+**Versión**: 1.42.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-11
