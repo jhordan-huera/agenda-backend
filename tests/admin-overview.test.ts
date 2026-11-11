@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { cedulaFor } from "./helpers/cedula.mjs";
-import type { AdminBusinessSummary, PlanId, PlatformStats } from "../src/shared/types/index.ts";
+import type { AdminBusinessSummary, AdminGrowthBusiness, AdminGrowthDetail, PlanId, PlatformStats } from "../src/shared/types/index.ts";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
@@ -39,6 +39,8 @@ const owner = agent();
 const ownerSession = (await owner("POST", "/auth/login", { email: "ricardo@demo.com", password: "demo1234", remember: true })).body;
 const clinicId: string = ownerSession.businessId;
 const stats = async () => (await admin("GET", "/admin/stats")).body as PlatformStats;
+/** El detalle de las tarjetas de «Crecimiento del mes» (spec 042). */
+const growthDetail = async () => (await admin("GET", "/admin/growth")).body as AdminGrowthDetail;
 const clinicGrowth = async () =>
   ((await admin("GET", "/admin/businesses")).body as AdminBusinessSummary[]).find((b) => b.business.id === clinicId)!.growth;
 
@@ -60,9 +62,13 @@ const instant = (which: "current" | "previous" | "outside") =>
 console.log("Sólo el super admin");
 let r = await owner("GET", "/admin/stats");
 ok(r.status === 403, "un propietario no ve las estadísticas de la plataforma", r.status);
+r = await owner("GET", "/admin/growth");
+const anonymousGrowth = await agent()("GET", "/admin/growth");
+ok(r.status === 403 && anonymousGrowth.status === 401, "ni el detalle de las tarjetas (spec 042): un propietario → 403, sin sesión → 401", [r.status, anonymousGrowth.status]);
 
 console.log("Crecimiento del mes");
 const before = await stats();
+const detailBefore = await growthDetail();
 const growthBefore = await clinicGrowth();
 ok(before.growth && /^\d{4}-\d{2}-01$/.test(before.growth.from) && /^\d{4}-\d{2}-01$/.test(before.growth.previousFrom), "trae los dos periodos", before.growth);
 const professional = sql(`select id from professionals where business_id = '${clinicId}' order by created_at limit 1`);
@@ -115,6 +121,83 @@ ok(
   growthAfter.current - growthBefore.current === 2 && growthAfter.previous - growthBefore.previous === 2,
   "el crecimiento de cada negocio, con las mismas reglas",
   { growthBefore, growthAfter },
+);
+
+console.log("Detalle de las tarjetas (spec 042)");
+let detail = await growthDetail();
+const rowOf = <T extends AdminGrowthBusiness>(rows: T[]) => rows.find((row) => row.id === clinicId);
+const zero = { current: 0, previous: 0, online: 0, dashboard: 0 };
+const change = (list: "appointments" | "onlineBookings" | "newClients") => {
+  const was = rowOf(detailBefore[list]) ?? zero;
+  const now = rowOf(detail[list]) ?? zero;
+  return { current: now.current - was.current, previous: now.previous - was.previous };
+};
+ok(
+  detail.from === after.growth.from && detail.to === after.growth.to && detail.previousFrom === after.growth.previousFrom &&
+    detail.previousTo === after.growth.previousTo,
+  "los mismos periodos que las tarjetas",
+  [detail.from, detail.to, detail.previousFrom, detail.previousTo],
+);
+ok(
+  change("appointments").current === 2 && change("appointments").previous === 2,
+  "citas agendadas de la Clínica Dental: +2 este mes y +2 el mes pasado (sin la cancelada ni la de fuera del periodo)",
+  change("appointments"),
+);
+ok(change("onlineBookings").current === 1 && change("onlineBookings").previous === 1, "reservas online de la Clínica Dental: +1 y +1", change("onlineBookings"));
+ok(change("newClients").current === 2 && change("newClients").previous === 1, "pacientes nuevos de la Clínica Dental: +2 y +1", change("newClients"));
+const total = (rows: AdminGrowthBusiness[]) => ({
+  current: rows.reduce((sum, row) => sum + row.current, 0),
+  previous: rows.reduce((sum, row) => sum + row.previous, 0),
+});
+const cards = (overview: PlatformStats, list: AdminGrowthDetail) =>
+  (["appointments", "onlineBookings", "newClients"] as const).every(
+    (key) => total(list[key]).current === overview.growth[key].current && total(list[key]).previous === overview.growth[key].previous,
+  );
+ok(cards(after, detail), "cada lista suma la cifra de su tarjeta, en los dos periodos", {
+  cards: [after.growth.appointments, after.growth.onlineBookings, after.growth.newClients],
+  detail: [total(detail.appointments), total(detail.onlineBookings), total(detail.newClients)],
+});
+ok(
+  [detail.appointments, detail.onlineBookings, detail.newClients].every((rows) =>
+    rows.every((row, index) => (row.current > 0 || row.previous > 0) && (index === 0 || rows[index - 1].current >= row.current)),
+  ),
+  "sin negocios en 0 en los dos periodos, y de más a menos",
+);
+// Por origen: uno por la página de reservas cuenta como «Por la página»; uno importado no cuenta.
+const sourced = (source: string) =>
+  sql(`insert into clients (business_id, name, document_id, email, phone, source, created_at)
+       values ('${clinicId}', 'Crecimiento ${++seed}', '${cedulaFor(`crecimiento-${seed}`)}', '', '', '${source}', '${current}')`);
+const clinicClientsBefore = rowOf(detail.newClients)!;
+sourced("booking_page");
+sourced("import");
+detail = await growthDetail();
+const clinicClients = rowOf(detail.newClients)!;
+ok(
+  clinicClients.current - clinicClientsBefore.current === 1 && clinicClients.online - clinicClientsBefore.online === 1 &&
+    clinicClients.dashboard === clinicClientsBefore.dashboard && clinicClients.online + clinicClients.dashboard === clinicClients.current,
+  "pacientes nuevos por origen: el de la página de reservas cuenta como «Por la página» y el importado no cuenta",
+  { clinicClientsBefore, clinicClients },
+);
+ok(cards(await stats(), detail), "y la suma sigue igual a la tarjeta");
+ok(
+  detail.newBusinesses.length === after.growth.newBusinesses.current &&
+    detail.newBusinesses.some((business) => business.id === clinicId && business.status === "active" && "plan" in business && business.createdAt),
+  "negocios nuevos: los de la tarjeta, con su plan, su estado y su fecha de alta",
+  detail.newBusinesses,
+);
+sql(`update businesses set status = 'suspended' where id = '${clinicId}'`);
+const suspendedDetail = await growthDetail();
+sql(`update businesses set status = 'active' where id = '${clinicId}'`);
+ok(
+  rowOf(suspendedDetail.appointments)?.status === "suspended" && rowOf(suspendedDetail.appointments)?.current === rowOf(detail.appointments)?.current,
+  "un negocio suspendido sigue contando (como en la tarjeta), con su estado",
+  rowOf(suspendedDetail.appointments),
+);
+const detailRaw = JSON.stringify(detail);
+ok(
+  !detailRaw.includes("Crecimiento") && !detailRaw.includes("@") && !/"(clientId|clientName|serviceName|notes|startTime|date)"/.test(detailRaw),
+  "sólo cifras: ni nombres ni emails de pacientes, ni citas sueltas",
+  detailRaw.slice(0, 300),
 );
 
 console.log("Día a día (gráficos)");

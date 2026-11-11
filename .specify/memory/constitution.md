@@ -209,7 +209,10 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - La analítica de /admin (spec 016) sólo la ve el super admin, sólo con cifras por negocio (nunca
   datos de pacientes), y se prepara una vez al día con el cron, fuera de Vercel (2026-10-15). Sólo
   salen los negocios activos: un suspendido no está ni en las cifras ni en los totales, y si se suspende
-  después de prepararla, sale al momento (2026-11-10).
+  después de prepararla, sale al momento (2026-11-10). Las tarjetas de «Crecimiento del mes» del Resumen
+  abren su detalle por negocio (spec 042, 2026-11-11), con la misma regla: sólo cifras, nunca pacientes ni
+  citas sueltas; quiénes son se ve en el modo soporte. Ahí cuentan también los suspendidos, con su marca,
+  porque la tarjeta los cuenta.
 - El informe mensual (spec 040, 2026-11-10): el día 1, desde las 8:00 de su hora, el propietario de cada
   negocio activo con citas el mes anterior recibe por email el resumen de ese mes: citas, reservas online,
   recordatorios, confirmaciones, cancelaciones con tiempo, pacientes nuevos, comprobantes, ingresos
@@ -356,4 +359,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.39.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
+**Versión**: 1.40.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-11

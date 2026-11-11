@@ -176,6 +176,12 @@ adminRoutes.get(
   "/stats",
   handle((req) => adminService.getStats(req.ctx)),
 );
+// El detalle de las tarjetas de «Crecimiento del mes» (spec 042): sólo cifras por negocio, nunca pacientes ni
+// citas sueltas. Se pide al abrir un panel del Resumen, no al cargarlo.
+adminRoutes.get(
+  "/growth",
+  handle((req) => adminService.getGrowthDetail(req.ctx)),
+);
 // Analítica (spec 016): la última foto que preparó el cron (?days=30|90). Lee una fila; no calcula nada.
 adminRoutes.get(
   "/analytics",
