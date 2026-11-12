@@ -156,7 +156,7 @@ src/
                     plantillas de email, planes y permisos
 scripts/            cron.ts (cliente del cron de GitHub + ntfy), test.ts (npm test), dev-local.ts, sync-shared.ts
 tests/              Pruebas de integración (*.test.mjs / *.test.ts)
-.github/workflows/  cron.yml: tareas periódicas cada 10 min en producción; backup.yml: copia semanal;
+.github/workflows/  cron.yml: tareas periódicas cada 10 min en producción; backup.yml: copia diaria;
                     deploy-lambda.yml: publicación en Lambda. Acciones fijadas por SHA
 .github/dependabot.yml  Actualizaciones semanales de las acciones y de npm (pull requests a dev)
 ```
@@ -610,7 +610,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   tipo, asunto, fecha y estado), que sirve para no repetir recordatorios, el cupo de Gmail, la
   analítica y el historial del negocio. Antes del 2026-11-10 era a los 30 días.
 - **Conexiones**: en Vercel, 3 por instancia por defecto (`DATABASE_POOL_MAX`); en local, 10.
-- **Aviso de espacio**: la copia de seguridad semanal informa el tamaño de la base y avisa por ntfy
+- **Aviso de espacio**: la copia de seguridad diaria informa el tamaño de la base y avisa por ntfy
   (prioridad alta) si pasa de 350 MB (`DATABASE_WARN_MB`) de los 500 MB del plan gratis de Supabase.
 - El hash de referencia del login es fijo: no se calcula bcrypt en cada arranque del servidor.
 
@@ -1184,8 +1184,8 @@ No hay cobro automático: el sistema lleva la cuenta y el dueño aplica el descu
 
 ## Copias de seguridad
 
-El plan gratis de Supabase no hace copias. `.github/workflows/backup.yml` ejecuta cada viernes
-`scripts/backup.ts`. La lanza cron-job.org a las 03:00 de Ecuador (`POST /repos/<dueño>/agenda-backend/actions/workflows/backup.yml/dispatches`
+El plan gratis de Supabase no hace copias. `.github/workflows/backup.yml` ejecuta cada día
+(desde el 2026-11-11; antes, los viernes) `scripts/backup.ts`. La lanza cron-job.org a las 03:00 de Ecuador (`POST /repos/<dueño>/agenda-backend/actions/workflows/backup.yml/dispatches`
 con `{"ref":"main"}` y el mismo token que el cron); el horario propio de GitHub (03:17) queda de
 respaldo y no repite la copia si ya hay una correcta de las últimas 20 horas. Una copia en cualquier
 momento: **Actions → Copia de seguridad → Run workflow**.
@@ -1198,7 +1198,7 @@ momento: **Actions → Copia de seguridad → Run workflow**.
 3. La comprime y la **cifra** (AES-256-GCM, clave derivada de `BACKUP_PASSPHRASE` con scrypt):
    sin la clave nadie puede abrirla, tampoco Google.
 4. La envía como adjunto a `BACKUP_EMAIL` por Gmail y avisa por ntfy (sin sonido si salió bien,
-   urgente si falló). Opcional: `BACKUP_HEALTHCHECK_URL` (healthchecks.io avisa si una semana no llega; periodo 7 días).
+   urgente si falló). Opcional: `BACKUP_HEALTHCHECK_URL` (healthchecks.io avisa si un día no llega; periodo 1 día, con unas 6 horas de margen).
 5. **La anota en `backup_runs`** (migración 034), buena o fallida, con el tamaño del archivo cifrado o
    el motivo limpio (sin la URL de la base). El inicio del super admin muestra la última. Si no se
    puede anotar, la copia sigue igual. Las anotaciones de más de un año se borran.
