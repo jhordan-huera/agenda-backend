@@ -183,6 +183,13 @@ export const canCancelOnline = (
 export const APPOINTMENT_PAGE_DAYS = 30;
 
 /**
+ * «Por cobrar» (spec 046) cuenta las sesiones atendidas desde el día en que se publicó la función: así un
+ * negocio que nunca marcó los pagos no amanece con sesiones viejas que en realidad ya cobró. Las anteriores
+ * siguen en el tablero y en su cita como siempre. La usan la API (en SQL), el panel y Reportes.
+ */
+export const PENDING_PAYMENTS_SINCE = "2026-11-12";
+
+/**
  * Las invitaciones de calendario (spec 027) sólo salen para las citas de hoy a los próximos 14 días: las
  * de más lejos reciben la suya cuando entran en esa ventana (el cron). Así una serie de 24 citas no llena
  * el correo. Lo usan la API y la explicación del interruptor: si cambia, cambia aquí.

@@ -125,6 +125,15 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   mano y sin contar en el tope. Al subirse el comprobante, el profesional de la agenda recibe el email y el
   aviso aunque no tenga activados los avisos de sus citas. Sin el interruptor, el enlace de pago sigue como
   siempre.
+- «Por cobrar» (spec 046, 2026-11-12): lo que debe cada paciente son sus sesiones Completadas, con precio y sin
+  la marca de pagada, atendidas desde el día en que se publicó la función (`PENDING_PAYMENTS_SINCE`: lo anterior
+  no cuenta, para no mostrar como deuda lo que ya se cobró sin marcar). Cuenta para el paciente principal, el que
+  paga. Lo ven y lo marcan quienes manejan las citas: el propietario, los administradores y Recepción, todo el
+  negocio; el rol Profesional, sólo lo de su agenda. Sale en la ficha del paciente (con «Marcar todas como
+  pagadas», una entrada en la actividad por cita), en la lista de pacientes («Con pagos pendientes») y en Inicio.
+  No se envía nada solo: el profesional lo recuerda por WhatsApp, a mano, con un mensaje amable que nunca dice
+  «deuda». En Reportes, lo que antes se llamaba «Cobrado» se llama «Ingresos de citas atendidas» (las
+  completadas, pagadas o no) y al lado sale «Por cobrar». No hay pagos parciales ni saldos a favor.
 - Una cita puede tener hasta 3 pacientes (sesiones de pareja), sólo en los negocios que el super
   admin habilite con su interruptor; el negocio no lo cambia. Cada paciente recibe sus avisos, la
   copia al profesional sale una vez y la hora se ocupa una sola vez (2026-10-13).
@@ -384,4 +393,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.44.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-12
+**Versión**: 1.45.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-12

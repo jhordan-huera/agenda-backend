@@ -274,6 +274,18 @@ export interface ClientActivity {
   lastAppointment: Appointment | null;
   /** Próxima cita activa. */
   nextAppointment: Appointment | null;
+  /** «Por cobrar» (spec 046): la suma de sus sesiones atendidas sin pagar, sólo como paciente principal. */
+  pendingAmount: number;
+  /** Cuántas sesiones son. */
+  pendingCount: number;
+}
+
+/** El total «Por cobrar» de la tarjeta de Inicio (spec 046), con el alcance de quien lo pide. */
+export interface PendingPaymentsSummary {
+  amount: number;
+  /** Pacientes que deben algo. */
+  clients: number;
+  sessions: number;
 }
 
 /**

@@ -24,6 +24,7 @@ import {
 import { imageService } from "../services/image-service.ts";
 import { panelNoticeService } from "../services/panel-notices.ts";
 import { paymentService } from "../services/payment-service.ts";
+import { pendingPaymentsService } from "../services/pending-payments.ts";
 import { professionalService } from "../services/professional-service.ts";
 import { referralService } from "../services/referral-service.ts";
 
@@ -436,6 +437,15 @@ businessRoutes.get(
 businessRoutes.get(
   "/:businessId/payment-receipts/:receiptId/url",
   handle((req) => paymentService.receiptUrl(req.ctx, req.params.businessId, req.params.receiptId)),
+);
+// «Por cobrar» (spec 046): el total de Inicio y «Marcar todas como pagadas» desde la ficha del paciente.
+businessRoutes.get(
+  "/:businessId/pending-payments/summary",
+  handle((req) => pendingPaymentsService.summary(req.ctx, req.params.businessId)),
+);
+businessRoutes.post(
+  "/:businessId/clients/:clientId/pending-payments/pay",
+  handle((req) => pendingPaymentsService.pay(req.ctx, req.params.businessId, req.params.clientId, req.body)),
 );
 // Citas que se repiten (spec 011): la lista de fechas (no cambia nada), crear la serie y «Cancelar ésta
 // y las siguientes».
