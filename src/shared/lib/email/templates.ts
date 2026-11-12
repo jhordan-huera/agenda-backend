@@ -1,10 +1,17 @@
 // Copia de agenda-front/src/lib/email/templates.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { APP_NAME } from "../constants/app.ts";
-import { BANK_ACCOUNT_TYPE_LABELS, describeTimezone, formatUsdAmount } from "../constants/business.ts";
+import {
+  BANK_ACCOUNT_TYPE_LABELS,
+  describeDayParts,
+  describeTimezone,
+  describeWaitlistDays,
+  formatUsdAmount,
+  SURVEY_RATING_LABELS,
+} from "../constants/business.ts";
 import { capitalize, formatDate, formatLongDate, formatPrice, formatShortDate, formatTimeRange, joinNames } from "../format.ts";
 import { describeHomeVisit, getDirectionsUrl, getPlaceMapsUrl, hasMapPoint } from "../maps.ts";
 import { addDaysISO } from "../time.ts";
-import type { BankAccount, BillingPaidMethod, HomeVisitAddress, ISODate } from "../../types/index.ts";
+import type { BankAccount, BillingPaidMethod, DayOfWeek, HomeVisitAddress, ISODate, WaitlistDayPart } from "../../types/index.ts";
 import { composeEmail, type EmailBlock, type EmailContent, type EmailMessage } from "./layout.ts";
 
 /**
@@ -142,6 +149,26 @@ export interface MonthlyReportEmailData {
   reportsUrl: string;
   /** El enlace del programa de referidos del negocio (null: no tiene). */
   referralUrl: string | null;
+  /** Encuesta después de la cita (spec 048): cuántas respondieron y el promedio (null: ninguna), y el del mes anterior. */
+  surveys?: number;
+  surveyAverage?: number | null;
+  previousSurveyAverage?: number | null;
+}
+
+/**
+ * «¿Cómo te fue en tu cita?» (spec 048): con la marca del negocio, una estrella por enlace (cada una abre la página con
+ * esa estrella elegida) y «No quiero recibir estas encuestas». No es un aviso de la cita: sin copia al profesional.
+ */
+export interface SurveyEmailData {
+  clientName: string;
+  businessName: string;
+  businessAddress: string;
+  businessPhone: string;
+  professionalName: string;
+  serviceName: string;
+  date: ISODate;
+  /** /encuesta/:token: cada estrella le suma ?estrellas=N. */
+  surveyUrl: string;
 }
 
 /** «Tuviste 12 % más citas que en septiembre.», o null si el mes anterior no tuvo citas. */
@@ -156,6 +183,29 @@ function monthComparison(data: MonthlyReportEmailData): string | null {
 export interface PaymentReminderEmailData {
   clientName: string;
   appointments: AppointmentEmailData[];
+}
+
+/**
+ * Lista de espera (spec 047): los emails a quien espera, con la marca y los datos del negocio. No son de una cita:
+ * no llevan copia al profesional. `leaveUrl`: su enlace personal para salir de la lista.
+ */
+export interface WaitlistEmailData {
+  name: string;
+  businessName: string;
+  businessAddress: string;
+  businessPhone: string;
+  serviceName: string;
+  /** null: «Cualquier profesional». */
+  professionalName: string | null;
+  days: DayOfWeek[];
+  dayParts: WaitlistDayPart[];
+  until: ISODate;
+  leaveUrl: string;
+}
+
+/** «Se liberó una hora»: las horas que le sirven (como mucho 3), cada una con su «Reservar esta hora». */
+export interface WaitlistOfferEmailData extends Omit<WaitlistEmailData, "days" | "dayParts" | "until" | "professionalName"> {
+  slots: { date: ISODate; time: string; professionalName: string; bookUrl: string }[];
 }
 
 /**
@@ -213,6 +263,15 @@ const clientEmail = (data: AppointmentEmailData, message: MessageContent): Email
     brand: { name: data.businessName, caption: data.professionalName !== data.businessName ? data.professionalName : undefined },
     signature: [data.businessName, data.businessAddress, data.businessPhone].filter(Boolean),
     footer: `Reserva gestionada con ${APP_NAME}.`,
+  });
+
+/** Email de la lista de espera (spec 047): la marca y la firma del negocio, sin cita ni copia al profesional. */
+const waitlistEmail = (data: Pick<WaitlistEmailData, "businessName" | "businessAddress" | "businessPhone">, message: MessageContent): EmailContent =>
+  composeEmail({
+    ...message,
+    brand: { name: data.businessName },
+    signature: [data.businessName, data.businessAddress, data.businessPhone].filter(Boolean),
+    footer: `Lista de espera gestionada con ${APP_NAME}.`,
   });
 
 /** " (hora de Ecuador, GMT-5)" en las citas virtuales; "" en las demás o sin zona. `date`: el día (otra cita de una serie). */
@@ -1166,6 +1225,15 @@ export const emailTemplates = {
     ];
     const rows = counts.filter(([, value]) => value > 0).map(([label, value]) => ({ label, value: String(value) }));
     if (data.revenue > 0) rows.push({ label: "Ingresos estimados (citas completadas)", value: formatPrice(data.revenue, data.currency) });
+    // Las opiniones de los pacientes (spec 048), sólo si hubo respuestas: el promedio y cuántas, sin comentarios.
+    if (data.surveys && data.surveyAverage) {
+      const average = (value: number) => value.toLocaleString("es-EC", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+      const before = data.previousSurveyAverage ? ` (antes ${average(data.previousSurveyAverage)})` : "";
+      rows.push({
+        label: "Opinión de tus pacientes",
+        value: `${average(data.surveyAverage)} de 5 en ${data.surveys === 1 ? "1 respuesta" : `${data.surveys} respuestas`}${before}`,
+      });
+    }
     const comparison = monthComparison(data);
     const blocks: EmailBlock[] = [
       { kind: "text", text: `Esto es lo que ${APP_NAME} hizo por ${data.businessName} en ${month}:` },
@@ -1221,6 +1289,94 @@ export const emailTemplates = {
           ...(item.payment ? [{ kind: "button", label: "Enviar el comprobante", url: item.payment.url } satisfies EmailBlock] : []),
         ]),
         { kind: "note", text: "Si ya lo enviaste por WhatsApp, puedes ignorar este mensaje." },
+      ],
+    });
+  },
+
+  waitlistJoined: (data: WaitlistEmailData): EmailContent =>
+    waitlistEmail(data, {
+      subject: `Te anotamos en la lista de espera de ${data.businessName}`,
+      preheader: `Te avisaremos por email si se libera una hora de ${data.serviceName} que te sirva.`,
+      title: "Estás en la lista de espera",
+      greeting: `Hola ${data.name}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: "Te avisaremos por email si se libera una hora que te sirva. Avisamos a todas las personas que esperan esa hora a la vez: se la queda la primera que reserva.",
+        },
+        {
+          kind: "details",
+          title: "Lo que pediste",
+          rows: [
+            { label: "Servicio", value: data.serviceName },
+            { label: "Con", value: data.professionalName ?? "Cualquier profesional" },
+            { label: "Días", value: describeWaitlistDays(data.days) },
+            { label: "Horario", value: describeDayParts(data.dayParts) },
+            { label: "Hasta", value: capitalize(formatLongDate(data.until)) },
+          ],
+        },
+        { kind: "note", text: "Si ya no la necesitas, puedes salir de la lista cuando quieras." },
+        { kind: "link", label: "Salir de la lista de espera", url: data.leaveUrl },
+      ],
+    }),
+
+  waitlistOffer: (data: WaitlistOfferEmailData): EmailContent => {
+    const one = data.slots.length === 1;
+    const first = data.slots[0];
+    return waitlistEmail(data, {
+      subject: one
+        ? `Se liberó una hora en ${data.businessName}: ${formatLongDate(first.date)} a las ${first.time}`
+        : `Se liberaron ${data.slots.length} horas en ${data.businessName}`,
+      preheader: `Para ${data.serviceName}. Se la queda la primera persona que reserva.`,
+      title: one ? "Se liberó una hora" : "Se liberaron horas",
+      greeting: `Hola ${data.name}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: `${one ? "Se liberó una hora" : "Se liberaron horas"} de ${data.serviceName} que te ${one ? "sirve" : "sirven"}. Avisamos a todas las personas que la esperan: se la queda la primera que reserva.`,
+        },
+        ...data.slots.flatMap((slot, index): EmailBlock[] => [
+          {
+            kind: "details",
+            title: one ? undefined : `Hora ${index + 1}`,
+            rows: [
+              { label: "Fecha", value: capitalize(formatLongDate(slot.date)) },
+              { label: "Hora", value: slot.time },
+              { label: "Con", value: slot.professionalName },
+            ],
+          },
+          { kind: "button", label: "Reservar esta hora", url: slot.bookUrl },
+        ]),
+        { kind: "note", text: "Si ya se tomó, en la página verás las otras horas libres y sigues en la lista." },
+        { kind: "link", label: "Salir de la lista de espera", url: data.leaveUrl },
+      ],
+    });
+  },
+
+  surveyRequest: (data: SurveyEmailData): EmailContent => {
+    const stars = [5, 4, 3, 2, 1];
+    return waitlistEmail(data, {
+      subject: `¿Cómo te fue en tu cita con ${data.professionalName}?`,
+      preheader: `Tu cita de ${data.serviceName} del ${formatLongDate(data.date)}: cuéntanos con una estrella.`,
+      title: "¿Cómo te fue?",
+      greeting: `Hola ${data.clientName}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: `Gracias por tu visita a ${data.businessName}. ¿Cómo te fue en tu cita de ${data.serviceName} del ${formatLongDate(data.date)}? Toca una opción:`,
+        },
+        ...stars.map(
+          (rating): EmailBlock => ({
+            kind: "link",
+            label: `${"★".repeat(rating)}${"☆".repeat(5 - rating)}  ${SURVEY_RATING_LABELS[rating]}`,
+            url: `${data.surveyUrl}?estrellas=${rating}`,
+          }),
+        ),
+        {
+          kind: "note",
+          text: `Tu respuesta la lee ${data.businessName}, con tu nombre, y no se publica en ningún lado. Puedes dejar un comentario en la página.`,
+        },
+        { kind: "link", label: "No quiero recibir estas encuestas", url: `${data.surveyUrl}?no-recibir=1` },
       ],
     });
   },

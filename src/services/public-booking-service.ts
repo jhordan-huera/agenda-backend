@@ -62,7 +62,7 @@ const ONLINE_DAILY_LIMIT_MESSAGE =
  * Un negocio suspendido no se distingue de uno inexistente (no se expone su estado). Sólo cuentan
  * los profesionales activos: los inactivos no reciben reservas.
  */
-async function findActiveBusiness(db: Db, slug: string): Promise<{ business: Business; professionals: Professional[] } | null> {
+export async function findActiveBusiness(db: Db, slug: string): Promise<{ business: Business; professionals: Professional[] } | null> {
   const business = await one<Business>(
     db,
     `select ${businessColumns()} from businesses where slug = $1 and status = 'active'`,
@@ -93,7 +93,7 @@ async function byLoadOnDate(db: Db, businessId: string, professionals: Professio
 }
 
 /** Franjas ocupadas por citas activas desde `from` (y hasta `to`, si se indica), con su agenda. */
-async function busySlots(db: Db, businessId: string, from: ISODate, to?: ISODate): Promise<BusySlot[]> {
+export async function busySlots(db: Db, businessId: string, from: ISODate, to?: ISODate): Promise<BusySlot[]> {
   return many<BusySlot>(
     db,
     `select date, start_time as "startTime", end_time as "endTime", professional_id as "professionalId" from appointments
@@ -104,7 +104,7 @@ async function busySlots(db: Db, businessId: string, from: ISODate, to?: ISODate
   );
 }
 
-async function blockedTimesFrom(db: Db, businessId: string, from: ISODate, to?: ISODate): Promise<BlockedTime[]> {
+export async function blockedTimesFrom(db: Db, businessId: string, from: ISODate, to?: ISODate): Promise<BlockedTime[]> {
   return many<BlockedTime>(
     db,
     `select ${blockedTimeColumns()} from blocked_times
@@ -661,6 +661,13 @@ export const publicBookingService = {
         entityId: appointment.id,
         summary: `Nueva reserva online de ${await describeAppointment(db, appointment)}`,
       });
+      // Lista de espera (spec 047): quien reserva en el negocio sale de sus esperas abiertas (las de ese email),
+      // también si llegó desde «Reservar esta hora».
+      await db.query(
+        `update waitlist_entries set closed_at = now(), closed_reason = 'booked', updated_at = now()
+          where business_id = $1 and lower(email) = lower($2) and closed_at is null`,
+        [business.id, data.email],
+      );
       // Aviso en el celular del propietario (spec 013); si falla, la reserva sigue igual.
       await notifyOnlineBooking(db, appointment);
 

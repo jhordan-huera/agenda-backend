@@ -15,7 +15,7 @@ import {
   PANEL_PENDING_MESSAGE,
   statusChangeError,
 } from "../shared/lib/constants/appointment-status.ts";
-import { clientRequiredFieldsOf } from "../shared/lib/constants/business.ts";
+import { clientRequiredFieldsOf, PENDING_PAYMENTS_SINCE } from "../shared/lib/constants/business.ts";
 import { formatNumericDate, formatTimeRange, joinNames } from "../shared/lib/format.ts";
 import { addMinutesToTime, getZonedNow, minutesToTime } from "../shared/lib/time.ts";
 import {
@@ -67,6 +67,7 @@ import { syncCalendarInvites } from "./calendar-invites.ts";
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
 import { isRescheduled, notifyAppointmentChange } from "./notifications.ts";
 import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
+import { pendingPaymentSql } from "./pending-payments.ts";
 import { assertAppointmentLimit, assertClientLimit } from "./plan-limits.ts";
 import { notifyNewAppointment, notifyPatientCancel } from "./push-notices.ts";
 import { findProfessional, listProfessionals } from "./professional-service.ts";
@@ -182,11 +183,13 @@ export const clientService = {
               count(*) filter (where a.status = 'cancelled')::int as cancelled,
               count(*) filter (where a.status = 'no_show')::int as "noShow",
               coalesce(sum(a.price) filter (where a.status = 'completed' and a.main), 0) as "totalSpent",
-              to_char(min(a.date) filter (where a.status <> 'cancelled'), 'YYYY-MM-DD') as "firstVisit"
+              to_char(min(a.date) filter (where a.status <> 'cancelled'), 'YYYY-MM-DD') as "firstVisit",
+              coalesce(sum(a.price) filter (where a.main and ${pendingPaymentSql("a", "$3")}), 0) as "pendingAmount",
+              count(*) filter (where a.main and ${pendingPaymentSql("a", "$3")})::int as "pendingCount"
          from ${participations}
         where a.business_id = $1 and ($2::uuid is null or a.professional_id = $2::uuid)
         group by a.participant`,
-      [businessId, professionalId],
+      [businessId, professionalId, PENDING_PAYMENTS_SINCE],
     );
     const last = await many<Appointment & { participant: string }>(
       pool,

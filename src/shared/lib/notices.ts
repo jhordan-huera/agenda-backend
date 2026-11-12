@@ -1,7 +1,7 @@
 // Copia de agenda-front/src/lib/notices.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { DEFAULT_TIMEZONE } from "./constants/app.ts";
 import { formatUsdAmount } from "./constants/business.ts";
-import { NOTICE_AUDIENCE, TO_CLOSE_PARAM, type BusinessNoticeKind } from "./constants/notices.ts";
+import { NOTICE_AUDIENCE, TO_CLOSE_PARAM, WAITLIST_PARAM, type BusinessNoticeKind } from "./constants/notices.ts";
 import { capitalize, formatDate, formatShortDate, joinNames, plural } from "./format.ts";
 import { addDaysISO, getZonedNow } from "./time.ts";
 import type { BusinessRole, ISODate, NoticeKind, TimeString } from "../types/index.ts";
@@ -67,6 +67,14 @@ export interface NoticeDataByKind {
    * pago del cobro (de él sale el mes). Sólo lo ve el super admin.
    */
   billing_receipt: { businessName: string; amount: number; dueDate: ISODate };
+  /**
+   * Lista de espera (spec 047): nunca el nombre de quien espera (el aviso se guarda 30 días y la persona puede
+   * salir antes). `professionalName` null: «Cualquiera»; `agendas`: sólo se nombra con más de una agenda.
+   */
+  waitlist_joined: { serviceName: string; professionalName: string | null; agendas: number };
+  waitlist_slot: { date: ISODate; time: TimeString; timezone: string; count: number; professionalName: string | null; agendas: number };
+  /** Encuesta (spec 048): las estrellas de una respuesta de 1 o 2; nunca el comentario. */
+  survey_low: { appointment: NoticeAppointment; rating: number };
 }
 
 /** Las dos tandas de recordatorios de citas por cerrar: la de la mañana y la de las 8 de la noche. */
@@ -114,6 +122,8 @@ export const appointmentUrl = (appointment: Pick<NoticeAppointment, "id" | "date
 const ACTIVITY_SECURITY_URL = "/admin/activity?ver=seguridad";
 /** La agenda con la lista «Por cerrar» abierta (spec 021). */
 export const TO_CLOSE_URL = `/dashboard/calendar?${TO_CLOSE_PARAM}=1`;
+/** La agenda con la lista de espera abierta (spec 047), en un día si se da. */
+export const waitlistUrl = (date?: ISODate) => `/dashboard/calendar?${date ? `date=${date}&` : ""}${WAITLIST_PARAM}=1`;
 /** /admin → Cobros, que se abre con los comprobantes por revisar (spec 029). */
 export const BILLING_URL = "/admin/billing";
 
@@ -189,6 +199,25 @@ const BUILDERS: { [K in NoticeKind]: Builder<K> } = {
     title: `${wholeBusiness ? "Tu negocio tiene" : "Tienes"} ${fromPreviousDays(count)} sin cerrar`,
     body: closeThem(count),
     url: TO_CLOSE_URL,
+  }),
+  survey_low: ({ appointment, rating }, { name }) => ({
+    title: `${patientsOf(appointment, name)} calificó su cita con ${plural(rating, "estrella", "estrellas")}`,
+    body: `${appointment.serviceName ?? "Cita"} del ${formatShortDate(appointment.date)}${withProfessional(appointment)} · Puedes llamarle para saber qué pasó`,
+    url: appointmentUrl(appointment),
+  }),
+  waitlist_joined: ({ serviceName, professionalName, agendas }) => ({
+    title: "Nueva persona en la lista de espera",
+    body: `${serviceName}${agendas > 1 ? ` · ${professionalName ? `con ${professionalName}` : "con cualquier profesional"}` : ""}`,
+    url: waitlistUrl(),
+  }),
+  waitlist_slot: ({ date, time, timezone, count, professionalName, agendas }, { now }) => ({
+    title: "Se liberó una hora con gente esperando",
+    body: `${describeWhen(date, time, timezone, now)}${agendas > 1 && professionalName ? ` · con ${professionalName}` : ""}: ${plural(
+      count,
+      "persona",
+      "personas",
+    )} en la lista de espera`,
+    url: waitlistUrl(date),
   }),
   new_business: ({ businessId, businessName, categoryName }) => ({
     title: "Negocio nuevo",

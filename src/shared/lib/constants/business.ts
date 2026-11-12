@@ -10,6 +10,7 @@ import type {
   PaymentReminderSettings,
   ServiceMode,
   TimeRange,
+  WaitlistDayPart,
 } from "../../types/index.ts";
 import { cachedDateFormat } from "../time.ts";
 
@@ -139,6 +140,7 @@ export const DEFAULT_BOOKING_SETTINGS: BookingSettings = {
   cancellationPolicy: "Puedes cancelar o reprogramar tu cita sin costo hasta 24 horas antes.",
   maxClientBookingsPerDay: DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY,
   chooseProfessional: true,
+  waitlist: false,
 };
 
 export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
@@ -150,6 +152,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   whatsappFollowUps: true,
   followUps: true,
   monthlyReport: true,
+  surveys: false,
 };
 
 /** Emails de seguimiento (Atendida, No asistió): sólo de citas de hoy o de los últimos 7 días (spec 008). */
@@ -181,6 +184,72 @@ export const canCancelOnline = (
  * enseña las cuentas del negocio ni deja subir comprobantes.
  */
 export const APPOINTMENT_PAGE_DAYS = 30;
+
+/**
+ * «Por cobrar» (spec 046) cuenta las sesiones atendidas desde el día en que se publicó la función: así un
+ * negocio que nunca marcó los pagos no amanece con sesiones viejas que en realidad ya cobró. Las anteriores
+ * siguen en el tablero y en su cita como siempre. La usan la API (en SQL), el panel y Reportes.
+ */
+export const PENDING_PAYMENTS_SINCE = "2026-11-12";
+
+/**
+ * Lista de espera (spec 047): las partes del día que elige quien espera, las mismas de las horas de la página de
+ * reservas (mañana antes de las 12, tarde de 12 a 18 y noche desde las 18).
+ */
+export const WAITLIST_DAY_PARTS: { value: WaitlistDayPart; label: string; from: number; to: number }[] = [
+  { value: "morning", label: "Mañana", from: 0, to: 12 },
+  { value: "afternoon", label: "Tarde", from: 12, to: 18 },
+  { value: "evening", label: "Noche", from: 18, to: 24 },
+];
+
+/** La parte del día de una hora ("09:30" → "morning"). */
+export function dayPartOf(time: string): WaitlistDayPart {
+  const hour = Number(time.slice(0, 2));
+  return hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+}
+
+/** «Lunes, miércoles y viernes», «De lunes a viernes» o «Todos los días». */
+export function describeWaitlistDays(days: readonly DayOfWeek[]): string {
+  const set = new Set(days);
+  if (set.size === 7) return "Todos los días";
+  if (set.size === 5 && [1, 2, 3, 4, 5].every((day) => set.has(day as DayOfWeek))) return "De lunes a viernes";
+  const names = WEEK_DAYS.filter((day) => set.has(day.value)).map((day) => day.label.toLowerCase());
+  const text = names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} y ${names[names.length - 1]}`;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** «Mañana», «Mañana o tarde» o «Mañana, tarde o noche». */
+export function describeDayParts(parts: readonly WaitlistDayPart[]): string {
+  const names = WAITLIST_DAY_PARTS.filter((part) => parts.includes(part.value)).map((part, index) => (index === 0 ? part.label : part.label.toLowerCase()));
+  return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} o ${names[names.length - 1]}`;
+}
+
+/** Hasta qué fecha espera, si no elige otra: 30 días (o menos, si el negocio deja reservar menos días hacia adelante). */
+export const WAITLIST_DEFAULT_DAYS = 30;
+/** Esperas abiertas de una misma persona (su email) en un negocio. */
+export const WAITLIST_MAX_OPEN_PER_PERSON = 5;
+/** Emails de horas libres al día a una misma persona, y horas en cada email. */
+export const WAITLIST_MAX_OFFERS_PER_DAY = 3;
+export const WAITLIST_TIMES_PER_OFFER = 3;
+/** El aviso de una hora libre que no salió en estas horas (p. ej. sin cupo de Gmail) se descarta: ya no sirve. */
+export const WAITLIST_OFFER_DISCARD_HOURS = 3;
+/**
+ * Encuesta después de la cita (spec 048): sale desde las 10:00 de la hora del negocio, del día siguiente a la cita
+ * y hasta 3 días después; a un paciente se le pregunta como mucho una vez cada 90 días; el enlace vale 14 días y el
+ * email que esperó 2 días en la cola (sin cupo de Gmail) se descarta. Con 1 o 2 estrellas avisa la campana.
+ */
+export const SURVEY_SEND_HOUR = 10;
+export const SURVEY_MAX_DAYS_AFTER = 3;
+export const SURVEY_DAYS_BETWEEN = 90;
+export const SURVEY_LINK_DAYS = 14;
+export const SURVEY_QUEUE_DISCARD_HOURS = 48;
+export const SURVEY_LOW_RATING = 2;
+
+/** «Muy mal» a «Muy bien»: lo que dice cada estrella, en el email y en la página. */
+export const SURVEY_RATING_LABELS: Record<number, string> = { 1: "Muy mal", 2: "Mal", 3: "Regular", 4: "Bien", 5: "Muy bien" };
+
+/** Las esperas cerradas se borran a los 30 días. */
+export const WAITLIST_KEEP_CLOSED_DAYS = 30;
 
 /**
  * Las invitaciones de calendario (spec 027) sólo salen para las citas de hoy a los próximos 14 días: las

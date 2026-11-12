@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev (2026-11-12). Falta que el dueño del producto ponga la regla de `main` · **Fecha**: 2026-11-12
+**Estado**: Publicada (2026-11-12, PR backend #75 y front #59) · **Fecha**: 2026-11-12
 
 **Repos**: los dos · **Migración**: No
 
@@ -22,7 +22,7 @@ de producción. Con la regla de `main` que pone el dueño del producto, no se pu
 |---|---|---|---|
 | H1 – Cada PR dice si pasa | P1 | Hecha | En los dos repos, en cada PR a `dev` o `main` y en cada subida a `dev` |
 | H2 – Los PR de Dependabot se prueban | P1 | Hecha | Sin secretos, así que corre igual en sus PR; se comprueba con el próximo |
-| H3 – No se fusiona a `main` algo roto | P2 | Falta la regla | La pone el dueño del producto: los pasos están en el plan y en el README del backend |
+| H3 – No se fusiona a `main` algo roto | P2 | Hecha | La regla «main protegida», puesta por el dueño del producto en los dos repos el 2026-11-12 |
 
 ## Comprobación
 
@@ -35,7 +35,7 @@ de producción. Con la regla de `main` que pone el dueño del producto, no se pu
 | RF-005 – También en los PR de Dependabot | Cumple en el diseño | No necesita secretos. Se confirma con el próximo PR de Dependabot (CE-005) |
 | RF-006 – La versión nueva cancela la anterior | Cumple | `concurrency` por PR o por rama, con `cancel-in-progress` |
 | RF-007 – Cuándo corren | Cumple | `pull_request` a `dev` y `main`, y `push` a `dev`: la subida a `dev` corrió sola |
-| RF-008 – `main` bloqueada si algo falla | Pendiente | La regla de GitHub la pone el dueño del producto (respuesta 1) |
+| RF-008 – `main` bloqueada si algo falla | Cumple | La regla «main protegida» está activa en los dos repos: no deja borrar ni forzar `main` y exige «Comprobar» (leída con `gh api …/rulesets`) |
 | RF-009 – Los otros flujos no cambian | Cumple | `cron.yml`, `backup.yml` y `deploy-lambda.yml` sin tocar |
 | RF-010 – La constitución | Cumple | 1.44.0 en los dos repos (principio IV) |
 | CE-001 – El rojo y el verde | Cumple | Los PR de prueba en rojo (cerrados sin fusionar y con su rama borrada) y las corridas de `dev` en verde |
@@ -60,10 +60,8 @@ de producción. Con la regla de `main` que pone el dueño del producto, no se pu
 
 ## Pendientes y riesgos
 
-- **La regla de `main`,** en los dos repos. Los pasos:
-  1. Settings → Rules → Rulesets → New branch ruleset.
-  2. Nombre `main protegida`, «Active» e «Include default branch».
-  3. Marca «Restrict deletions», «Block force pushes» y «Require status checks to pass» con `Comprobar`.
+- **La regla de `main`** quedó puesta en los dos repos (2026-11-12). En el backend, el #75 se fusionó un momento
+  antes de ponerla, ya en verde.
 - **El próximo PR de Dependabot** debería salir en verde o en rojo solo.
 - **Una caída de GitHub Actions** deja los PR en espera. Se vuelven a correr cuando vuelva.
 

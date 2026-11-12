@@ -55,6 +55,9 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   appointment_series: ["Serie de citas", "Series de citas"],
   appointment_series_cancelled: ["Serie de citas cancelada", "Series de citas canceladas"],
   payment_reminder: ["Recordatorio del comprobante de pago", "Recordatorios del comprobante de pago"],
+  waitlist_joined: ["Alta en la lista de espera", "Altas en la lista de espera"],
+  waitlist_offer: ["Hora libre para la lista de espera", "Horas libres para la lista de espera"],
+  survey_request: ["Encuesta después de la cita", "Encuestas después de la cita"],
   booking_received: ["Aviso de nueva reserva (al negocio)", "Avisos de nueva reserva (al negocio)"],
   professional_new_appointment: ["Aviso de cita nueva (al profesional)", "Avisos de cita nueva (al profesional)"],
   appointment_copy: ["Copia al profesional", "Copias al profesional"],
@@ -499,6 +502,7 @@ async function main(): Promise<void> {
     console.info(
       `Recordatorios: ${report.reminders} · invitaciones de calendario: ${report.calendarInvites ?? 0} · ` +
         `recordatorios de pago: ${report.paymentReminders ?? 0} · informes mensuales: ${report.monthlyReports ?? 0} · ` +
+        `lista de espera: ${report.waitlistOffers ?? 0} · encuestas: ${report.surveyRequests ?? 0} · ` +
         `reservas por la página: ${report.onlineBookings ?? 0} · ` +
         `pacientes nuevos del panel: ${report.panelClients ?? 0} · citas del panel: ${report.panelAppointments ?? 0} · ` +
         `series del panel: ${report.panelSeries ?? 0} · series canceladas: ${report.seriesCancellations ?? 0} · ` +

@@ -77,6 +77,8 @@ export const bookingSettingsSchema = z.object({
     .max(10, "Máximo 10 citas por día")
     .default(DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY),
   chooseProfessional: z.boolean().default(true),
+  // Lista de espera (spec 047): apagada en los negocios guardados antes.
+  waitlist: z.boolean().default(false),
 });
 
 /** Qué pacientes ve quien tiene el rol Profesional. */
@@ -103,6 +105,8 @@ export const notificationSettingsSchema = z.object({
   followUps: z.boolean().default(true),
   // Informe mensual al propietario (spec 040): encendido también en los negocios guardados antes.
   monthlyReport: z.boolean().default(true),
+  // Encuesta después de la cita (spec 048): apagada en los negocios guardados antes.
+  surveys: z.boolean().default(false),
 });
 
 /** Datos del negocio pedidos en el onboarding (pasos 1–3). */

@@ -172,6 +172,8 @@ const BOOKING_FIELDS: ChangeField<BookingSettings>[] = [
     format: (value: number) => (value === 0 ? "Sin límite" : String(value)),
   },
   { key: "chooseProfessional", label: "El paciente elige con quién atenderse", format: yesNo },
+  // Spec 047: los negocios guardados antes no lo traen (= apagada).
+  { key: "waitlist", label: "Lista de espera", format: (value?: boolean) => yesNo(Boolean(value)) },
 ];
 
 const NOTIFICATION_FIELDS: ChangeField<NotificationSettings>[] = [
@@ -182,6 +184,8 @@ const NOTIFICATION_FIELDS: ChangeField<NotificationSettings>[] = [
   { key: "whatsappOnStatusChange", label: "Aviso por WhatsApp al confirmar, cancelar o reprogramar", format: yesNo },
   { key: "whatsappFollowUps", label: "Aviso por WhatsApp al completar o marcar No asistió", format: yesNo },
   { key: "monthlyReport", label: "Informe mensual", format: yesNo },
+  // Spec 048: los negocios guardados antes no lo traen (= apagada).
+  { key: "surveys", label: "Encuesta después de la cita", format: (value?: boolean) => yesNo(Boolean(value)) },
 ];
 
 const BUSINESS_FIELDS: ChangeField<BusinessForAudit>[] = [

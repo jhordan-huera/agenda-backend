@@ -287,6 +287,23 @@ function toPanelNotice(row: NoticeRow, now: Date): PanelNotice | null {
     // El del negocio entero (el del propietario) no tiene agenda (spec 021).
     const count = Number(row.data.count);
     if (count > 0) text = describeNotice("morning_summary", { count, wholeBusiness: row.noticeAgendaId === null }, { ...FULL_NAME, now });
+  } else if (row.kind === "waitlist_joined") {
+    // Lista de espera (spec 047): sin el nombre de quien espera; el servicio y la agenda del momento.
+    const serviceName = typeof row.data.serviceName === "string" ? row.data.serviceName : null;
+    const professionalName = typeof row.data.professionalName === "string" ? row.data.professionalName : null;
+    if (serviceName) text = describeNotice("waitlist_joined", { serviceName, professionalName, agendas: row.agendas }, { ...FULL_NAME, now });
+  } else if (row.kind === "waitlist_slot") {
+    const date = typeof row.data.date === "string" ? row.data.date : null;
+    const time = typeof row.data.time === "string" ? row.data.time : null;
+    const count = Number(row.data.count);
+    const professionalName = typeof row.data.professionalName === "string" ? row.data.professionalName : null;
+    if (date && time && count > 0) {
+      text = describeNotice(
+        "waitlist_slot",
+        { date, time, timezone: row.timezone ?? DEFAULT_TIMEZONE, count, professionalName, agendas: row.agendas },
+        { ...FULL_NAME, now },
+      );
+    }
   } else if (row.appointmentId && row.date && row.startTime) {
     const appointment: NoticeAppointment = {
       id: row.appointmentId,
@@ -315,6 +332,10 @@ function toPanelNotice(row: NoticeRow, now: Date): PanelNotice | null {
       case "patient_cancel":
       case "unclosed":
         text = describeNotice(row.kind, { appointment }, options);
+        break;
+      // Encuesta (spec 048): las estrellas, nunca el comentario.
+      case "survey_low":
+        if (Number(row.data.rating) > 0) text = describeNotice("survey_low", { appointment, rating: Number(row.data.rating) }, options);
         break;
     }
   }

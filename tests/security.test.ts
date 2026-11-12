@@ -1,12 +1,13 @@
 // Endurecimiento: contraseñas fuera del registro de emails, bloqueo por intentos fallidos,
 // CAPTCHA de la página de reservas, perfil público sin datos internos y seed sólo en local.
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import pg from "pg";
 import { outgoingContent } from "../src/services/mailer.ts";
 import { createBusinessWithOwner } from "./helpers/business.mjs";
+import { startApi } from "./helpers/harness.ts";
 import { emailTemplates } from "../src/shared/lib/email/templates.ts";
 import { viaProxy } from "./helpers/proxy.mjs";
 
@@ -227,24 +228,18 @@ const cloudflare: Server = createServer((req, res) => {
   });
 });
 await new Promise<void>((resolve) => cloudflare.listen(0, "127.0.0.1", resolve));
-const captchaPort = Number(new URL(BASE).port) + 7;
-const captchaBase = `http://127.0.0.1:${captchaPort}/api`;
-const captchaApi: ChildProcess = spawn(process.execPath, ["src/server.ts"], {
-  env: {
-    ...process.env,
-    PORT: String(captchaPort),
-    TURNSTILE_SITE_KEY: "clave-del-sitio",
-    TURNSTILE_SECRET_KEY: "clave-secreta",
-    TURNSTILE_VERIFY_URL: `http://127.0.0.1:${(cloudflare.address() as AddressInfo).port}/siteverify`,
-  },
-  stdio: "ignore",
+// Otra API con el CAPTCHA encendido, en un puerto libre. Antes usaba el de la API + 7 sin mirar si estaba libre y,
+// en GitHub, a veces no arrancaba y la suite se caía con «fetch failed» sin decir por qué.
+const captchaApi = await startApi({
+  TURNSTILE_SITE_KEY: "clave-del-sitio",
+  TURNSTILE_SECRET_KEY: "clave-secreta",
+  TURNSTILE_VERIFY_URL: `http://127.0.0.1:${(cloudflare.address() as AddressInfo).port}/siteverify`,
 });
 try {
-  for (let i = 0; i < 100; i++) {
-    if (await fetch(`${captchaBase}/health`).then((res) => res.ok, () => false)) break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
+  if (!(await fetch(`${captchaApi.base}/health`).then((res) => res.ok, () => false))) {
+    throw new Error(`La API con el CAPTCHA no arrancó (salida ${captchaApi.exited()}):\n${captchaApi.output().slice(-1500)}`);
   }
-  const visitor = agent(captchaBase);
+  const visitor = agent(captchaApi.base);
   r = await visitor("GET", "/public/businesses/jhordan");
   ok(r.body.captchaSiteKey === "clave-del-sitio", "el perfil público trae la Site Key", r.body.captchaSiteKey);
   const lookup = "/public/businesses/jhordan/clients/lookup";
@@ -267,7 +262,7 @@ try {
   r = await visitor("POST", bookings, { captchaToken: "token-otra-web" });
   ok(r.status === 403, "un token resuelto en otro dominio → 403", r.body);
 } finally {
-  captchaApi.kill("SIGTERM");
+  captchaApi.stop();
   cloudflare.close();
 }
 

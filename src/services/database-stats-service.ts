@@ -81,7 +81,9 @@ export const QUERY_TEXT_MAX = 160;
  * - rate_limits: al vencer cada cuenta (deleteExpiredRateLimits);
  * - backup_runs: BACKUP_RUNS_DAYS = 365 (scripts/backup.ts);
  * - database_stats: DATABASE_STATS_KEEP_DAYS = 400 (esta foto diaria);
- * - calendar_invites: se borran en cascada con su cita o su agenda (migración 048).
+ * - calendar_invites: se borran en cascada con su cita o su agenda (migración 048);
+ * - waitlist_entries: WAITLIST_KEEP_CLOSED_DAYS = 30 después de cerrarse; waitlist_freed_slots: 2 días después de
+ *   procesarse (queueWaitlistOffers, spec 047).
  * Las que no están aquí salen con su nombre técnico y sin regla.
  */
 export const TABLE_INFO: Record<string, { label: string; retention: string }> = {
@@ -120,6 +122,9 @@ export const TABLE_INFO: Record<string, { label: string; retention: string }> = 
   push_subscriptions: { label: "Aparatos con avisos en el celular", retention: "Los pausados, a los 90 días" },
   push_messages: { label: "Avisos al celular", retention: "7 días" },
   panel_notices: { label: "Avisos de la campana", retention: "30 días" },
+  waitlist_entries: { label: "Lista de espera", retention: "30 días después de salir de la lista" },
+  surveys: { label: "Encuestas después de la cita", retention: "Nunca (se borran con el paciente)" },
+  waitlist_freed_slots: { label: "Horas liberadas para la lista de espera", retention: "2 días después de ofrecerse" },
   panel_notice_reads: { label: "Avisos de la campana leídos", retention: "30 días, con su aviso" },
   panel_notice_state: { label: "«Marcar todo como leído» de cada persona", retention: "Nunca (una fila por persona)" },
   analytics_snapshots: { label: "Fotos de la analítica", retention: "30 días" },

@@ -93,7 +93,8 @@ export async function startApi(env: Record<string, string | undefined>) {
   child.stderr!.on("data", (chunk) => (output += chunk));
   child.on("exit", (code) => (exited = code ?? -1));
   const base = `http://127.0.0.1:${port}/api`;
-  for (let i = 0; i < 100 && exited === null; i++) {
+  // Hasta 30 s: en GitHub, con la máquina cargada, arrancar puede pasar de los 10 s.
+  for (let i = 0; i < 300 && exited === null; i++) {
     if (await fetch(`${base}/health`).then((res) => res.ok, () => false)) break;
     await sleep(100);
   }

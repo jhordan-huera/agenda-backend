@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/045-pruebas-en-cada-pr` (rama de trabajo: `dev`) · **Creada**: 2026-11-12
 
-**Estado**: Implementada (2026-11-12). Aprobada el 2026-11-12, «si acepto con lo recomendado procede por favor»
+**Estado**: Publicada (2026-11-12, PR backend #75 y front #59). Aprobada el 2026-11-12, «si acepto con lo recomendado procede por favor»
 
 **Repos**:
 - **agenda-backend:** las comprobaciones automáticas del backend.

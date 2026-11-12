@@ -39,7 +39,12 @@ export function previousMonthOf(today: ISODate): ReportMonth {
 export type MonthStats = Pick<
   MonthlyReportEmailData,
   "appointments" | "online" | "reminders" | "confirmations" | "timelyCancellations" | "newClients" | "receipts" | "revenue" | "previousAppointments"
->;
+> & {
+  /** Encuesta (spec 048): cuántas respondieron en el mes (por la fecha de la respuesta) y el promedio de ese mes y del anterior. */
+  surveys: number;
+  surveyAverage: number | null;
+  previousSurveyAverage: number | null;
+};
 
 /**
  * Las cifras del mes en la hora del negocio, como la analítica (analytics-service.ts):
@@ -48,7 +53,8 @@ export type MonthStats = Pick<
  * - las canceladas con 24 h o más de anticipación (desde el panel o desde «Tu cita»): la hora quedó libre;
  * - los pacientes nuevos, sin los importados y como cuenta el plan (sin las reservas online sin cita);
  * - los comprobantes que subieron los pacientes por el enlace de pago;
- * - la suma del precio de las completadas, y las citas del mes anterior para comparar.
+ * - la suma del precio de las completadas, y las citas del mes anterior para comparar;
+ * - las encuestas respondidas en el mes y su promedio, y el del mes anterior (spec 048; sin comentarios ni nombres).
  */
 export async function monthStats(db: Db, businessId: string, timezone: string, month: ReportMonth): Promise<MonthStats> {
   return (await one<MonthStats>(
@@ -83,7 +89,14 @@ export async function monthStats(db: Db, businessId: string, timezone: string, m
               where c.business_id = $1 and c.created_at >= w.m_from_at and c.created_at < w.m_to_at
                 and c.source <> 'import' and ${countsForPlanSql("c")})::int as "newClients",
             (select count(*) from payment_receipts r, w
-              where r.business_id = $1 and r.status = 'ready' and r.created_at >= w.m_from_at and r.created_at < w.m_to_at)::int as receipts`,
+              where r.business_id = $1 and r.status = 'ready' and r.created_at >= w.m_from_at and r.created_at < w.m_to_at)::int as receipts,
+            (select count(*) from surveys v, w
+              where v.business_id = $1 and v.answered_at >= w.m_from_at and v.answered_at < w.m_to_at)::int as surveys,
+            (select round(avg(v.rating)::numeric, 1)::float8 from surveys v, w
+              where v.business_id = $1 and v.answered_at >= w.m_from_at and v.answered_at < w.m_to_at) as "surveyAverage",
+            (select round(avg(v.rating)::numeric, 1)::float8 from surveys v, w
+              where v.business_id = $1 and v.answered_at >= (w.p_from)::timestamp at time zone $5 and v.answered_at < w.m_from_at)
+              as "previousSurveyAverage"`,
     [businessId, month.from, month.to, month.previousFrom, timezone],
   ))!;
 }
