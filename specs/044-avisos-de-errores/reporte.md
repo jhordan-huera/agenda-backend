@@ -41,7 +41,7 @@ la dirección IP.
 | RF-005 – Lo que lleva cada aviso | Cumple | La prueba y el recorrido:<br>- la ruta del código («GET /api/businesses/:businessId/clients») o la página limpia;<br>- la versión;<br>- la pila;<br>- el negocio por su id;<br>- el usuario («equipo», «super admin», «paciente»);<br>- en la web, el navegador y las marcas de cada archivo |
 | RF-006 – Nada de los pacientes | Cumple | Con un nombre, un email, un teléfono y una cédula ficticios en la búsqueda, el cuerpo, la pantalla y el mensaje, ningún aviso los lleva. Tampoco la IP, las cookies, la contraseña ni el nombre del negocio de `/book/…` |
 | RF-007 – Sin grabación ni rendimiento | Cumple | `sentry-client.ts` sin las integraciones por defecto (sólo `dedupe` y `linkedErrors`) y con `dataCollection` todo apagado |
-| RF-008 – El aviso por email | Sin comprobar | Es la configuración de Sentry («Alert me on every new issue»). Se comprueba al publicar con la notificación de prueba (CE-006) |
+| RF-008 – El aviso por email | Cumple | Las reglas «High priority issues» por email de los dos proyectos. La notificación de prueba llegó (CE-006) |
 | RF-009 – Sólo en producción | Cumple | La prueba: sin el DSN, apagado; un DSN real desde este equipo no envía; mal escrito, avisa sin mostrarlo. `check:error-reports`, lo mismo en la web |
 | RF-010 – Con Sentry caído, todo igual | Cumple | La prueba: con el Sentry de prueba colgado, el 500 respondió en 19 ms (antes, 8 ms) y el aviso salió igual |
 | RF-011 – No más lenta | Cumple en la API; ver CE-004 en la web | API: ver CE-005 |
@@ -55,7 +55,7 @@ la dirección IP.
 | CE-003 – Las comprobaciones | Cumple | Backend: `typecheck` y `npm test` (ver abajo). Front: build, lint y los siete `check:*` |
 | CE-004 – La primera carga de la web | **No cumple: +6,3 KB con los mapas (opción 1, elegida al crear el token)** | Antes, 213,29 KB comprimidos.<br>- Con el cambio, sin mapas: 214,05 KB (+0,76 KB).<br>- Con los mapas, como en Vercel: 219,56 KB (+6,3 KB): la marca que el plugin agrega a cada archivo cuesta unos 5,5 KB. Ver «Pendientes» |
 | CE-005 – El arranque de la API | Cumple | Cinco veces cada uno: 205 ms de media antes y 191 ms después (dentro del ruido; el límite era +50 ms) |
-| CE-006 – La notificación de prueba | Sin comprobar | Después de publicar |
+| CE-006 – La notificación de prueba | Cumple | El 2026-11-12 llegaron los dos emails de prueba, de `agenda-api` y de `agenda-web` |
 | CE-007 – Las mismas pantallas | Cumple | Recorrido: «Algo salió mal» y «Ocurrió un error inesperado.» como siempre ([captura en el celular](./capturas/webkit-390-oscuro-pantalla-rota.png)) |
 
 **Pruebas automáticas:**
