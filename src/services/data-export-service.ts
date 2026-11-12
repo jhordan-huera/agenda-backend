@@ -7,6 +7,7 @@ import type {
   ClinicalAttachment,
   ClinicalProfile,
   DataExportAppointment,
+  DataExportWaitlistEntry,
   DataExportClient,
   DataExportClinical,
   DataExportClinicalPage,
@@ -110,6 +111,12 @@ function appointmentScope(access: ExportAccess): { where: string; values: unknow
   return { where: "a.business_id = $1 and a.professional_id = $2", values: [access.businessId, access.agenda.professionalId] };
 }
 
+/** La lista de espera que se lleva (alias `w`, spec 047): la del negocio o la de su agenda. */
+function waitlistScope(access: ExportAccess): { where: string; values: unknown[] } {
+  if (!access.agenda) return { where: "w.business_id = $1", values: [access.businessId] };
+  return { where: "w.business_id = $1 and w.professional_id = $2", values: [access.businessId, access.agenda.professionalId] };
+}
+
 /** El paciente `c` tiene historia: antecedentes, alguna evolución o algún archivo ya subido. */
 const HAS_CLINICAL_RECORD = `(exists (select 1 from clinical_profiles cp where cp.client_id = c.id)
   or exists (select 1 from clinical_notes cn where cn.client_id = c.id)
@@ -162,10 +169,18 @@ export const dataExportService = {
         `select count(*)::int as count from appointments a where ${appointments.where}`,
         appointments.values,
       ))!.count;
-      const result = { ...counts, appointments: appointmentCount };
+      // La lista de espera (spec 047): las abiertas y las cerradas que todavía se guardan; el rol Profesional, las de su agenda.
+      const waitlist = waitlistScope(access);
+      const waitlistCount = (await one<{ count: number }>(
+        db,
+        `select count(*)::int as count from waitlist_entries w where ${waitlist.where}`,
+        waitlist.values,
+      ))!.count;
+      const result = { ...counts, appointments: appointmentCount, waitlist: waitlistCount };
       const parts = [
         countOf(result.clients, "paciente", "pacientes"),
         countOf(result.appointments, "cita", "citas"),
+        ...(waitlistCount > 0 ? [countOf(waitlistCount, "persona de la lista de espera", "personas de la lista de espera")] : []),
         ...(included ? [countOf(result.clinicalRecords, "historia clínica", "historias clínicas")] : []),
       ];
       await logAudit(db, {
@@ -227,6 +242,28 @@ export const dataExportService = {
         where ${scope.where} and ($${scope.values.length + 1}::uuid is null or a.id > $${scope.values.length + 1}::uuid)
         order by a.id
         limit ${APPOINTMENTS_PAGE + 1}`,
+      [...scope.values, cursor],
+    );
+    return pageOf(rows, APPOINTMENTS_PAGE);
+  },
+
+  /** lista-de-espera.xlsx (spec 047), de 1000 en 1000, con el servicio y la agenda por su nombre. */
+  async waitlist(ctx: RequestContext, businessId: string, rawCursor?: string): Promise<DataExportPage<DataExportWaitlistEntry>> {
+    const cursor = parseCursor(rawCursor);
+    const access = await authorizeExport(pool, ctx, businessId);
+    const scope = waitlistScope(access);
+    const next = scope.values.length + 1;
+    const rows = await many<DataExportWaitlistEntry>(
+      pool,
+      `select w.id, w.name, coalesce(w.email, '') as email, w.phone, s.name as service, coalesce(p.display_name, '') as professional,
+              w.days, w.day_parts as "dayParts", to_char(w.until, 'YYYY-MM-DD') as until, w.source, w.created_at as "createdAt",
+              w.closed_at as "closedAt", w.closed_reason as "closedReason"
+         from waitlist_entries w
+         join services s on s.id = w.service_id
+         left join professionals p on p.id = w.professional_id
+        where ${scope.where} and (PLACEHOLDER::uuid is null or w.id > PLACEHOLDER::uuid)
+        order by w.id
+        limit ${APPOINTMENTS_PAGE + 1}`.replaceAll("PLACEHOLDER", `$${next}`),
       [...scope.values, cursor],
     );
     return pageOf(rows, APPOINTMENTS_PAGE);

@@ -106,6 +106,8 @@ console.log("Cada tipo de email tiene su nivel");
       "appointment_pending", "appointment_completed", "appointment_no_show", "appointment_series", "appointment_series_cancelled",
       // El recordatorio del comprobante de pago (spec 039).
       "payment_reminder",
+      // La lista de espera (spec 047).
+      "waitlist_joined", "waitlist_offer",
     ],
     business: [
       "appointment_copy", "booking_received", "professional_new_appointment", "professional_daily_agenda", "payment_receipt_received", "patient_cancelled",

@@ -17,6 +17,7 @@ const AUDIT_ENTITY_TYPES = [
   "user",
   "platform",
   "clinical_record",
+  "waitlist",
   "session",
 ] as const;
 

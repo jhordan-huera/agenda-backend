@@ -41,6 +41,8 @@ import { processEmailQueue, scrubEmails, type EmailQueueReport } from "../servic
 import { maskEmail, shortName } from "../services/masking.ts";
 import { runMonthlyReportJob } from "../services/monthly-report.ts";
 import { runDailyAgendaJob, runPaymentReminderJob, runReminderJob } from "../services/notifications.ts";
+import { runWaitlistJob } from "../services/waitlist-offers.ts";
+import { WAITLIST_KEEP_CLOSED_DAYS } from "../shared/lib/constants/business.ts";
 import { cleanupPanelNotices } from "../services/panel-notices.ts";
 import { runPushJobs, type PushReport } from "../services/push-notices.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
@@ -129,6 +131,37 @@ export async function queuePaymentReminders(now: Date = new Date()): Promise<Que
 }
 
 /**
+ * La lista de espera (spec 047), en cada pasada: primero lo que se borra en todos los negocios (las horas
+ * liberadas ya procesadas hace más de 2 días, las de negocios que apagaron la lista y las esperas cerradas hace
+ * más de WAITLIST_KEEP_CLOSED_DAYS) y después, en cada negocio activo con la lista encendida y en su
+ * transacción, el aviso de las horas que se liberaron (runWaitlistJob). `now`: el momento (las pruebas lo mueven).
+ */
+export async function queueWaitlistOffers(now: Date = new Date()): Promise<QueuedReminders> {
+  await pool.query("delete from waitlist_freed_slots where processed_at < $1::timestamptz - interval '2 days'", [now.toISOString()]);
+  await pool.query(
+    `delete from waitlist_freed_slots f using businesses b
+      where b.id = f.business_id and f.processed_at is null
+        and (b.status <> 'active' or not coalesce((b.booking_settings ->> 'waitlist')::boolean, false))`,
+  );
+  await pool.query("delete from waitlist_entries where closed_at < $1::timestamptz - make_interval(days => $2)", [
+    now.toISOString(),
+    WAITLIST_KEEP_CLOSED_DAYS,
+  ]);
+  const businesses = await many<{ id: string }>(
+    pool,
+    `select distinct b.id from businesses b
+      where b.status = 'active' and coalesce((b.booking_settings ->> 'waitlist')::boolean, false)
+        and (exists (select 1 from waitlist_freed_slots f where f.business_id = b.id and f.processed_at is null)
+             or exists (select 1 from waitlist_entries w where w.business_id = b.id and w.closed_at is null))`,
+  );
+  return forEachBusiness(
+    businesses.map(({ id }) => id),
+    "lista de espera",
+    (db, id) => runWaitlistJob(db, id, now),
+  );
+}
+
+/**
  * El informe mensual al propietario (spec 040), en cada pasada: los negocios activos con propietario y el informe
  * encendido, cada uno en su transacción. Sale del día 1 al 7 desde las 8:00 de su hora, una sola vez por mes
  * (runMonthlyReportJob). `now`: el momento (las pruebas lo mueven). `anyDay`: el envío a mano desde Actions, que
@@ -196,6 +229,8 @@ export interface ScheduledTasksReport {
   paymentReminders?: number;
   /** Informes mensuales (spec 040) puestos en cola en esta pasada. Sólo la cifra (el registro es público). */
   monthlyReports?: number;
+  /** Avisos de horas libres de la lista de espera (spec 047) puestos en cola. Sólo la cifra (el registro es público). */
+  waitlistOffers?: number;
   /** Lo que hizo esta ejecución con la cola de emails. */
   emails: EmailQueueReport;
   /** Emails enviados desde la ejecución anterior: también los que salieron al momento (reservas, avisos). */
@@ -409,6 +444,8 @@ export async function runScheduledTasks({ monthlyReportNow = false }: { monthlyR
   const paymentReminders = await queuePaymentReminders();
   // El informe mensual (spec 040), también antes del envío.
   const monthlyReports = await queueMonthlyReports(new Date(), monthlyReportNow);
+  // La lista de espera (spec 047), también antes del envío: el aviso de la hora libre sale en esta pasada.
+  const waitlistOffers = await queueWaitlistOffers();
   const emails = await processEmailQueue({ maxBatches: MAX_EMAIL_BATCHES, deadline: started + EMAIL_BUDGET_MS });
   await deleteExpiredSessions();
   await deleteStalePendingAttachments();
@@ -490,9 +527,11 @@ export async function runScheduledTasks({ monthlyReportNow = false }: { monthlyR
     emailContentPurged > 0 && (cronLog !== null || emailContentPurged >= EMAIL_VACUUM_MIN) ? await reclaimEmailSpace() : undefined;
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
-    reminderFailures: reminders.failures + calendarInvites.failures + billing.failures + paymentReminders.failures + monthlyReports.failures,
+    reminderFailures:
+      reminders.failures + calendarInvites.failures + billing.failures + paymentReminders.failures + monthlyReports.failures + waitlistOffers.failures,
     calendarInvites: calendarInvites.queued,
     paymentReminders: paymentReminders.queued,
+    waitlistOffers: waitlistOffers.queued,
     monthlyReports: monthlyReports.queued,
     emails,
     sentSinceLastRun: totals?.sent ?? 0,

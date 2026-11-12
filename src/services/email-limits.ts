@@ -60,6 +60,9 @@ export const EMAIL_PRIORITY: Record<EmailType, EmailPriority> = {
   // El recordatorio del comprobante de pago (spec 039): uno al día por paciente y negocio, sin copia al
   // profesional. Si un día no cabe, espera al siguiente, como los demás del paciente.
   payment_reminder: "patient",
+  // Lista de espera (spec 047): al paciente. El aviso de la hora libre se descarta si no sale en 3 horas.
+  waitlist_joined: "patient",
+  waitlist_offer: "patient",
   appointment_copy: "business",
   booking_received: "business",
   professional_new_appointment: "business",
@@ -108,6 +111,7 @@ export const DISCARD_REASONS = {
   reminderStarted: "Recordatorio descartado: la cita ya empezó.",
   demoAddress: "Dirección de demostración: no se envía.",
   supersededInvite: "Invitación reemplazada por una versión más nueva.",
+  staleWaitlistOffer: "Aviso de la lista de espera descartado: no salió en 3 horas y la hora ya no sirve.",
 } as const;
 
 /**
@@ -164,7 +168,7 @@ export async function emailQuotaStatus(db: Db): Promise<{
  * negocios sin recordatorios ni avisos de sus citas.
  */
 const PUBLIC_ORIGIN = (alias: string) =>
-  `(${alias}.type = 'welcome'
+  `(${alias}.type in ('welcome', 'waitlist_joined')
     or exists (select 1 from appointments pa
                 where pa.id = ${alias}.appointment_id and pa.source = 'booking_page' and pa.created_at = ${alias}.created_at))`;
 
@@ -192,8 +196,10 @@ export async function alertOnce(key: string, alert: Alert): Promise<void> {
  */
 export async function publicEmailHold(db: Db, type: EmailType, appointmentId: string | null = null): Promise<string | null> {
   if (EMAIL_PRIORITY[type] !== "patient") return null;
+  // «Te anotamos en la lista de espera» (spec 047) también lo provoca alguien de fuera, desde la página de reservas.
   const isPublic =
     type === "welcome" ||
+    type === "waitlist_joined" ||
     (appointmentId !== null &&
       Boolean(await one(db, "select 1 from appointments where id = $1 and source = 'booking_page' and created_at = now()", [appointmentId])));
   if (!isPublic) return null;

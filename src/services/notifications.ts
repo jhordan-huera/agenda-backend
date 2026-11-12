@@ -34,6 +34,22 @@ export const paymentUrl = (token: string) => `${appOrigin()}/pago/${token}`;
  */
 export const appointmentPageUrl = (token: string) => `${appOrigin()}/cita/${token}`;
 
+/** El enlace personal de quien espera (spec 047): ver lo que pidió y «Salir de la lista». */
+export const waitlistUrl = (token: string) => `${appOrigin()}/lista-de-espera/${token}`;
+
+/**
+ * «Reservar esta hora» (spec 047): la página de reservas con el servicio, el profesional, la fecha y la hora
+ * elegidos, y el enlace de la espera para traer el nombre, el email y el teléfono.
+ */
+export const waitlistBookUrl = (slug: string, slot: { serviceId: string; professionalId: string; date: string; time: string; token: string }) =>
+  `${appOrigin()}/book/${encodeURIComponent(slug)}?${new URLSearchParams({
+    servicio: slot.serviceId,
+    profesional: slot.professionalId,
+    fecha: slot.date,
+    hora: slot.time,
+    espera: slot.token,
+  }).toString()}`;
+
 /** De dónde viene un cambio de la cita: el panel, la página de reservas o «Tu cita» (el paciente, spec 010). */
 export type ChangeOrigin = "dashboard" | "booking_page" | "patient_link";
 

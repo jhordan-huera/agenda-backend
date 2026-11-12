@@ -77,6 +77,8 @@ export const bookingSettingsSchema = z.object({
     .max(10, "Máximo 10 citas por día")
     .default(DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY),
   chooseProfessional: z.boolean().default(true),
+  // Lista de espera (spec 047): apagada en los negocios guardados antes.
+  waitlist: z.boolean().default(false),
 });
 
 /** Qué pacientes ve quien tiene el rol Profesional. */

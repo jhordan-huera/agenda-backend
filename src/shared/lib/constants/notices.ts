@@ -16,6 +16,8 @@ export const BUSINESS_NOTICE_KINDS = [
   "unclosed",
   "evening_summary",
   "morning_summary",
+  "waitlist_joined",
+  "waitlist_slot",
 ] as const satisfies readonly NoticeKind[];
 
 export type BusinessNoticeKind = (typeof BUSINESS_NOTICE_KINDS)[number];
@@ -78,6 +80,9 @@ export const NOTICE_AUDIENCE: Record<BusinessNoticeKind, NoticeAudience> = {
   evening_summary: { owner: "business", team: null, agenda: true },
   // El de la mañana (spec 021), igual: el del negocio al propietario y el de cada agenda a quien la tiene.
   morning_summary: { owner: "business", team: null, agenda: true },
+  // Lista de espera (spec 047): como las reservas online. Las de «Cualquiera» no tienen agenda: las ve el equipo.
+  waitlist_joined: { owner: "all", team: "all", agenda: true },
+  waitlist_slot: { owner: "all", team: "all", agenda: true },
 };
 
 /**
@@ -85,6 +90,9 @@ export const NOTICE_AUDIENCE: Record<BusinessNoticeKind, NoticeAudience> = {
  * panel está bloqueado por citas sin cerrar, la lista ya está a la vista.
  */
 export const TO_CLOSE_PARAM = "por-cerrar";
+
+/** `?espera=1` en la Agenda abre la lista de espera (spec 047): la abren sus avisos de la campana. */
+export const WAITLIST_PARAM = "espera";
 
 /** Días que se guardan y se muestran los avisos (como la ventana de «Tu cita», spec 010). */
 export const NOTICE_DAYS = 30;

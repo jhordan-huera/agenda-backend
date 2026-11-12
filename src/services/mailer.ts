@@ -1,5 +1,6 @@
 import { waitUntil } from "@vercel/functions";
 import { config } from "../config.ts";
+import { WAITLIST_OFFER_DISCARD_HOURS } from "../shared/lib/constants/business.ts";
 import { many, one, pool } from "../db/pool.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { escapeHtml } from "../shared/lib/email/layout.ts";
@@ -103,6 +104,8 @@ interface QueuedEmail {
   reminderCurrent: boolean | null;
   /** Copia al profesional de un recordatorio: si a algún paciente le llegó ese recordatorio (null en los demás). */
   reminderSent: boolean | null;
+  /** Cuándo se puso en cola (el aviso de una hora libre de la lista de espera caduca, spec 047). */
+  createdAt: string;
 }
 
 /** El contenido que sale: la contraseña sólo existe en el email enviado; en el registro queda oculta. */
@@ -279,6 +282,7 @@ async function claimBatch(skipReminders: boolean): Promise<Claim> {
     returning n.id, n.type, n.to_email, n.subject, n.body, n.html, n.secret, n.calendar, n.attempts, n.appointment_id, n.dedupe_key, n.created_at
      )
      select c.id, c.type, c.to_email as "to", c.subject, c.body, c.html, c.secret, c.calendar, c.attempts, c.dedupe_key as "dedupeKey",
+            c.created_at as "createdAt",
             a.status as "appointmentStatus", a.date as "appointmentDate", a.start_time as "appointmentTime",
             b.timezone, ${reminderCurrentSql("c", "a")} as "reminderCurrent", ${reminderSentSql("c")} as "reminderSent"
        from claimed c
@@ -389,6 +393,13 @@ async function deliver(email: QueuedEmail, send: (email: OutgoingEmail) => Promi
       "update notifications set attempts = attempts - 1, next_attempt_at = now() + make_interval(mins => $2) where id = $1",
       [email.id, check.minutes],
     );
+    return true;
+  }
+  // Lista de espera (spec 047): el aviso de una hora libre que no salió en WAITLIST_OFFER_DISCARD_HOURS (p. ej.
+  // sin cupo de Gmail) ya no sirve: la hora pasó o la tomó otra persona. Se descarta, no espera más.
+  if (email.type === "waitlist_offer" && Date.now() - new Date(email.createdAt).getTime() > WAITLIST_OFFER_DISCARD_HOURS * 3_600_000) {
+    await discard(email.id, DISCARD_REASONS.staleWaitlistOffer);
+    report.skipped++;
     return true;
   }
   if (await isSupersededInvite(email)) {

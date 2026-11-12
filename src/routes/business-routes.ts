@@ -25,6 +25,7 @@ import { imageService } from "../services/image-service.ts";
 import { panelNoticeService } from "../services/panel-notices.ts";
 import { paymentService } from "../services/payment-service.ts";
 import { pendingPaymentsService } from "../services/pending-payments.ts";
+import { waitlistService } from "../services/waitlist-service.ts";
 import { professionalService } from "../services/professional-service.ts";
 import { referralService } from "../services/referral-service.ts";
 
@@ -279,6 +280,12 @@ businessRoutes.get(
   handle((req) => dataExportService.appointments(req.ctx, req.params.businessId, queryParam(req, "cursor"))),
 );
 businessRoutes.get(
+  "/:businessId/export/waitlist",
+  exportNoStore,
+  exportLimit,
+  handle((req) => dataExportService.waitlist(req.ctx, req.params.businessId, queryParam(req, "cursor"))),
+);
+businessRoutes.get(
   "/:businessId/export/clinical",
   exportNoStore,
   exportLimit,
@@ -437,6 +444,19 @@ businessRoutes.get(
 businessRoutes.get(
   "/:businessId/payment-receipts/:receiptId/url",
   handle((req) => paymentService.receiptUrl(req.ctx, req.params.businessId, req.params.receiptId)),
+);
+// Lista de espera (spec 047): la lista de la Agenda, «Anotar» y «Quitar» o «Agendar».
+businessRoutes.get(
+  "/:businessId/waitlist",
+  handle((req) => waitlistService.list(req.ctx, req.params.businessId)),
+);
+businessRoutes.post(
+  "/:businessId/waitlist",
+  handle((req) => waitlistService.add(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.post(
+  "/:businessId/waitlist/:entryId/close",
+  handle((req) => waitlistService.close(req.ctx, req.params.businessId, req.params.entryId, req.body)),
 );
 // «Por cobrar» (spec 046): el total de Inicio y «Marcar todas como pagadas» desde la ficha del paciente.
 businessRoutes.get(

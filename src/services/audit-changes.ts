@@ -172,6 +172,8 @@ const BOOKING_FIELDS: ChangeField<BookingSettings>[] = [
     format: (value: number) => (value === 0 ? "Sin límite" : String(value)),
   },
   { key: "chooseProfessional", label: "El paciente elige con quién atenderse", format: yesNo },
+  // Spec 047: los negocios guardados antes no lo traen (= apagada).
+  { key: "waitlist", label: "Lista de espera", format: (value?: boolean) => yesNo(Boolean(value)) },
 ];
 
 const NOTIFICATION_FIELDS: ChangeField<NotificationSettings>[] = [

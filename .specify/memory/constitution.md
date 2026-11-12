@@ -109,7 +109,8 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   mismo día, nunca futura; cada cambio queda en la actividad. El contenido y la fecha de registro no se
   modifican (2026-10-28).
 - Cada email al paciente sobre su cita, también los recordatorios, sale con copia al profesional
-  (los recordatorios, desde el 2026-10-13), salvo los recordatorios del comprobante de pago (spec 039).
+  (los recordatorios, desde el 2026-10-13), salvo los recordatorios del comprobante de pago (spec 039) y los
+  emails de la lista de espera (spec 047), que no son de una cita.
   La copia puede esperar en la cola si un día no hay cupo de Gmail, pero nunca se descarta (2026-10-15).
 - «Pedir el comprobante de pago» (spec 039, 2026-11-09) es un interruptor por negocio, apagado al
   principio, que sólo cambia el super admin desde la ficha del negocio en /admin; el negocio no lo cambia
@@ -134,6 +135,18 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   No se envía nada solo: el profesional lo recuerda por WhatsApp, a mano, con un mensaje amable que nunca dice
   «deuda». En Reportes, lo que antes se llamaba «Cobrado» se llama «Ingresos de citas atendidas» (las
   completadas, pagadas o no) y al lado sale «Por cobrar». No hay pagos parciales ni saldos a favor.
+- La lista de espera (spec 047, 2026-11-12) la enciende sólo el propietario, en Configuración → Agenda
+  (`bookingSettings.waitlist`, apagada al principio). Con ella, quien no encuentra una hora se anota desde la página
+  de reservas (con el CAPTCHA, sin la cédula; como mucho 5 esperas abiertas por persona) o lo anota el equipo desde
+  la Agenda, con los días, la parte del día (mañana, tarde o noche) y la fecha hasta la que espera. Cuando una cita
+  Pendiente o Confirmada se cancela, cambia de fecha, de hora o de agenda, o se borra, la hora queda anotada (un
+  disparador de la base: ningún camino se escapa) y el cron avisa por email, a la vez, a todos los que la esperan y
+  la pueden reservar online: la toma el primero que reserva. Como mucho 3 emails al día por persona y 3 horas por
+  email. Los emails de la lista no llevan copia al profesional (no son de una cita) y el aviso de una hora libre
+  que no salió en 3 horas se descarta: es la única excepción a que lo que no cabe en el cupo espera en la cola. La
+  campana avisa cuando alguien se anota y cuando se libera una hora con gente esperando, sin guardar nombres. Quien
+  reserva en el negocio sale de sus esperas; las cerradas se borran a los 30 días y entran en la descarga de datos.
+  El rol Profesional ve y maneja sólo la lista de su agenda.
 - Una cita puede tener hasta 3 pacientes (sesiones de pareja), sólo en los negocios que el super
   admin habilite con su interruptor; el negocio no lo cambia. Cada paciente recibe sus avisos, la
   copia al profesional sale una vez y la hora se ocupa una sola vez (2026-10-13).
@@ -393,4 +406,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.45.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-12
+**Versión**: 1.46.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-12

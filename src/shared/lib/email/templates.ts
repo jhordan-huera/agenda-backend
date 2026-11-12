@@ -1,10 +1,16 @@
 // Copia de agenda-front/src/lib/email/templates.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { APP_NAME } from "../constants/app.ts";
-import { BANK_ACCOUNT_TYPE_LABELS, describeTimezone, formatUsdAmount } from "../constants/business.ts";
+import {
+  BANK_ACCOUNT_TYPE_LABELS,
+  describeDayParts,
+  describeTimezone,
+  describeWaitlistDays,
+  formatUsdAmount,
+} from "../constants/business.ts";
 import { capitalize, formatDate, formatLongDate, formatPrice, formatShortDate, formatTimeRange, joinNames } from "../format.ts";
 import { describeHomeVisit, getDirectionsUrl, getPlaceMapsUrl, hasMapPoint } from "../maps.ts";
 import { addDaysISO } from "../time.ts";
-import type { BankAccount, BillingPaidMethod, HomeVisitAddress, ISODate } from "../../types/index.ts";
+import type { BankAccount, BillingPaidMethod, DayOfWeek, HomeVisitAddress, ISODate, WaitlistDayPart } from "../../types/index.ts";
 import { composeEmail, type EmailBlock, type EmailContent, type EmailMessage } from "./layout.ts";
 
 /**
@@ -159,6 +165,29 @@ export interface PaymentReminderEmailData {
 }
 
 /**
+ * Lista de espera (spec 047): los emails a quien espera, con la marca y los datos del negocio. No son de una cita:
+ * no llevan copia al profesional. `leaveUrl`: su enlace personal para salir de la lista.
+ */
+export interface WaitlistEmailData {
+  name: string;
+  businessName: string;
+  businessAddress: string;
+  businessPhone: string;
+  serviceName: string;
+  /** null: «Cualquier profesional». */
+  professionalName: string | null;
+  days: DayOfWeek[];
+  dayParts: WaitlistDayPart[];
+  until: ISODate;
+  leaveUrl: string;
+}
+
+/** «Se liberó una hora»: las horas que le sirven (como mucho 3), cada una con su «Reservar esta hora». */
+export interface WaitlistOfferEmailData extends Omit<WaitlistEmailData, "days" | "dayParts" | "until" | "professionalName"> {
+  slots: { date: ISODate; time: string; professionalName: string; bookUrl: string }[];
+}
+
+/**
  * Un cobro de la mensualidad en los emails al propietario (spec 029): el negocio, el día de pago (de él
  * sale el mes: «Tu mensualidad de noviembre») y lo que paga, con la mensualidad y el descuento de referidos
  * si lo hay. Son de la plataforma: los ve sólo el propietario, nunca su equipo.
@@ -213,6 +242,15 @@ const clientEmail = (data: AppointmentEmailData, message: MessageContent): Email
     brand: { name: data.businessName, caption: data.professionalName !== data.businessName ? data.professionalName : undefined },
     signature: [data.businessName, data.businessAddress, data.businessPhone].filter(Boolean),
     footer: `Reserva gestionada con ${APP_NAME}.`,
+  });
+
+/** Email de la lista de espera (spec 047): la marca y la firma del negocio, sin cita ni copia al profesional. */
+const waitlistEmail = (data: Pick<WaitlistEmailData, "businessName" | "businessAddress" | "businessPhone">, message: MessageContent): EmailContent =>
+  composeEmail({
+    ...message,
+    brand: { name: data.businessName },
+    signature: [data.businessName, data.businessAddress, data.businessPhone].filter(Boolean),
+    footer: `Lista de espera gestionada con ${APP_NAME}.`,
   });
 
 /** " (hora de Ecuador, GMT-5)" en las citas virtuales; "" en las demás o sin zona. `date`: el día (otra cita de una serie). */
@@ -1221,6 +1259,66 @@ export const emailTemplates = {
           ...(item.payment ? [{ kind: "button", label: "Enviar el comprobante", url: item.payment.url } satisfies EmailBlock] : []),
         ]),
         { kind: "note", text: "Si ya lo enviaste por WhatsApp, puedes ignorar este mensaje." },
+      ],
+    });
+  },
+
+  waitlistJoined: (data: WaitlistEmailData): EmailContent =>
+    waitlistEmail(data, {
+      subject: `Te anotamos en la lista de espera de ${data.businessName}`,
+      preheader: `Te avisaremos por email si se libera una hora de ${data.serviceName} que te sirva.`,
+      title: "Estás en la lista de espera",
+      greeting: `Hola ${data.name}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: "Te avisaremos por email si se libera una hora que te sirva. Avisamos a todas las personas que esperan esa hora a la vez: se la queda la primera que reserva.",
+        },
+        {
+          kind: "details",
+          title: "Lo que pediste",
+          rows: [
+            { label: "Servicio", value: data.serviceName },
+            { label: "Con", value: data.professionalName ?? "Cualquier profesional" },
+            { label: "Días", value: describeWaitlistDays(data.days) },
+            { label: "Horario", value: describeDayParts(data.dayParts) },
+            { label: "Hasta", value: capitalize(formatLongDate(data.until)) },
+          ],
+        },
+        { kind: "note", text: "Si ya no la necesitas, puedes salir de la lista cuando quieras." },
+        { kind: "link", label: "Salir de la lista de espera", url: data.leaveUrl },
+      ],
+    }),
+
+  waitlistOffer: (data: WaitlistOfferEmailData): EmailContent => {
+    const one = data.slots.length === 1;
+    const first = data.slots[0];
+    return waitlistEmail(data, {
+      subject: one
+        ? `Se liberó una hora en ${data.businessName}: ${formatLongDate(first.date)} a las ${first.time}`
+        : `Se liberaron ${data.slots.length} horas en ${data.businessName}`,
+      preheader: `Para ${data.serviceName}. Se la queda la primera persona que reserva.`,
+      title: one ? "Se liberó una hora" : "Se liberaron horas",
+      greeting: `Hola ${data.name}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: `${one ? "Se liberó una hora" : "Se liberaron horas"} de ${data.serviceName} que te ${one ? "sirve" : "sirven"}. Avisamos a todas las personas que la esperan: se la queda la primera que reserva.`,
+        },
+        ...data.slots.flatMap((slot, index): EmailBlock[] => [
+          {
+            kind: "details",
+            title: one ? undefined : `Hora ${index + 1}`,
+            rows: [
+              { label: "Fecha", value: capitalize(formatLongDate(slot.date)) },
+              { label: "Hora", value: slot.time },
+              { label: "Con", value: slot.professionalName },
+            ],
+          },
+          { kind: "button", label: "Reservar esta hora", url: slot.bookUrl },
+        ]),
+        { kind: "note", text: "Si ya se tomó, en la página verás las otras horas libres y sigues en la lista." },
+        { kind: "link", label: "Salir de la lista de espera", url: data.leaveUrl },
       ],
     });
   },

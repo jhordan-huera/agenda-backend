@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/047-lista-de-espera` (rama de trabajo: `dev`) · **Creada**: 2026-11-12
 
-**Estado**: Aprobada el 2026-11-12, «apruebo con las recomendaciones»
+**Estado**: Implementada (2026-11-12). Aprobada el 2026-11-12, «apruebo con las recomendaciones»
 
 **Repos**:
 - **agenda-backend:** la lista, el aviso cuando se libera una hora, los emails, la campana y el interruptor.

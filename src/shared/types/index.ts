@@ -98,6 +98,11 @@ export interface BookingSettings {
    * se le pregunta y la cita va al primer profesional libre.
    */
   chooseProfessional: boolean;
+  /**
+   * Lista de espera (spec 047): la página de reservas deja anotarse y, cuando se libera una hora, el cron
+   * avisa a quien la espera. Sólo la cambia el propietario; los negocios guardados antes no lo traen (= apagada).
+   */
+  waitlist?: boolean;
 }
 
 /** Qué emails automáticos se envían a los clientes. */
@@ -752,7 +757,11 @@ export type EmailType =
    * pendientes de comprobante en el negocio (spec 039). Sin copia al profesional.
    */
   | "payment_reminder"
-  | "monthly_report";
+  | "monthly_report"
+  /** Al paciente: «Te anotamos en la lista de espera», con el enlace para salir (spec 047). Sin copia al profesional. */
+  | "waitlist_joined"
+  /** Al paciente: «Se liberó una hora», con «Reservar esta hora» (spec 047). Sin copia, y se descarta a las 3 horas. */
+  | "waitlist_offer";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -795,6 +804,8 @@ export type AuditEntityType =
   | "user"
   | "platform"
   | "clinical_record"
+  /** Las personas de la lista de espera (spec 047). */
+  | "waitlist"
   /** Inicios y cierres de sesión e intentos fallidos: sólo los ve el super admin. */
   | "session";
 
@@ -1102,7 +1113,25 @@ export interface DataExportSummary {
   exportedAt: ISODateTime;
   clinical: DataExportClinical;
   /** Lo que trae; las historias y los archivos, 0 si no lleva lo clínico. */
-  counts: { clients: number; appointments: number; clinicalRecords: number; attachments: number };
+  counts: { clients: number; appointments: number; clinicalRecords: number; attachments: number; waitlist: number };
+}
+
+/** Una persona de lista-de-espera.xlsx (spec 047): las abiertas y las cerradas que todavía se guardan (30 días). */
+export interface DataExportWaitlistEntry {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  service: string;
+  /** "" = «Cualquiera». */
+  professional: string;
+  days: DayOfWeek[];
+  dayParts: WaitlistDayPart[];
+  until: ISODate;
+  source: "booking_page" | "dashboard";
+  createdAt: ISODateTime;
+  closedAt: ISODateTime | null;
+  closedReason: WaitlistCloseReason | null;
 }
 
 /** Una parte de la descarga. `nextCursor`: con qué pedir la siguiente (null: era la última). */
@@ -2148,6 +2177,9 @@ export type PushKind =
   | "unclosed"
   | "evening_summary"
   | "morning_summary"
+  /** Lista de espera (spec 047): sólo en la campana, sin push ni ntfy. */
+  | "waitlist_joined"
+  | "waitlist_slot"
   | "new_business"
   | "plan_request"
   | "account_security"
@@ -2203,4 +2235,48 @@ export interface PanelNoticePage {
   unread: number;
   /** Para «Cargar más»: el createdAt y el id del último («2026-10-15T09:12:00.000000Z|…»); null si no hay más. */
   nextCursor: string | null;
+}
+
+/* ------------------------------------------------------------------ Lista de espera (spec 047) -- */
+
+/** La parte del día que le sirve a quien espera: mañana (antes de las 12), tarde (12 a 18) o noche (desde las 18). */
+export type WaitlistDayPart = "morning" | "afternoon" | "evening";
+
+/** Por qué salió de la lista: reservó, salió con su enlace, el equipo la quitó o la agendó, venció o el servicio o el profesional se desactivaron. */
+export type WaitlistCloseReason = "booked" | "left" | "removed" | "scheduled" | "expired" | "inactive";
+
+/** Una persona de la lista de espera, como la ve el equipo en el panel. */
+export interface WaitlistEntry {
+  id: string;
+  serviceId: string;
+  /** null: «Cualquiera». */
+  professionalId: string | null;
+  /** El paciente que eligió el equipo al anotarla (null: anotada desde la página o con datos nuevos). */
+  clientId: string | null;
+  name: string;
+  email: string | null;
+  phone: string;
+  /** Días de la semana (0 = domingo). */
+  days: DayOfWeek[];
+  dayParts: WaitlistDayPart[];
+  until: ISODate;
+  source: "booking_page" | "dashboard";
+  createdAt: ISODateTime;
+}
+
+/** Lo que ve la persona en su enlace (/lista-de-espera/:token): lo que pidió y sus datos, para reservar. */
+export interface PublicWaitlistEntry {
+  businessName: string;
+  businessSlug: string;
+  serviceName: string;
+  /** null: «Cualquiera». */
+  professionalName: string | null;
+  days: DayOfWeek[];
+  dayParts: WaitlistDayPart[];
+  until: ISODate;
+  name: string;
+  email: string | null;
+  phone: string;
+  /** Ya no está en la lista (salió, reservó o venció). */
+  closed: boolean;
 }
