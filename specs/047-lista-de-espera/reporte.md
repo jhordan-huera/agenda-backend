@@ -47,7 +47,7 @@ Cada negocio puede encender la lista de espera en Configuración → Agenda.
 | CE-001 – Las pruebas del backend | Cumple | `tests/waitlist.test.ts`: 60 de 60 |
 | CE-002 – Typecheck, pruebas, build, lint y comprobaciones | Cumple | Backend: `typecheck` y las 75 suites (en la corrida completa, 73 de 75; las otras 2 esperaban el texto y los tipos de antes, se pusieron al día y pasan). Front: build, lint sin avisos y las 9 `check:*` (la nueva `check:waitlist`) |
 | CE-003 – En el computador y en el celular | Cumple | Recorrido en Chromium a 1440 en claro (20 de 20) y WebKit a 390 en oscuro (9 de 9), sin desplazamiento horizontal ni errores en la consola |
-| CE-004 – Una prueba real del email | Sin comprobar | Falta enviarlo con la cuenta de Gmail de pruebas y abrirlo en el celular. Se puede hacer con `npm run dev:local` antes de publicar |
+| CE-004 – Una prueba real del email | Cumple | El 2026-11-12, «Te anotamos» y «Se liberaron 2 horas» (con datos inventados) salieron con la cuenta de Gmail de pruebas, y el dueño del producto los revisó en el celular: se ven bien |
 
 ## Cambios respecto al plan
 
@@ -67,7 +67,6 @@ Cada negocio puede encender la lista de espera en Configuración → Agenda.
 ## Pendientes y riesgos
 
 - **La migración 056** la aplica el dueño del producto antes de publicar el backend.
-- **CE-004** (el email real en el celular) queda por hacer antes de publicar.
 - **El cron de GitHub puede atrasarse** en las horas de más carga: el «menos de 15 minutos» depende de él.
 - **Avisar a todos a la vez** hace que alguien llegue tarde. La página se lo dice y le muestra las otras horas.
 

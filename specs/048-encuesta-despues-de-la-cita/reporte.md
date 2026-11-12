@@ -47,7 +47,7 @@ El propietario puede encender «Preguntar al paciente cómo le fue» en Configur
 | CE-002 – Typecheck, pruebas, build, lint y comprobaciones | Cumple | Backend: `typecheck` y «76 de 76 suites pasaron» (en 4 min 22 s). Front: build, lint sin avisos y las 10 `check:*` (la nueva `check:surveys`) |
 | CE-003 – En el computador y en el celular | Cumple | Recorrido en Chromium a 1440 en claro (16 de 16) y WebKit a 390 en oscuro (5 de 5), sin desplazamiento horizontal ni errores en la consola ([captura](./capturas/encuesta-390-oscuro.png)) |
 | CE-004 – Responder en menos de 30 segundos | Cumple | Desde el email: tocar una estrella abre la página con ella elegida; el comentario es opcional y basta «Enviar» |
-| CE-005 – Una prueba real del email | Sin comprobar | Falta enviarlo con la cuenta de Gmail de pruebas y abrirlo en el celular, como el de la lista de espera |
+| CE-005 – Una prueba real del email | Cumple | El 2026-11-12, «¿Cómo te fue?» (con datos inventados) salió con la cuenta de Gmail de pruebas, y el dueño del producto lo revisó en el celular: se ve bien |
 
 ## Cambios respecto al plan
 
@@ -61,7 +61,6 @@ El propietario puede encender «Preguntar al paciente cómo le fue» en Configur
 ## Pendientes y riesgos
 
 - **La migración 057** la aplica el dueño del producto antes de publicar el backend.
-- **CE-005** (el email real en el celular) queda por hacer antes de publicar.
 - **En psicología, una encuesta puede incomodar.** Por eso empieza apagada y pregunta como mucho cada 90 días.
 - **Con pocas respuestas,** el promedio siempre sale con «de N respuestas».
 
