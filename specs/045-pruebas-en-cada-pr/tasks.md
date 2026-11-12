@@ -24,9 +24,9 @@ Rutas: `back/` = agenda-backend, `front/` = agenda-front. Sin migración ni camb
 ## Fase 3: La regla de `main` y el cierre (Historia 3, P2)
 
 - [X] T005 Constitución 1.44.0 en los dos repos (principio IV) y los README (el flujo y los pasos de la regla de `main`)
-- [ ] T006 Subir a `dev`: las dos corridas del `push` salen en verde, con su tiempo (CE-002, CE-003)
-- [ ] T007 En cada repo, un PR de prueba (`prueba-045-rojo` → `dev`) con una prueba rota: sale en rojo y dice cuál falló. Después se cierra sin fusionar y se borra la rama (CE-001)
-- [ ] T008 Reporte final y PR `dev` → `main`. El dueño del producto pone la regla de `main` y fusiona
+- [X] T006 Subir a `dev`: las dos corridas del `push` salen en verde, con su tiempo (CE-002, CE-003)
+- [X] T007 En cada repo, un PR de prueba (`prueba-045-rojo` → `dev`) con una prueba rota: sale en rojo y dice cuál falló. Después se cierra sin fusionar y se borra la rama (CE-001)
+- [X] T008 Reporte final y PR `dev` → `main`. El dueño del producto pone la regla de `main` y fusiona
 
 ## Dependencias
 
