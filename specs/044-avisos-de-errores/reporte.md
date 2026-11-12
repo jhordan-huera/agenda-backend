@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev (2026-11-11). Faltan la cuenta de Sentry y las variables, y decidir los mapas de la web (CE-004) · **Fecha**: 2026-11-11
+**Estado**: Implementada en dev (2026-11-11). La cuenta de Sentry y las variables, puestas por el dueño del producto el 2026-11-12 · **Fecha**: 2026-11-12
 
 **Repos**: los dos · **Migración**: No
 
@@ -53,7 +53,7 @@ la dirección IP.
 | CE-001 – Las pruebas del backend | Cumple | `tests/error-reports.test.ts`, 43 comprobaciones |
 | CE-002 – El recorrido | Cumple | 40 comprobaciones, dos veces seguidas, en Chromium a 1440 px en claro y WebKit a 390 px en oscuro ([capturas](./capturas/)) |
 | CE-003 – Las comprobaciones | Cumple | Backend: `typecheck` y `npm test` (ver abajo). Front: build, lint y los siete `check:*` |
-| CE-004 – La primera carga de la web | **Cumple sin mapas; no cumple con mapas** | Antes, 213,29 KB comprimidos.<br>- Con el cambio, sin mapas: 214,05 KB (+0,76 KB).<br>- Con los mapas, como en Vercel: 219,56 KB (+6,3 KB): la marca que el plugin agrega a cada archivo cuesta unos 5,5 KB. Ver «Pendientes» |
+| CE-004 – La primera carga de la web | **No cumple: +6,3 KB con los mapas (opción 1, elegida al crear el token)** | Antes, 213,29 KB comprimidos.<br>- Con el cambio, sin mapas: 214,05 KB (+0,76 KB).<br>- Con los mapas, como en Vercel: 219,56 KB (+6,3 KB): la marca que el plugin agrega a cada archivo cuesta unos 5,5 KB. Ver «Pendientes» |
 | CE-005 – El arranque de la API | Cumple | Cinco veces cada uno: 205 ms de media antes y 191 ms después (dentro del ruido; el límite era +50 ms) |
 | CE-006 – La notificación de prueba | Sin comprobar | Después de publicar |
 | CE-007 – Las mismas pantallas | Cumple | Recorrido: «Algo salió mal» y «Ocurrió un error inesperado.» como siempre ([captura en el celular](./capturas/webkit-390-oscuro-pantalla-rota.png)) |
@@ -87,22 +87,23 @@ la dirección IP.
 
 ## Pendientes y riesgos
 
-- **Decidir los mapas de la web (CE-004).** Para ver en Sentry la línea exacta del código de la web hacen falta
-  los mapas. Hay tres formas:
+- **Los mapas de la web (CE-004):** el dueño del producto creó el token y puso las cuatro variables del front
+  (2026-11-12), así que queda la opción 1. Para ver en Sentry la línea exacta del código de la web hacen falta
+  los mapas, y había tres formas:
   1. **(Recomendada y la que quedó)** La que recomienda Sentry: +5,5 KB en la primera carga (en total +6,3 KB,
      un 3 %).
   2. La antigua, por versión: +1,9 KB en total. Sentry ya no la recomienda y hay que comprobarla en producción.
   3. Sin mapas: +0,76 KB. Los avisos de la web llegan igual, pero con la línea del archivo comprimido.
-- **Antes de publicar,** el dueño del producto:
-  - crea la cuenta y los proyectos;
-  - activa que no se guarden las IP;
-  - pone las variables (el plan, «Lo que haces tú»).
+- **La cuenta de Sentry** (2026-11-12): los proyectos `agenda-api` y `agenda-web` (sólo «Error monitoring»,
+  alertas «High priority issues» por email), las IP sin guardar y las variables en Vercel y Lambda.
+- **Si la subida de los mapas falla en Vercel** (por ejemplo, un token mal copiado), la compilación termina
+  igual y no publica ningún mapa. Se comprobó en local con un token falso.
 - **La línea exacta de la web** sólo se puede ver en Sentry después de publicar, porque los mapas se suben
   desde Vercel.
 - **Los bloqueadores de anuncios** pueden frenar algunos avisos de la web. Los de la API llegan siempre.
 - **Al traer los cambios a su equipo,** el dueño del producto corre `npm install` en el front, porque hay
   librerías nuevas.
-- **La fecha de /privacidad** dice 11 de noviembre. Si se publica otro día, hay que cambiarla.
+- **La fecha de /privacidad** dice 12 de noviembre, el día de la publicación.
 
 ## Commits
 
