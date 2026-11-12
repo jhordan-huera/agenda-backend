@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada (2026-11-12) · **Fecha**: 2026-11-12
+**Estado**: Publicada (2026-11-12, PR backend #76 y front #61) · **Fecha**: 2026-11-12
 
 **Repos**: los dos · **Migración**: Sí, la 057 (la aplica el dueño del producto antes de publicar el backend)
 
@@ -60,7 +60,7 @@ El propietario puede encender «Preguntar al paciente cómo le fue» en Configur
 
 ## Pendientes y riesgos
 
-- **La migración 057** la aplica el dueño del producto antes de publicar el backend.
+- **La migración 057** la aplicó el dueño del producto en producción el 2026-11-12, antes de publicar el backend.
 - **En psicología, una encuesta puede incomodar.** Por eso empieza apagada y pregunta como mucho cada 90 días.
 - **Con pocas respuestas,** el promedio siempre sale con «de N respuestas».
 

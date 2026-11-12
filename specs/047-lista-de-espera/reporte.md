@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada (2026-11-12) · **Fecha**: 2026-11-12
+**Estado**: Publicada (2026-11-12, PR backend #76 y front #61) · **Fecha**: 2026-11-12
 
 **Repos**: los dos · **Migración**: Sí, la 056 (la aplica el dueño del producto antes de publicar el backend)
 
@@ -66,7 +66,7 @@ Cada negocio puede encender la lista de espera en Configuración → Agenda.
 
 ## Pendientes y riesgos
 
-- **La migración 056** la aplica el dueño del producto antes de publicar el backend.
+- **La migración 056** la aplicó el dueño del producto en producción el 2026-11-12, antes de publicar el backend.
 - **El cron de GitHub puede atrasarse** en las horas de más carga: el «menos de 15 minutos» depende de él.
 - **Avisar a todos a la vez** hace que alguien llegue tarde. La página se lo dice y le muestra las otras horas.
 
