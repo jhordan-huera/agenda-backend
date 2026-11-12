@@ -30,6 +30,9 @@ Agenda360 guarda datos de salud (historia clínica, citas, contacto de pacientes
 - La analítica (Vercel Analytics / Speed Insights) recibe rutas sin identificadores ni tokens y sin
   parámetros.
 - Las páginas públicas (reservas, pago y «Tu cita») no exponen datos internos del negocio ni de otros pacientes.
+- El mapa del local en la página de reservas es el propio (OpenFreeMap) si el negocio marcó su punto. Si sólo
+  escribió la dirección, es un mapa de Google con esa dirección (2026-11-11). Los dos se cargan cuando el paciente
+  baja hasta ellos, y Google sale entre los proveedores de /privacidad.
 - La historia clínica sólo la ven el propietario y los miembros que él autoriza; ni el soporte de la
   plataforma (spec 025, 2026-10-19).
 - El super admin no tiene un calendario con las citas de los negocios: el de /admin sólo lleva cifras
@@ -209,7 +212,10 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - La analítica de /admin (spec 016) sólo la ve el super admin, sólo con cifras por negocio (nunca
   datos de pacientes), y se prepara una vez al día con el cron, fuera de Vercel (2026-10-15). Sólo
   salen los negocios activos: un suspendido no está ni en las cifras ni en los totales, y si se suspende
-  después de prepararla, sale al momento (2026-11-10).
+  después de prepararla, sale al momento (2026-11-10). Las tarjetas de «Crecimiento del mes» del Resumen
+  abren su detalle por negocio (spec 042, 2026-11-11), con la misma regla: sólo cifras, nunca pacientes ni
+  citas sueltas; quiénes son se ve en el modo soporte. Ahí cuentan también los suspendidos, con su marca,
+  porque la tarjeta los cuenta.
 - El informe mensual (spec 040, 2026-11-10): el día 1, desde las 8:00 de su hora, el propietario de cada
   negocio activo con citas el mes anterior recibe por email el resumen de ese mes: citas, reservas online,
   recordatorios, confirmaciones, cancelaciones con tiempo, pacientes nuevos, comprobantes, ingresos
@@ -230,6 +236,11 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - En la portada no hay testimonios, cifras ni precios inventados. Un testimonio sólo sale con el permiso
   de quien lo da, y las integraciones que se muestran son sólo las reales, con iconos propios y sin logos
   de marcas (spec 032, 2026-10-22).
+- La portada es el «Panel de marca» (spec 043, 2026-11-11): el bloque tomate con la agenda de la semana de
+  ejemplo y, debajo, «Hecho para», las funciones, «Tus datos», las preguntas y el cierre. Ella y las páginas
+  por especialidad usan una sola familia de letra (Schibsted Grotesk), sin mayúsculas espaciadas, letra
+  monoespaciada ni palabras sueltas en cursiva, con un solo movimiento al cargar y las ilustraciones quietas.
+  Lo comprueba `npm run check:landing`.
 - Las páginas por especialidad (/psicologos, /fisioterapeutas y /odontologos, spec 041, 2026-11-10) siguen
   las mismas reglas que la portada: sólo funciones que existen, sin testimonios, cifras ni precios
   inventados, sin nombres de clientes, sin planes ni precios, sin la LOPDP y sin funciones paradas. Cada
@@ -356,4 +367,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.39.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-10
+**Versión**: 1.42.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-11

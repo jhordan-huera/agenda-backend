@@ -1722,6 +1722,35 @@ export interface AdminCalendarBusiness {
   professionals: { id: string; name: string; appointments: number }[];
 }
 
+/** Un negocio en el detalle de una tarjeta de «Crecimiento del mes» (spec 042): sólo cifras. */
+export interface AdminGrowthBusiness {
+  id: string;
+  name: string;
+  status: BusinessStatus;
+  /** Lo que va del mes. */
+  current: number;
+  /** Los mismos días del mes pasado. */
+  previous: number;
+}
+
+/**
+ * GET /api/admin/growth: el detalle de las tarjetas de «Crecimiento del mes» (spec 042), con los mismos periodos
+ * y criterios que `PlatformStats.growth`, por negocio y de más a menos. Sólo cifras: ni pacientes ni citas sueltas.
+ * Los negocios en 0 en los dos periodos no salen.
+ */
+export interface AdminGrowthDetail {
+  from: ISODate;
+  to: ISODate;
+  previousFrom: ISODate;
+  previousTo: ISODate;
+  appointments: AdminGrowthBusiness[];
+  onlineBookings: AdminGrowthBusiness[];
+  /** `online` y `dashboard`: de lo que va del mes, cuántos llegaron por la página de reservas y cuántos desde el panel. */
+  newClients: (AdminGrowthBusiness & { online: number; dashboard: number })[];
+  /** Los negocios creados en lo que va del mes, del más nuevo al más antiguo. */
+  newBusinesses: { id: string; name: string; status: BusinessStatus; plan: PlanId | null; createdAt: ISODateTime }[];
+}
+
 /** GET /api/admin/calendar/day: los negocios con citas ese día (o a esa hora), de más a menos citas. */
 export interface AdminCalendarDay {
   date: ISODate;

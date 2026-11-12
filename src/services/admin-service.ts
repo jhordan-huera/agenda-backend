@@ -42,6 +42,8 @@ import type {
   AdminAuditLog,
   AdminBusinessDetail,
   AdminBusinessSummary,
+  AdminGrowthBusiness,
+  AdminGrowthDetail,
   AdminPlanRequest,
   AdminUserSummary,
   AuditChange,
@@ -282,6 +284,88 @@ async function platformGrowth(): Promise<PlatformStats["growth"]> {
   };
 }
 
+/** De más a menos este mes, luego por el mes pasado y luego por nombre; sin los negocios en 0 en los dos periodos. */
+const byGrowth = <T extends AdminGrowthBusiness>(rows: T[]): T[] =>
+  rows
+    .filter((row) => row.current > 0 || row.previous > 0)
+    .sort((a, b) => b.current - a.current || b.previous - a.previous || a.name.localeCompare(b.name, "es"));
+
+/**
+ * El detalle de las tarjetas de «Crecimiento del mes» (spec 042): las cifras de platformGrowth repartidas por
+ * negocio, con los mismos periodos y condiciones, así que cada lista suma la cifra de su tarjeta. Sólo cifras: ni
+ * pacientes ni citas sueltas (respuestas 1 y 2). Se calcula al abrir un panel del Resumen, no al cargarlo.
+ */
+async function platformGrowthDetail(): Promise<AdminGrowthDetail> {
+  const timezone = [DEFAULT_TIMEZONE];
+  // En los dos periodos (el del mes pasado termina antes de que empiece éste): `>= month_start` es este mes y
+  // `< prev_end`, el pasado.
+  const [periods, appointments, clients, businesses] = await Promise.all([
+    one<Pick<AdminGrowthDetail, "from" | "to" | "previousFrom" | "previousTo">>(
+      pool,
+      `with ${growthPeriodsSql("$1")}
+       select to_char(p.month_start at time zone $1, 'YYYY-MM-DD') as "from",
+              to_char(now() at time zone $1, 'YYYY-MM-DD') as "to",
+              to_char(p.prev_start at time zone $1, 'YYYY-MM-DD') as "previousFrom",
+              to_char(p.prev_end at time zone $1, 'YYYY-MM-DD') as "previousTo"
+         from periods p`,
+      timezone,
+    ),
+    many<AdminGrowthBusiness & { onlineCurrent: number; onlinePrevious: number }>(
+      pool,
+      `with ${growthPeriodsSql("$1")},
+            counted as (
+              select a.business_id,
+                     count(*) filter (where a.created_at >= p.month_start)::int as current,
+                     count(*) filter (where a.created_at < p.prev_end)::int as previous,
+                     count(*) filter (where a.source = 'booking_page' and a.created_at >= p.month_start)::int as "onlineCurrent",
+                     count(*) filter (where a.source = 'booking_page' and a.created_at < p.prev_end)::int as "onlinePrevious"
+                from appointments a, periods p
+               where a.status <> 'cancelled' and a.created_at >= p.prev_start and a.created_at <= now()
+               group by a.business_id
+            )
+       select b.id, b.name, b.status, c.current, c.previous, c."onlineCurrent", c."onlinePrevious"
+         from counted c join businesses b on b.id = c.business_id`,
+      timezone,
+    ),
+    // Los pacientes importados desde un archivo (spec 012) no cuentan como nuevos, como en la tarjeta.
+    many<AdminGrowthDetail["newClients"][number]>(
+      pool,
+      `with ${growthPeriodsSql("$1")},
+            counted as (
+              select c.business_id,
+                     count(*) filter (where c.created_at >= p.month_start)::int as current,
+                     count(*) filter (where c.created_at < p.prev_end)::int as previous,
+                     count(*) filter (where c.source = 'booking_page' and c.created_at >= p.month_start)::int as online,
+                     count(*) filter (where c.source = 'dashboard' and c.created_at >= p.month_start)::int as dashboard
+                from clients c, periods p
+               where c.source <> 'import' and c.created_at >= p.prev_start and c.created_at <= now()
+               group by c.business_id
+            )
+       select b.id, b.name, b.status, c.current, c.previous, c.online, c.dashboard
+         from counted c join businesses b on b.id = c.business_id`,
+      timezone,
+    ),
+    many<AdminGrowthDetail["newBusinesses"][number]>(
+      pool,
+      `with ${growthPeriodsSql("$1")}
+       select b.id, b.name, b.status, s.plan, b.created_at as "createdAt"
+         from businesses b
+         left join subscriptions s on s.business_id = b.id, periods p
+        where b.created_at >= p.month_start and b.created_at <= now()
+        order by b.created_at desc, b.name`,
+      timezone,
+    ),
+  ]);
+  const only = ({ id, name, status }: AdminGrowthBusiness) => ({ id, name, status });
+  return {
+    ...periods!,
+    appointments: byGrowth(appointments.map((row) => ({ ...only(row), current: row.current, previous: row.previous }))),
+    onlineBookings: byGrowth(appointments.map((row) => ({ ...only(row), current: row.onlineCurrent, previous: row.onlinePrevious }))),
+    newClients: byGrowth(clients),
+    newBusinesses: businesses,
+  };
+}
+
 /** Días del gráfico de emails del inicio del super admin. */
 const EMAIL_CHART_DAYS = 14;
 
@@ -452,6 +536,12 @@ export const adminService = {
       health,
       billing,
     };
+  },
+
+  /** El detalle de las tarjetas de «Crecimiento del mes» (spec 042): sólo cifras por negocio. */
+  async getGrowthDetail(ctx: RequestContext): Promise<AdminGrowthDetail> {
+    authorizeSuperAdmin(ctx);
+    return platformGrowthDetail();
   },
 
   async listBusinesses(ctx: RequestContext): Promise<AdminBusinessSummary[]> {

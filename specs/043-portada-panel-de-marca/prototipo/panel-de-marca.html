@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>B · Panel de marca</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1c1917; --muted: #57534e; --soft: #78716c; --line: #e7e5e4; --wall: #f5f5f4;
+    --tomato: #c2410c; --tomato-deep: #9a3412; --tomato-dark: #7c2d12; --peach: #fcd9c2; --peach-wash: #fff4ec;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: "Schibsted Grotesk", system-ui, sans-serif; color: var(--ink); background: var(--wall); -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 0 24px; }
+  nav { display: flex; align-items: center; justify-content: space-between; height: 76px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 20px; letter-spacing: -0.02em; }
+  .mark { width: 30px; height: 30px; border-radius: 9px; background: var(--tomato); display: grid; place-items: center; }
+  .mark i { width: 14px; height: 12px; border: 2px solid #fff; border-radius: 3px; border-top-width: 4px; }
+  .links { display: flex; gap: 30px; font-size: 15px; color: var(--muted); font-weight: 500; }
+  .actions { display: flex; align-items: center; gap: 18px; font-size: 15px; font-weight: 500; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; height: 44px; padding: 0 20px; border-radius: 12px; font-weight: 700; font-size: 15px; text-decoration: none; }
+  .btn-ink { background: var(--ink); color: #fff; }
+  /* El panel */
+  .panel { background: var(--tomato); color: #fff; border-radius: 32px; padding: 72px 64px; display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; overflow: hidden; }
+  h1 { font-size: 58px; line-height: 1.02; letter-spacing: -0.04em; font-weight: 800; max-width: 15ch; }
+  .lead { margin-top: 22px; font-size: 19px; line-height: 1.55; color: rgba(255,255,255,.88); max-width: 40ch; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
+  .cta .btn { height: 54px; padding: 0 26px; font-size: 16px; }
+  .btn-white { background: #fff; color: var(--tomato-deep); }
+  .btn-line { color: #fff; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.55); }
+  .facts { margin-top: 26px; font-size: 14px; color: rgba(255,255,255,.82); }
+  /* La semana */
+  .week { background: #fff; color: var(--ink); border-radius: 20px; padding: 20px; box-shadow: 0 30px 60px -30px rgba(66, 20, 4, .55); }
+  .week-top { display: flex; justify-content: space-between; align-items: center; }
+  .week-top b { font-size: 16px; }
+  .week-top span { font-size: 12px; color: var(--soft); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; }
+  .grid { margin-top: 16px; display: grid; grid-template-columns: 44px repeat(4, 1fr); gap: 6px; font-size: 12px; }
+  .grid .day { text-align: center; color: var(--muted); font-weight: 600; padding-bottom: 6px; }
+  .grid .day b { display: block; font-size: 18px; color: var(--ink); }
+  .grid .today b { color: var(--tomato); }
+  .grid .hour { color: var(--soft); text-align: right; padding-right: 6px; padding-top: 4px; }
+  .slot { min-height: 46px; border-radius: 10px; background: #fafaf9; }
+  .appt { border-radius: 10px; padding: 7px 9px; line-height: 1.25; min-height: 46px; }
+  .appt b { display: block; font-size: 12px; }
+  .appt span { color: var(--muted); font-size: 11px; }
+  .confirmed { background: var(--peach); }
+  .confirmed b { color: var(--tomato-dark); }
+  .pending { background: #fff; box-shadow: inset 0 0 0 1.5px var(--peach); }
+  .online { background: var(--tomato); color: #fff; }
+  .online span { color: rgba(255,255,255,.85); }
+  .legend { margin-top: 14px; display: flex; gap: 16px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  /* Lo que hace por ti */
+  .does { display: grid; grid-template-columns: 0.8fr 1.2fr; gap: 64px; padding: 96px 40px; }
+  .does h2 { font-size: 40px; line-height: 1.08; letter-spacing: -0.035em; font-weight: 800; }
+  .does dl { display: grid; grid-template-columns: 1fr 1fr; gap: 36px 48px; }
+  .does dt { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
+  .does dd { margin-top: 6px; color: var(--muted); line-height: 1.55; font-size: 16px; }
+  .does dt::before { content: ""; display: block; width: 28px; height: 4px; border-radius: 2px; background: var(--tomato); margin-bottom: 14px; }
+  @media (max-width: 760px) {
+    .links, .actions .login { display: none; }
+    .wrap { padding: 0 12px; }
+    nav { padding: 0 6px; height: 64px; }
+    nav .btn { height: 38px; padding: 0 14px; font-size: 14px; }
+    .panel { grid-template-columns: 1fr; padding: 40px 22px 24px; border-radius: 26px; gap: 36px; }
+    h1 { font-size: 42px; }
+    .lead { font-size: 17px; }
+    .cta .btn { width: 100%; }
+    .grid { grid-template-columns: 34px repeat(3, 1fr); }
+    .grid .d4 { display: none; }
+    .does { grid-template-columns: 1fr; gap: 32px; padding: 64px 12px; }
+    .does h2 { font-size: 30px; }
+    .does dl { grid-template-columns: 1fr; gap: 28px; }
+  }
+</style>
+</head>
+<body>
+  <header class="wrap">
+    <nav>
+      <div class="brand"><span class="mark"><i></i></span>Agenda360</div>
+      <div class="links"><span>Funciones</span><span>Especialidades</span><span>Preguntas</span></div>
+      <div class="actions"><span class="login">Iniciar sesión</span><a class="btn btn-ink" href="#">Crear mi agenda</a></div>
+    </nav>
+  </header>
+  <main class="wrap">
+    <section class="panel">
+      <div>
+        <h1>Tu consulta, ordenada desde la primera reserva.</h1>
+        <p class="lead">Tus pacientes eligen su hora en tu página, reciben su recordatorio y confirman que van. Tú ves la semana entera de un vistazo.</p>
+        <div class="cta"><a class="btn btn-white" href="#">Crear mi agenda gratis</a><a class="btn btn-line" href="#">Ver una página de reservas</a></div>
+        <p class="facts">Gratis para empezar, sin tarjeta. Tus pacientes no crean cuenta.</p>
+      </div>
+      <div class="week">
+        <div class="week-top"><b>Semana del 10 de noviembre</b><span>Ejemplo</span></div>
+        <div class="grid">
+          <span></span>
+          <span class="day">Lun<b>10</b></span><span class="day today">Mar<b>11</b></span><span class="day">Mié<b>12</b></span><span class="day d4">Jue<b>13</b></span>
+          <span class="hour">9:00</span>
+          <div class="appt confirmed"><b>María P.</b><span>Terapia individual</span></div><div class="slot"></div><div class="appt online"><b>Luis R.</b><span>Reservó en tu página</span></div><div class="appt confirmed d4"><b>Ana T.</b><span>Seguimiento</span></div>
+          <span class="hour">10:00</span>
+          <div class="slot"></div><div class="appt pending"><b>Carla M.</b><span>Primera consulta</span></div><div class="slot"></div><div class="slot d4"></div>
+          <span class="hour">11:00</span>
+          <div class="appt pending"><b>Jorge V.</b><span>Terapia de pareja</span></div><div class="appt confirmed"><b>Sofía L.</b><span>Confirmó que va</span></div><div class="slot"></div><div class="appt online d4"><b>Pedro A.</b><span>Reservó en tu página</span></div>
+          <span class="hour">12:00</span>
+          <div class="slot"></div><div class="slot"></div><div class="appt confirmed"><b>Diana C.</b><span>Seguimiento</span></div><div class="slot d4"></div>
+        </div>
+        <div class="legend"><span><i style="background:var(--peach)"></i>Confirmó que va</span><span><i style="box-shadow:inset 0 0 0 1.5px var(--peach)"></i>Pendiente</span><span><i style="background:var(--tomato)"></i>Reserva online</span></div>
+      </div>
+    </section>
+    <section class="does">
+      <h2>Lo que hace por ti mientras atiendes.</h2>
+      <dl>
+        <div><dt>Reservas a cualquier hora</dt><dd>Tu enlace muestra sólo las horas libres. Nadie te escribe para preguntar si tienes espacio.</dd></div>
+        <div><dt>Recordatorios que confirman</dt><dd>Un email antes de la cita con «Confirmo que voy». Menos sillas vacías.</dd></div>
+        <div><dt>Historia clínica privada</dt><dd>Evoluciones y archivos de cada paciente, que sólo ves tú y quien autorices.</dd></div>
+        <div><dt>Cobro por transferencia</dt><dd>El paciente sube su comprobante desde el enlace de pago y tú lo marcas pagado.</dd></div>
+      </dl>
+    </section>
+  </main>
+</body>
+</html>
