@@ -1,0 +1,46 @@
+name: Pruebas
+
+# Spec 045: en cada PR a dev o a main y en cada subida a dev, el chequeo de tipos y todas las suites
+# (npm test, que crea su propio PostgreSQL desechable en este mismo servidor: scripts/test.ts). Sin
+# secretos ni variables, así que corre igual en los PR de Dependabot. No toca Vercel, Lambda ni la base de
+# producción, y sólo usa datos demo. main exige que «Comprobar» pase (regla de GitHub: ver README).
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev]
+
+# El job sólo lee el código.
+permissions:
+  contents: read
+
+# Una versión nueva del mismo PR (o de dev) cancela la anterior.
+concurrency:
+  group: pruebas-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  comprobar:
+    name: Comprobar
+    # Trae PostgreSQL 16 en /usr/lib/postgresql/16/bin (scripts/postgres-bin.ts lo encuentra).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # El Node de producción (Vercel y Lambda).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Chequeo de tipos
+        run: npm run typecheck
+
+      - name: Pruebas (todas las suites)
+        run: npm test
