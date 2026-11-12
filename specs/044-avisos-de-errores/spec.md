@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/044-avisos-de-errores` (rama de trabajo: `dev`) · **Creada**: 2026-11-11
 
-**Estado**: Implementada (2026-11-11). Aprobada el 2026-11-11, «apruebo con todo lo recomendado»
+**Estado**: Publicada (2026-11-12, PR backend #73 y front #57). Aprobada el 2026-11-11, «apruebo con todo lo recomendado»
 
 **Repos**:
 - **agenda-backend:** el envío de los errores de la API a Sentry, sin datos de pacientes, y sus pruebas.

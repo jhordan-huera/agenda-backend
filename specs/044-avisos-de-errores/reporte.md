@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev (2026-11-11). La cuenta de Sentry y las variables, puestas por el dueño del producto el 2026-11-12 · **Fecha**: 2026-11-12
+**Estado**: Publicada (2026-11-12, PR backend #73 y front #57) · **Fecha**: 2026-11-12
 
 **Repos**: los dos · **Migración**: No
 
