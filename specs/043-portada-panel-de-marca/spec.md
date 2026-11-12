@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/043-portada-panel-de-marca` (rama de trabajo: `dev`) · **Creada**: 2026-11-11
 
-**Estado**: Implementada (2026-11-11), falta el visto bueno de las capturas. Aprobada el 2026-11-11, «acepto todo lo recomendado»
+**Estado**: Publicada (2026-11-11, PR backend #72 y front #56). Aprobada el 2026-11-11, «acepto todo lo recomendado»
 
 **Repos**:
 - **agenda-front:** la portada, sus piezas, las fuentes y las páginas por especialidad (respuesta 1).

@@ -13,6 +13,7 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { createServer as createHttpServer, type ServerResponse } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -60,6 +61,44 @@ if (databaseUrl) {
   databaseUrl = `postgresql://postgres@127.0.0.1:${port}/agenda_test`;
 }
 
+/**
+ * Un Sentry de prueba (spec 044): guarda los sobres que envía la API. Las pruebas los leen con GET
+ * /recibidos, los borran con DELETE /recibidos y con POST /modo («colgado» o «normal») hacen que deje de
+ * responder, para comprobar que la API no lo espera.
+ */
+const sentryInbox: { auth: string; body: string }[] = [];
+let sentryHangs = false;
+const hanging = new Set<ServerResponse>();
+const fakeSentry = createHttpServer((req, res) => {
+  let body = "";
+  req.on("data", (chunk) => (body += String(chunk)));
+  req.on("end", () => {
+    if (req.method === "POST" && req.url?.endsWith("/envelope/")) {
+      sentryInbox.push({ auth: String(req.headers["x-sentry-auth"] ?? ""), body });
+      if (sentryHangs) {
+        hanging.add(res);
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" }).end("{}");
+    } else if (req.url === "/recibidos" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(sentryInbox));
+    } else if (req.url === "/recibidos" && req.method === "DELETE") {
+      sentryInbox.length = 0;
+      res.writeHead(204).end();
+    } else if (req.url === "/modo" && req.method === "POST") {
+      sentryHangs = body.trim() === "colgado";
+      if (!sentryHangs) for (const waiting of hanging) waiting.writeHead(200).end("{}");
+      if (!sentryHangs) hanging.clear();
+      res.writeHead(204).end();
+    } else {
+      res.writeHead(404).end();
+    }
+  });
+});
+const sentryPort = await freePort();
+await new Promise<void>((resolve) => fakeSentry.listen(sentryPort, "127.0.0.1", resolve));
+fakeSentry.unref();
+
 const apiPort = await freePort();
 // Avisos en el celular (spec 013): un par de claves VAPID sólo para estas pruebas.
 const vapid = generateVapidKeys();
@@ -82,6 +121,11 @@ const env: NodeJS.ProcessEnv = {
   TEST_API_URL: `http://127.0.0.1:${apiPort}/api`,
   VAPID_PUBLIC_KEY: vapid.publicKey,
   VAPID_PRIVATE_KEY: vapid.privateKey,
+  // Avisos de errores (spec 044): al Sentry de prueba de arriba.
+  SENTRY_DSN: `http://prueba@127.0.0.1:${sentryPort}/1`,
+  TEST_SENTRY_URL: `http://127.0.0.1:${sentryPort}`,
+  // La versión que llevan los avisos (en Vercel, el commit publicado).
+  VERCEL_GIT_COMMIT_SHA: "commit-de-prueba",
 };
 
 let api: ChildProcess | null = null;
@@ -113,6 +157,8 @@ async function stopApi(): Promise<void> {
 
 function cleanup(): void {
   api?.kill("SIGKILL");
+  for (const waiting of hanging) waiting.destroy();
+  fakeSentry.close();
   rmSync(env.LOCAL_STORAGE_DIR!, { recursive: true, force: true });
   if (tempCluster && pgBin) {
     try {

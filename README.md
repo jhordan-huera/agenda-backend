@@ -156,7 +156,7 @@ src/
                     plantillas de email, planes y permisos
 scripts/            cron.ts (cliente del cron de GitHub + ntfy), test.ts (npm test), dev-local.ts, sync-shared.ts
 tests/              Pruebas de integración (*.test.mjs / *.test.ts)
-.github/workflows/  cron.yml: tareas periódicas cada 10 min en producción; backup.yml: copia semanal;
+.github/workflows/  cron.yml: tareas periódicas cada 10 min en producción; backup.yml: copia diaria;
                     deploy-lambda.yml: publicación en Lambda. Acciones fijadas por SHA
 .github/dependabot.yml  Actualizaciones semanales de las acciones y de npm (pull requests a dev)
 ```
@@ -610,7 +610,7 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
   tipo, asunto, fecha y estado), que sirve para no repetir recordatorios, el cupo de Gmail, la
   analítica y el historial del negocio. Antes del 2026-11-10 era a los 30 días.
 - **Conexiones**: en Vercel, 3 por instancia por defecto (`DATABASE_POOL_MAX`); en local, 10.
-- **Aviso de espacio**: la copia de seguridad semanal informa el tamaño de la base y avisa por ntfy
+- **Aviso de espacio**: la copia de seguridad diaria informa el tamaño de la base y avisa por ntfy
   (prioridad alta) si pasa de 350 MB (`DATABASE_WARN_MB`) de los 500 MB del plan gratis de Supabase.
 - El hash de referencia del login es fijo: no se calcula bcrypt en cada arranque del servidor.
 
@@ -1182,10 +1182,37 @@ No hay cobro automático: el sistema lleva la cuenta y el dueño aplica el descu
 - **Publicación:** la migración 046 va antes del backend, como paso aparte (`npm run db:migrate`).
   Después, el PR del backend y luego el del front. Sin variables nuevas.
 
+## Avisos de errores (Sentry, spec 044)
+
+- **Qué se avisa:** los errores inesperados (500) y la base sin responder (503), desde `errorHandler`
+  (`src/http/errors.ts`). Los errores previstos (`AppError`) no.
+- **Sin librería** (`src/services/error-reports.ts`): el aviso se arma campo por campo y se envía como un sobre
+  de Sentry con `fetch`. Así no se alarga el arranque en frío.
+- **Qué lleva:**
+  - el tipo de error y el mensaje limpio (en los de la base, sólo el código, la restricción y la tabla);
+  - la pila;
+  - la versión (`VERCEL_GIT_COMMIT_SHA`, o `release.txt` en Lambda);
+  - la ruta tal como está en el código;
+  - el estado, el tipo de usuario y el negocio por su identificador interno.
+- **Qué no lleva:** el cuerpo, la consulta, las cabeceras, las cookies, la IP ni el usuario.
+- **Límites:** el mismo error en la misma ruta, una vez por minuto; 30 por hora en cada instancia; tras un 429
+  de Sentry, lo que pida.
+- **Cuándo envía:** sólo con `SENTRY_DSN`, y sólo en la nube (Vercel o Lambda) o a un Sentry de prueba de este
+  equipo. `npm test` arranca uno (`scripts/test.ts`) y lo usa `tests/error-reports.test.ts`.
+- **Si Sentry falla,** la respuesta no lo espera y no cambia. En Vercel, `waitUntil` mantiene la función
+  viva hasta enviar; en Lambda, el gancho de `res.end` (`flushErrorReports`).
+- **Para activarlo** (una vez):
+  1. Crea la cuenta en sentry.io (plan Developer, datos en United States).
+  2. Crea el proyecto `agenda-api` (Express), con «Alert me on every new issue».
+  3. En Settings → Security & Privacy, enciende «Prevent Storing of IP Addresses» y deja encendidos los
+     limpiadores de datos.
+  4. Pon su DSN (Settings → Client Keys) en `SENTRY_DSN` de Vercel y de Lambda.
+- **La web** tiene su propio proyecto (`agenda-web`): ver el README del front.
+
 ## Copias de seguridad
 
-El plan gratis de Supabase no hace copias. `.github/workflows/backup.yml` ejecuta cada viernes
-`scripts/backup.ts`. La lanza cron-job.org a las 03:00 de Ecuador (`POST /repos/<dueño>/agenda-backend/actions/workflows/backup.yml/dispatches`
+El plan gratis de Supabase no hace copias. `.github/workflows/backup.yml` ejecuta cada día
+(desde el 2026-11-11; antes, los viernes) `scripts/backup.ts`. La lanza cron-job.org a las 03:00 de Ecuador (`POST /repos/<dueño>/agenda-backend/actions/workflows/backup.yml/dispatches`
 con `{"ref":"main"}` y el mismo token que el cron); el horario propio de GitHub (03:17) queda de
 respaldo y no repite la copia si ya hay una correcta de las últimas 20 horas. Una copia en cualquier
 momento: **Actions → Copia de seguridad → Run workflow**.
@@ -1198,7 +1225,7 @@ momento: **Actions → Copia de seguridad → Run workflow**.
 3. La comprime y la **cifra** (AES-256-GCM, clave derivada de `BACKUP_PASSPHRASE` con scrypt):
    sin la clave nadie puede abrirla, tampoco Google.
 4. La envía como adjunto a `BACKUP_EMAIL` por Gmail y avisa por ntfy (sin sonido si salió bien,
-   urgente si falló). Opcional: `BACKUP_HEALTHCHECK_URL` (healthchecks.io avisa si una semana no llega; periodo 7 días).
+   urgente si falló). Opcional: `BACKUP_HEALTHCHECK_URL` (healthchecks.io avisa si un día no llega; periodo 1 día, con unas 6 horas de margen).
 5. **La anota en `backup_runs`** (migración 034), buena o fallida, con el tamaño del archivo cifrado o
    el motivo limpio (sin la URL de la base). El inicio del super admin muestra la última. Si no se
    puede anotar, la copia sigue igual. Las anotaciones de más de un año se borran.
@@ -1381,6 +1408,7 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    | `NTFY_TOPIC` | Opcional: el del cron, para que la API avise al llegar al cupo de Gmail o a un tope de emails |
    | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Avisos en el celular (`npm run push:keys`, ver "Avisos en el celular"). Sin ellas la API arranca igual, sin avisos (`/api/health` dice `"push": false`). Las mismas en Lambda y en los secretos de GitHub |
    | `VAPID_SUBJECT` | Opcional: el contacto para los servicios de avisos (`mailto:` o `https:`); por defecto `APP_URL` si es https o el email de `GMAIL_USER` |
+   | `SENTRY_DSN` | Opcional: el DSN del proyecto `agenda-api` de Sentry, para los avisos de errores (ver "Avisos de errores"). La misma en Lambda |
 
 3. **Proyecto del frontend** (agenda-front): variables `API_URL` (URL de este proyecto, p. ej.
    `https://agenda-backend.vercel.app`) y `PROXY_SECRET`.

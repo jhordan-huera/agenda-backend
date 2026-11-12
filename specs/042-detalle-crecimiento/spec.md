@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/042-detalle-crecimiento` (rama de trabajo: `dev`) · **Creada**: 2026-11-11
 
-**Estado**: Implementada (2026-11-11). Aprobada el 2026-11-11, «acepto con lo recomendado»
+**Estado**: Publicada (2026-11-11, PR backend #72 y front #56). Aprobada el 2026-11-11, «acepto con lo recomendado»
 
 **Repos**:
 - **agenda-backend:** el desglose por negocio de cada tarjeta y sus pruebas.

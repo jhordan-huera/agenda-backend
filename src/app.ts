@@ -14,6 +14,7 @@ import { fileRoutes } from "./routes/file-routes.ts";
 import { adminRoutes, publicRoutes } from "./routes/platform-routes.ts";
 import { pushRoutes } from "./routes/push-routes.ts";
 import { flushAlerts } from "./services/alerts.ts";
+import { flushErrorReports } from "./services/error-reports.ts";
 import { flushEmailDelivery } from "./services/mailer.ts";
 import { flushPushDelivery } from "./services/push-delivery.ts";
 
@@ -73,7 +74,7 @@ if (config.onLambda) {
   app.use((_req, res, next) => {
     const end = res.end.bind(res) as (...args: unknown[]) => Response;
     res.end = ((...args: unknown[]) => {
-      void Promise.all([flushEmailDelivery(), flushAlerts(), flushPushDelivery()]).finally(() => end(...args));
+      void Promise.all([flushEmailDelivery(), flushAlerts(), flushPushDelivery(), flushErrorReports()]).finally(() => end(...args));
       return res;
     }) as Response["end"];
     next();

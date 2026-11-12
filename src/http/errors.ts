@@ -1,4 +1,5 @@
 import type { ErrorRequestHandler, RequestHandler } from "express";
+import { reportError } from "../services/error-reports.ts";
 
 export type AppErrorCode =
   | "not_found"
@@ -121,10 +122,15 @@ export const notFoundHandler: RequestHandler = (_req, _res, next) => {
   next(new AppError("not_found", "Ruta no encontrada."));
 };
 
-export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
+/**
+ * Responde cada error con su código y su mensaje. Los inesperados (500) y la base sin responder (503) se
+ * avisan además a Sentry (spec 044); los previstos (AppError) no.
+ */
+export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
   const appError = error instanceof AppError ? error : (fromBodyParserError(error) ?? fromDatabaseError(error));
   if (!appError && isDatabaseUnavailable(error)) {
     console.error("No hay conexión con la base de datos:", (error as Error).message);
+    reportError(error, req, 503);
     res.status(503).json({
       error: { code: "unavailable", message: "El servicio no está disponible en este momento. Inténtalo en unos minutos." },
     });
@@ -132,6 +138,7 @@ export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
   }
   if (!appError) {
     console.error("Error inesperado:", errorForLog(error));
+    reportError(error, req, 500);
     res.status(500).json({ error: { code: "server", message: "Ocurrió un error inesperado. Inténtalo de nuevo." } });
     return;
   }

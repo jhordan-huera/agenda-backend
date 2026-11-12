@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada (2026-11-11), falta que el dueño del producto apruebe las capturas · **Fecha**: 2026-11-11
+**Estado**: Publicada (2026-11-11, PR backend #72 y front #56) · **Fecha**: 2026-11-11
 
 **Repos**: agenda-front (y la spec y la constitución en agenda-backend) · **Migración**: No
 
@@ -54,7 +54,7 @@ por especialidad pasaron al mismo estilo con sus mismos textos.
 | CE-001 – Recorrido con capturas | Cumple | 61 comprobaciones, todas bien ([capturas](./capturas/)) |
 | CE-002 – Las comprobaciones del front | Cumple | Build, lint, `check:contrast`, `check:specialties`, `check:data-export`, `check:board` y `check:landing` (nueva) |
 | CE-003 – El peso en el celular | Cumple | Ver RF-009 |
-| CE-004 – El visto bueno del dueño del producto | Pendiente | Las capturas se le pasan antes de abrir el PR |
+| CE-004 – El visto bueno del dueño del producto | Cumple | Con las capturas en el PR del backend #72, fusionó el del front #56 el 2026-11-11 |
 
 ## Cambios respecto al plan
 
@@ -69,7 +69,6 @@ por especialidad pasaron al mismo estilo con sus mismos textos.
 
 ## Pendientes y riesgos
 
-- **Que el dueño del producto apruebe las capturas** antes de publicar.
 - **Al traer estos cambios al equipo del dueño del producto,** hay que correr `npm install` en el front:
   cambian las fuentes.
 - **La vista previa de WhatsApp** de las páginas por especialidad no cambia: el título y la descripción son los
