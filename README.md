@@ -1182,6 +1182,33 @@ No hay cobro automático: el sistema lleva la cuenta y el dueño aplica el descu
 - **Publicación:** la migración 046 va antes del backend, como paso aparte (`npm run db:migrate`).
   Después, el PR del backend y luego el del front. Sin variables nuevas.
 
+## Avisos de errores (Sentry, spec 044)
+
+- **Qué se avisa:** los errores inesperados (500) y la base sin responder (503), desde `errorHandler`
+  (`src/http/errors.ts`). Los errores previstos (`AppError`) no.
+- **Sin librería** (`src/services/error-reports.ts`): el aviso se arma campo por campo y se envía como un sobre
+  de Sentry con `fetch`. Así no se alarga el arranque en frío.
+- **Qué lleva:**
+  - el tipo de error y el mensaje limpio (en los de la base, sólo el código, la restricción y la tabla);
+  - la pila;
+  - la versión (`VERCEL_GIT_COMMIT_SHA`, o `release.txt` en Lambda);
+  - la ruta tal como está en el código;
+  - el estado, el tipo de usuario y el negocio por su identificador interno.
+- **Qué no lleva:** el cuerpo, la consulta, las cabeceras, las cookies, la IP ni el usuario.
+- **Límites:** el mismo error en la misma ruta, una vez por minuto; 30 por hora en cada instancia; tras un 429
+  de Sentry, lo que pida.
+- **Cuándo envía:** sólo con `SENTRY_DSN`, y sólo en la nube (Vercel o Lambda) o a un Sentry de prueba de este
+  equipo. `npm test` arranca uno (`scripts/test.ts`) y lo usa `tests/error-reports.test.ts`.
+- **Si Sentry falla,** la respuesta no lo espera y no cambia. En Vercel, `waitUntil` mantiene la función
+  viva hasta enviar; en Lambda, el gancho de `res.end` (`flushErrorReports`).
+- **Para activarlo** (una vez):
+  1. Crea la cuenta en sentry.io (plan Developer, datos en United States).
+  2. Crea el proyecto `agenda-api` (Express), con «Alert me on every new issue».
+  3. En Settings → Security & Privacy, enciende «Prevent Storing of IP Addresses» y deja encendidos los
+     limpiadores de datos.
+  4. Pon su DSN (Settings → Client Keys) en `SENTRY_DSN` de Vercel y de Lambda.
+- **La web** tiene su propio proyecto (`agenda-web`): ver el README del front.
+
 ## Copias de seguridad
 
 El plan gratis de Supabase no hace copias. `.github/workflows/backup.yml` ejecuta cada día
@@ -1381,6 +1408,7 @@ API con su `middleware.ts`, así el navegador sólo ve el dominio del frontend (
    | `NTFY_TOPIC` | Opcional: el del cron, para que la API avise al llegar al cupo de Gmail o a un tope de emails |
    | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Avisos en el celular (`npm run push:keys`, ver "Avisos en el celular"). Sin ellas la API arranca igual, sin avisos (`/api/health` dice `"push": false`). Las mismas en Lambda y en los secretos de GitHub |
    | `VAPID_SUBJECT` | Opcional: el contacto para los servicios de avisos (`mailto:` o `https:`); por defecto `APP_URL` si es https o el email de `GMAIL_USER` |
+   | `SENTRY_DSN` | Opcional: el DSN del proyecto `agenda-api` de Sentry, para los avisos de errores (ver "Avisos de errores"). La misma en Lambda |
 
 3. **Proyecto del frontend** (agenda-front): variables `API_URL` (URL de este proyecto, p. ej.
    `https://agenda-backend.vercel.app`) y `PROXY_SECRET`.

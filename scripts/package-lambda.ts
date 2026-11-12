@@ -5,7 +5,7 @@
  * sirve para subirlo a mano en la consola de AWS.
  */
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +18,8 @@ try {
     cpSync(join(ROOT, entry), join(work, entry), { recursive: true });
   }
   chmodSync(join(work, "run.sh"), 0o755);
+  // La versión publicada (el commit), para los avisos de errores (spec 044): la lee src/config.ts.
+  if (process.env.GITHUB_SHA) writeFileSync(join(work, "release.txt"), process.env.GITHUB_SHA);
   console.info("Instalando las dependencias de producción…");
   execFileSync("npm", ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: work, stdio: "inherit" });
   mkdirSync(join(ROOT, "dist"), { recursive: true });

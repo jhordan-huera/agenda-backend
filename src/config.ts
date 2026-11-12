@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod";
 import { vapidKeysProblem } from "./services/web-push.ts";
 
@@ -31,6 +33,8 @@ const envSchema = z.object({
   CALENDAR_INVITE_JOB_INTERVAL_MINUTES: z.coerce.number().int().min(0).default(10),
   // Secreto compartido con el proxy del frontend en Vercel, que reenvía la IP real del visitante.
   PROXY_SECRET: z.string().trim().min(24, "PROXY_SECRET debe tener al menos 24 caracteres").optional(),
+  // Avisos de errores a Sentry (spec 044): el DSN del proyecto de la API (Sentry → Settings → Client Keys).
+  SENTRY_DSN: z.string().trim().optional(),
   // Envío de emails con Gmail (OAuth2). Sin estas variables los emails quedan en cola sin enviarse.
   GMAIL_USER: z.string().trim().optional(),
   GMAIL_FROM_NAME: z.string().trim().default("Agenda360"),
@@ -133,6 +137,47 @@ const hosted = onVercel || onLambda;
  * real, pero las tareas de fondo (cola de emails, recordatorios) siguen a cargo del cron de GitHub.
  */
 const productionDbFromHere = !hosted && !isLocalDatabaseUrl(env.DATABASE_URL);
+
+/** Dónde envía la API sus avisos de errores (spec 044). */
+export interface SentryTarget {
+  /** El sobre: https://<host>/api/<proyecto>/envelope/ */
+  endpoint: string;
+  /** La clave pública del DSN (la cabecera X-Sentry-Auth). */
+  publicKey: string;
+  /** El DSN entero, que va en la cabecera del sobre. */
+  dsn: string;
+}
+
+/**
+ * El DSN de Sentry (https://<clave>@<host>/<proyecto>). Se envía sólo en la nube, o a un Sentry de prueba de
+ * este equipo (el de `npm test`): un DSN real copiado a un .env local no envía nada. Mal escrito, avisa sin
+ * mostrar el valor y queda apagado.
+ */
+function sentryTarget(dsn: string | undefined): SentryTarget | null {
+  if (!dsn) return null;
+  try {
+    const url = new URL(dsn);
+    const project = url.pathname.split("/").filter(Boolean).pop();
+    if (!url.username || !project || !/^https?:$/.test(url.protocol)) throw new Error("incompleto");
+    if (!hosted && !LOCAL_HOSTS.has(url.hostname)) return null;
+    const prefix = url.pathname.slice(0, url.pathname.lastIndexOf("/"));
+    return { endpoint: `${url.protocol}//${url.host}${prefix}/api/${project}/envelope/`, publicKey: url.username, dsn };
+  } catch {
+    console.warn("SENTRY_DSN no es un DSN válido: los avisos de errores quedan apagados.");
+    return null;
+  }
+}
+
+/**
+ * La versión publicada, para los avisos de errores: el commit. Vercel lo da en VERCEL_GIT_COMMIT_SHA; el
+ * paquete de Lambda lo lleva en release.txt (scripts/package-lambda.ts). En local, null.
+ */
+function releaseVersion(): string | null {
+  if (process.env.VERCEL_GIT_COMMIT_SHA) return process.env.VERCEL_GIT_COMMIT_SHA;
+  const file = join(import.meta.dirname, "..", "release.txt");
+  if (!onLambda || !existsSync(file)) return null;
+  return readFileSync(file, "utf8").trim() || null;
+}
 
 /**
  * En la nube la API no arranca sin lo que la protege (spec 009). Sin estas variables funcionaría,
@@ -266,6 +311,10 @@ export const config = {
    * pruebas): sólo con una base local, nunca en la nube ni con la base de producción (R4).
    */
   pushAllowsLocalEndpoints: !hosted && !productionDbFromHere,
+  /** Avisos de errores a Sentry (spec 044). null: no se envían (en local, en las pruebas sin su Sentry de prueba). */
+  sentry: sentryTarget(env.SENTRY_DSN),
+  /** El commit publicado (VERCEL_GIT_COMMIT_SHA o release.txt en Lambda); null en local. */
+  release: releaseVersion(),
   /** Avisos por ntfy desde la API (null: sólo en el registro). */
   ntfy: env.NTFY_TOPIC ? { topic: env.NTFY_TOPIC, server: env.NTFY_SERVER.replace(/\/+$/, "") } : null,
   /**

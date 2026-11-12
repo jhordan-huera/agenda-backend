@@ -29,6 +29,12 @@ Agenda360 guarda datos de salud (historia clínica, citas, contacto de pacientes
   (2026-10-15).
 - La analítica (Vercel Analytics / Speed Insights) recibe rutas sin identificadores ni tokens y sin
   parámetros.
+- Los avisos de errores a Sentry (spec 044, 2026-11-11) llevan sólo el error técnico (tipo, mensaje limpio y
+  pila), la ruta tal como está en el código o la página limpia (sin identificadores, tokens, parámetros ni el
+  nombre del negocio), la versión, el tipo de usuario y, en el panel, el negocio por su identificador
+  interno. Nunca nombres, contactos, cédulas, notas, historia clínica, el contenido de formularios,
+  peticiones o respuestas, cookies, cabeceras ni la IP: la API arma el aviso campo por campo y la web lo
+  limpia antes de enviarlo. Sentry no guarda las IP.
 - Las páginas públicas (reservas, pago y «Tu cita») no exponen datos internos del negocio ni de otros pacientes.
 - El mapa del local en la página de reservas es el propio (OpenFreeMap) si el negocio marcó su punto. Si sólo
   escribió la dirección, es un mapa de Google con esa dirección (2026-11-11). Los dos se cargan cuando el paciente
@@ -282,6 +288,9 @@ Tipos, validaciones, constantes y plantillas de email se editan sólo en agenda-
 - Vercel Hobby tiene un tope de CPU: lo que pueda esperar (recordatorios, reintentos, limpieza,
   avisos por ntfy) lo hace el cron de GitHub Actions, no la API.
 - Se cuida el arranque en frío (p. ej. importar `date-fns/format`, no el paquete entero).
+- Los avisos de errores (spec 044): la API los envía a Sentry sin librería (no alarga el arranque) y sólo
+  cuando hay un error; la web descarga Sentry sólo con el primer error. El cron y la copia siguen avisando
+  por ntfy y healthchecks.io.
 - No se añaden servicios externos ni de pago sin aprobación; si se añade uno, se permite en la CSP
   de `vercel.json` del front.
 - Se prefiere lo que ya existe en el proyecto antes que una dependencia nueva.
@@ -317,6 +326,9 @@ Tipos, validaciones, constantes y plantillas de email se editan sólo en agenda-
   `VAPID_PRIVATE_KEY`) en Vercel, Lambda y los secretos de GitHub. Sin ellas la API arranca igual y
   no hay avisos. Sólo se envían a los servicios de avisos de los navegadores (Google, Apple, Mozilla
   y Microsoft).
+- Avisos de errores a Sentry (spec 044): `SENTRY_DSN` en el backend (Vercel y Lambda); `VITE_SENTRY_DSN`,
+  `SENTRY_AUTH_TOKEN`, `SENTRY_ORG` y `SENTRY_PROJECT` en el front (Vercel). Los mapas de código se suben a
+  Sentry al compilar y nunca se publican. Sin esas variables no se envía nada.
 - Seguridad vigente: bloqueo de login por intentos (contado antes de comprobar, exacto también con
   intentos simultáneos), CAPTCHA (Turnstile) en reservas y registro, registros de auditoría no
   editables, cabeceras y CSP en `vercel.json`, la IP del proxy firmada con caducidad y el secreto
@@ -367,4 +379,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.42.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-11
+**Versión**: 1.43.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-11
