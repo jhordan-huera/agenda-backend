@@ -110,7 +110,8 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   modifican (2026-10-28).
 - Cada email al paciente sobre su cita, también los recordatorios, sale con copia al profesional
   (los recordatorios, desde el 2026-10-13), salvo los recordatorios del comprobante de pago (spec 039) y los
-  emails de la lista de espera (spec 047), que no son de una cita.
+  emails de la lista de espera (spec 047) y la encuesta después de la cita (spec 048), que no son avisos de
+  una cita.
   La copia puede esperar en la cola si un día no hay cupo de Gmail, pero nunca se descarta (2026-10-15).
 - «Pedir el comprobante de pago» (spec 039, 2026-11-09) es un interruptor por negocio, apagado al
   principio, que sólo cambia el super admin desde la ficha del negocio en /admin; el negocio no lo cambia
@@ -147,6 +148,17 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   campana avisa cuando alguien se anota y cuando se libera una hora con gente esperando, sin guardar nombres. Quien
   reserva en el negocio sale de sus esperas; las cerradas se borran a los 30 días y entran en la descarga de datos.
   El rol Profesional ve y maneja sólo la lista de su agenda.
+- La encuesta después de la cita (spec 048, 2026-11-12) la enciende sólo el propietario, en Configuración →
+  Notificaciones (`notificationSettings.surveys`, apagada al principio). Con ella, al día siguiente de una cita
+  Atendida, desde las 10:00 de la hora del negocio y hasta 3 días después, el paciente principal con email recibe
+  «¿Cómo te fue?» con 5 estrellas, si no pidió dejar de recibirlas («No quiero recibir estas encuestas», por negocio)
+  y no recibió otra del negocio en los últimos 90 días. Responde una vez, sin iniciar sesión, en /encuesta/:token (14
+  días). El email no lleva copia al profesional (no es un aviso de la cita) y el que esperó 2 días en la cola se
+  descarta. Las opiniones son privadas: nunca salen en la portada, la página de reservas ni en ningún lugar público;
+  las ve quien ve Reportes (el propietario, los administradores y el rol Profesional, sólo su agenda), en Reportes y
+  en la ficha del paciente, con su nombre. Con 1 o 2 estrellas, la campana avisa al propietario y a quien tiene esa
+  agenda, sin el comentario; la actividad tampoco lo guarda. El informe mensual suma el promedio y cuántas
+  respondieron, y la descarga de datos trae encuestas.xlsx. Se borran con el paciente.
 - Una cita puede tener hasta 3 pacientes (sesiones de pareja), sólo en los negocios que el super
   admin habilite con su interruptor; el negocio no lo cambia. Cada paciente recibe sus avisos, la
   copia al profesional sale una vez y la hora se ocupa una sola vez (2026-10-13).
@@ -406,4 +418,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.46.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-12
+**Versión**: 1.47.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-12

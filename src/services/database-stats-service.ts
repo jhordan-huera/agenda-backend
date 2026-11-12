@@ -123,6 +123,7 @@ export const TABLE_INFO: Record<string, { label: string; retention: string }> = 
   push_messages: { label: "Avisos al celular", retention: "7 días" },
   panel_notices: { label: "Avisos de la campana", retention: "30 días" },
   waitlist_entries: { label: "Lista de espera", retention: "30 días después de salir de la lista" },
+  surveys: { label: "Encuestas después de la cita", retention: "Nunca (se borran con el paciente)" },
   waitlist_freed_slots: { label: "Horas liberadas para la lista de espera", retention: "2 días después de ofrecerse" },
   panel_notice_reads: { label: "Avisos de la campana leídos", retention: "30 días, con su aviso" },
   panel_notice_state: { label: "«Marcar todo como leído» de cada persona", retention: "Nunca (una fila por persona)" },

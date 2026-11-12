@@ -105,6 +105,8 @@ export const notificationSettingsSchema = z.object({
   followUps: z.boolean().default(true),
   // Informe mensual al propietario (spec 040): encendido también en los negocios guardados antes.
   monthlyReport: z.boolean().default(true),
+  // Encuesta después de la cita (spec 048): apagada en los negocios guardados antes.
+  surveys: z.boolean().default(false),
 });
 
 /** Datos del negocio pedidos en el onboarding (pasos 1–3). */

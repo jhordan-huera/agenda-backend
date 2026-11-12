@@ -63,6 +63,8 @@ export const EMAIL_PRIORITY: Record<EmailType, EmailPriority> = {
   // Lista de espera (spec 047): al paciente. El aviso de la hora libre se descarta si no sale en 3 horas.
   waitlist_joined: "patient",
   waitlist_offer: "patient",
+  // Encuesta después de la cita (spec 048): al paciente; se descarta si espera 2 días en la cola.
+  survey_request: "patient",
   appointment_copy: "business",
   booking_received: "business",
   professional_new_appointment: "business",
@@ -112,6 +114,7 @@ export const DISCARD_REASONS = {
   demoAddress: "Dirección de demostración: no se envía.",
   supersededInvite: "Invitación reemplazada por una versión más nueva.",
   staleWaitlistOffer: "Aviso de la lista de espera descartado: no salió en 3 horas y la hora ya no sirve.",
+  staleSurvey: "Encuesta descartada: esperó 2 días en la cola y ya pasaron más de 3 días desde la cita.",
 } as const;
 
 /**

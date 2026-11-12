@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/048-encuesta-despues-de-la-cita` (rama de trabajo: `dev`) · **Creada**: 2026-11-12
 
-**Estado**: Aprobada el 2026-11-12, «apruebo con las recomendaciones»
+**Estado**: Implementada (2026-11-12). Aprobada el 2026-11-12, «apruebo con las recomendaciones»
 
 **Repos**:
 - **agenda-backend:** las encuestas, su envío diario, el email, la respuesta, la campana, Reportes y el informe

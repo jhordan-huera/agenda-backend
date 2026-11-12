@@ -1,6 +1,6 @@
 import { config } from "../config.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
-import { queueAllReminders, queueCalendarInvites, queuePaymentReminders, queueWaitlistOffers } from "./scheduled-tasks.ts";
+import { queueAllReminders, queueCalendarInvites, queuePaymentReminders, queueSurveyRequests, queueWaitlistOffers } from "./scheduled-tasks.ts";
 
 /**
  * Repite `work` cada `minutes` (0 = nunca), la primera vez a los 10 s; si una vuelta tarda más, la
@@ -51,6 +51,9 @@ export function startReminderJob(): () => void {
     // La lista de espera (spec 047), como en el cron de GitHub.
     const waitlist = await queueWaitlistOffers();
     if (waitlist.queued > 0) console.info(`[lista de espera] ${waitlist.queued} aviso(s) en cola`);
+    // La encuesta después de la cita (spec 048).
+    const surveys = await queueSurveyRequests();
+    if (surveys.queued > 0) console.info(`[encuestas] ${surveys.queued} encuesta(s) en cola`);
     await deleteExpiredSessions();
   });
   const stopCalendar = every(config.calendarInviteJobIntervalMinutes, "calendario", async () => {

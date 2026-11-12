@@ -73,6 +73,8 @@ export interface NoticeDataByKind {
    */
   waitlist_joined: { serviceName: string; professionalName: string | null; agendas: number };
   waitlist_slot: { date: ISODate; time: TimeString; timezone: string; count: number; professionalName: string | null; agendas: number };
+  /** Encuesta (spec 048): las estrellas de una respuesta de 1 o 2; nunca el comentario. */
+  survey_low: { appointment: NoticeAppointment; rating: number };
 }
 
 /** Las dos tandas de recordatorios de citas por cerrar: la de la mañana y la de las 8 de la noche. */
@@ -197,6 +199,11 @@ const BUILDERS: { [K in NoticeKind]: Builder<K> } = {
     title: `${wholeBusiness ? "Tu negocio tiene" : "Tienes"} ${fromPreviousDays(count)} sin cerrar`,
     body: closeThem(count),
     url: TO_CLOSE_URL,
+  }),
+  survey_low: ({ appointment, rating }, { name }) => ({
+    title: `${patientsOf(appointment, name)} calificó su cita con ${plural(rating, "estrella", "estrellas")}`,
+    body: `${appointment.serviceName ?? "Cita"} del ${formatShortDate(appointment.date)}${withProfessional(appointment)} · Puedes llamarle para saber qué pasó`,
+    url: appointmentUrl(appointment),
   }),
   waitlist_joined: ({ serviceName, professionalName, agendas }) => ({
     title: "Nueva persona en la lista de espera",

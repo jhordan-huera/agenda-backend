@@ -218,7 +218,7 @@ const leftovers = Object.fromEntries(
   [
     "business_users", "professionals", "subscriptions", "clients", "services", "appointments", "appointment_series", "schedules",
     "blocked_times", "notifications", "audit_logs", "plan_change_requests", "clinical_profiles", "clinical_notes",
-    "clinical_note_addenda", "clinical_attachments", "clinical_templates", "waitlist_entries", "waitlist_freed_slots",
+    "clinical_note_addenda", "clinical_attachments", "clinical_templates", "waitlist_entries", "waitlist_freed_slots", "surveys",
   ].map((table) => [table, left(table)]),
 );
 ok(left("businesses", "id") === 0 && Object.values(leftovers).every((n) => n === 0), "no queda nada del negocio", leftovers);

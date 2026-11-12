@@ -1,6 +1,6 @@
 import { waitUntil } from "@vercel/functions";
 import { config } from "../config.ts";
-import { WAITLIST_OFFER_DISCARD_HOURS } from "../shared/lib/constants/business.ts";
+import { SURVEY_QUEUE_DISCARD_HOURS, WAITLIST_OFFER_DISCARD_HOURS } from "../shared/lib/constants/business.ts";
 import { many, one, pool } from "../db/pool.ts";
 import { DEFAULT_TIMEZONE } from "../shared/lib/constants/app.ts";
 import { escapeHtml } from "../shared/lib/email/layout.ts";
@@ -399,6 +399,12 @@ async function deliver(email: QueuedEmail, send: (email: OutgoingEmail) => Promi
   // sin cupo de Gmail) ya no sirve: la hora pasó o la tomó otra persona. Se descarta, no espera más.
   if (email.type === "waitlist_offer" && Date.now() - new Date(email.createdAt).getTime() > WAITLIST_OFFER_DISCARD_HOURS * 3_600_000) {
     await discard(email.id, DISCARD_REASONS.staleWaitlistOffer);
+    report.skipped++;
+    return true;
+  }
+  // Encuesta (spec 048): la que esperó SURVEY_QUEUE_DISCARD_HOURS en la cola ya llegaría más de 3 días después de la cita.
+  if (email.type === "survey_request" && Date.now() - new Date(email.createdAt).getTime() > SURVEY_QUEUE_DISCARD_HOURS * 3_600_000) {
+    await discard(email.id, DISCARD_REASONS.staleSurvey);
     report.skipped++;
     return true;
   }

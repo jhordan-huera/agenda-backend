@@ -130,6 +130,11 @@ export interface NotificationSettings {
    * defecto; sólo lo cambia el propietario. Los negocios guardados antes no lo traen: cuenta como encendido.
    */
   monthlyReport: boolean;
+  /**
+   * Encuesta después de la cita (spec 048): al día siguiente de una cita Atendida, «¿Cómo te fue?». Apagada por
+   * defecto; sólo la cambia el propietario. Los negocios guardados antes no lo traen (= apagada).
+   */
+  surveys?: boolean;
 }
 
 /**
@@ -761,7 +766,9 @@ export type EmailType =
   /** Al paciente: «Te anotamos en la lista de espera», con el enlace para salir (spec 047). Sin copia al profesional. */
   | "waitlist_joined"
   /** Al paciente: «Se liberó una hora», con «Reservar esta hora» (spec 047). Sin copia, y se descarta a las 3 horas. */
-  | "waitlist_offer";
+  | "waitlist_offer"
+  /** Al paciente: «¿Cómo te fue en tu cita?», con las estrellas (spec 048). Sin copia, y se descarta a los 2 días en la cola. */
+  | "survey_request";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -1113,7 +1120,7 @@ export interface DataExportSummary {
   exportedAt: ISODateTime;
   clinical: DataExportClinical;
   /** Lo que trae; las historias y los archivos, 0 si no lleva lo clínico. */
-  counts: { clients: number; appointments: number; clinicalRecords: number; attachments: number; waitlist: number };
+  counts: { clients: number; appointments: number; clinicalRecords: number; attachments: number; waitlist: number; surveys: number };
 }
 
 /** Una persona de lista-de-espera.xlsx (spec 047): las abiertas y las cerradas que todavía se guardan (30 días). */
@@ -2180,6 +2187,8 @@ export type PushKind =
   /** Lista de espera (spec 047): sólo en la campana, sin push ni ntfy. */
   | "waitlist_joined"
   | "waitlist_slot"
+  /** Encuesta (spec 048): una respuesta de 1 o 2 estrellas. Sólo en la campana. */
+  | "survey_low"
   | "new_business"
   | "plan_request"
   | "account_security"
@@ -2279,4 +2288,57 @@ export interface PublicWaitlistEntry {
   phone: string;
   /** Ya no está en la lista (salió, reservó o venció). */
   closed: boolean;
+}
+
+/* ------------------------------------------------------- Encuesta después de la cita (spec 048) -- */
+
+/** Lo que ve el paciente en /encuesta/:token. `status`: abierta, ya respondida o cerrada (pasaron 14 días). */
+export interface PublicSurvey {
+  businessName: string;
+  professionalName: string;
+  serviceName: string;
+  /** La fecha de la cita. */
+  date: ISODate;
+  /** El nombre de pila del paciente, para saludarlo. */
+  firstName: string;
+  status: "open" | "answered" | "expired";
+  /** Sus estrellas, si ya respondió. */
+  rating: number | null;
+}
+
+/** Una respuesta, como la ve el equipo en Reportes y en la ficha del paciente. */
+export interface SurveyResponse {
+  id: string;
+  appointmentId: string;
+  appointmentDate: ISODate;
+  answeredAt: ISODateTime;
+  clientId: string;
+  clientName: string;
+  professionalId: string;
+  professionalName: string;
+  serviceName: string;
+  rating: number;
+  comment: string;
+}
+
+/** Las opiniones de un periodo: el promedio (null sin respuestas), cuántas, cuántas de cada estrella y las últimas. */
+export interface SurveySummary {
+  average: number | null;
+  count: number;
+  /** Cuántas respuestas de 1, 2, 3, 4 y 5 estrellas (en ese orden). */
+  byRating: [number, number, number, number, number];
+  /** Las más recientes primero, hasta 50. */
+  responses: SurveyResponse[];
+}
+
+/** Una respuesta de encuestas.xlsx (spec 048). */
+export interface DataExportSurvey {
+  id: string;
+  appointmentDate: ISODate;
+  client: string;
+  professional: string;
+  service: string;
+  rating: number;
+  comment: string;
+  answeredAt: ISODateTime;
 }

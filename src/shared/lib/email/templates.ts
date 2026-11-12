@@ -6,6 +6,7 @@ import {
   describeTimezone,
   describeWaitlistDays,
   formatUsdAmount,
+  SURVEY_RATING_LABELS,
 } from "../constants/business.ts";
 import { capitalize, formatDate, formatLongDate, formatPrice, formatShortDate, formatTimeRange, joinNames } from "../format.ts";
 import { describeHomeVisit, getDirectionsUrl, getPlaceMapsUrl, hasMapPoint } from "../maps.ts";
@@ -148,6 +149,26 @@ export interface MonthlyReportEmailData {
   reportsUrl: string;
   /** El enlace del programa de referidos del negocio (null: no tiene). */
   referralUrl: string | null;
+  /** Encuesta después de la cita (spec 048): cuántas respondieron y el promedio (null: ninguna), y el del mes anterior. */
+  surveys?: number;
+  surveyAverage?: number | null;
+  previousSurveyAverage?: number | null;
+}
+
+/**
+ * «¿Cómo te fue en tu cita?» (spec 048): con la marca del negocio, una estrella por enlace (cada una abre la página con
+ * esa estrella elegida) y «No quiero recibir estas encuestas». No es un aviso de la cita: sin copia al profesional.
+ */
+export interface SurveyEmailData {
+  clientName: string;
+  businessName: string;
+  businessAddress: string;
+  businessPhone: string;
+  professionalName: string;
+  serviceName: string;
+  date: ISODate;
+  /** /encuesta/:token: cada estrella le suma ?estrellas=N. */
+  surveyUrl: string;
 }
 
 /** «Tuviste 12 % más citas que en septiembre.», o null si el mes anterior no tuvo citas. */
@@ -1204,6 +1225,15 @@ export const emailTemplates = {
     ];
     const rows = counts.filter(([, value]) => value > 0).map(([label, value]) => ({ label, value: String(value) }));
     if (data.revenue > 0) rows.push({ label: "Ingresos estimados (citas completadas)", value: formatPrice(data.revenue, data.currency) });
+    // Las opiniones de los pacientes (spec 048), sólo si hubo respuestas: el promedio y cuántas, sin comentarios.
+    if (data.surveys && data.surveyAverage) {
+      const average = (value: number) => value.toLocaleString("es-EC", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+      const before = data.previousSurveyAverage ? ` (antes ${average(data.previousSurveyAverage)})` : "";
+      rows.push({
+        label: "Opinión de tus pacientes",
+        value: `${average(data.surveyAverage)} de 5 en ${data.surveys === 1 ? "1 respuesta" : `${data.surveys} respuestas`}${before}`,
+      });
+    }
     const comparison = monthComparison(data);
     const blocks: EmailBlock[] = [
       { kind: "text", text: `Esto es lo que ${APP_NAME} hizo por ${data.businessName} en ${month}:` },
@@ -1319,6 +1349,34 @@ export const emailTemplates = {
         ]),
         { kind: "note", text: "Si ya se tomó, en la página verás las otras horas libres y sigues en la lista." },
         { kind: "link", label: "Salir de la lista de espera", url: data.leaveUrl },
+      ],
+    });
+  },
+
+  surveyRequest: (data: SurveyEmailData): EmailContent => {
+    const stars = [5, 4, 3, 2, 1];
+    return waitlistEmail(data, {
+      subject: `¿Cómo te fue en tu cita con ${data.professionalName}?`,
+      preheader: `Tu cita de ${data.serviceName} del ${formatLongDate(data.date)}: cuéntanos con una estrella.`,
+      title: "¿Cómo te fue?",
+      greeting: `Hola ${data.clientName}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: `Gracias por tu visita a ${data.businessName}. ¿Cómo te fue en tu cita de ${data.serviceName} del ${formatLongDate(data.date)}? Toca una opción:`,
+        },
+        ...stars.map(
+          (rating): EmailBlock => ({
+            kind: "link",
+            label: `${"★".repeat(rating)}${"☆".repeat(5 - rating)}  ${SURVEY_RATING_LABELS[rating]}`,
+            url: `${data.surveyUrl}?estrellas=${rating}`,
+          }),
+        ),
+        {
+          kind: "note",
+          text: `Tu respuesta la lee ${data.businessName}, con tu nombre, y no se publica en ningún lado. Puedes dejar un comentario en la página.`,
+        },
+        { kind: "link", label: "No quiero recibir estas encuestas", url: `${data.surveyUrl}?no-recibir=1` },
       ],
     });
   },

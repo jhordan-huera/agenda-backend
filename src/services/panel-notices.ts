@@ -333,6 +333,10 @@ function toPanelNotice(row: NoticeRow, now: Date): PanelNotice | null {
       case "unclosed":
         text = describeNotice(row.kind, { appointment }, options);
         break;
+      // Encuesta (spec 048): las estrellas, nunca el comentario.
+      case "survey_low":
+        if (Number(row.data.rating) > 0) text = describeNotice("survey_low", { appointment, rating: Number(row.data.rating) }, options);
+        break;
     }
   }
   return text ? { id: row.id, kind: row.kind, ...text, createdAt: row.createdAt, read: row.read } : null;

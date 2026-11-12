@@ -354,3 +354,5 @@ await ricardo("PATCH", `${B}/appointments/${off}/status`, { status: "cancelled",
 ok(freedSlots() === 0, "con la lista apagada, nada se anota");
 
 done("de la lista de espera");
+// La tarea del cron y el envío abren su conexión a la base: sin esto, la suite espera a que se cierre sola.
+process.exit();

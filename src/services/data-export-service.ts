@@ -7,6 +7,7 @@ import type {
   ClinicalAttachment,
   ClinicalProfile,
   DataExportAppointment,
+  DataExportSurvey,
   DataExportWaitlistEntry,
   DataExportClient,
   DataExportClinical,
@@ -176,11 +177,19 @@ export const dataExportService = {
         `select count(*)::int as count from waitlist_entries w where ${waitlist.where}`,
         waitlist.values,
       ))!.count;
-      const result = { ...counts, appointments: appointmentCount, waitlist: waitlistCount };
+      // Las encuestas respondidas (spec 048), con el mismo alcance que las citas.
+      const surveyCount = (await one<{ count: number }>(
+        db,
+        `select count(*)::int as count from surveys v join appointments a on a.id = v.appointment_id
+          where ${appointments.where} and v.answered_at is not null`,
+        appointments.values,
+      ))!.count;
+      const result = { ...counts, appointments: appointmentCount, waitlist: waitlistCount, surveys: surveyCount };
       const parts = [
         countOf(result.clients, "paciente", "pacientes"),
         countOf(result.appointments, "cita", "citas"),
         ...(waitlistCount > 0 ? [countOf(waitlistCount, "persona de la lista de espera", "personas de la lista de espera")] : []),
+        ...(surveyCount > 0 ? [countOf(surveyCount, "opinión de pacientes", "opiniones de pacientes")] : []),
         ...(included ? [countOf(result.clinicalRecords, "historia clínica", "historias clínicas")] : []),
       ];
       await logAudit(db, {
@@ -242,6 +251,29 @@ export const dataExportService = {
         where ${scope.where} and ($${scope.values.length + 1}::uuid is null or a.id > $${scope.values.length + 1}::uuid)
         order by a.id
         limit ${APPOINTMENTS_PAGE + 1}`,
+      [...scope.values, cursor],
+    );
+    return pageOf(rows, APPOINTMENTS_PAGE);
+  },
+
+  /** encuestas.xlsx (spec 048), de 1000 en 1000: las respondidas, con el paciente, la agenda y el servicio. */
+  async surveys(ctx: RequestContext, businessId: string, rawCursor?: string): Promise<DataExportPage<DataExportSurvey>> {
+    const cursor = parseCursor(rawCursor);
+    const access = await authorizeExport(pool, ctx, businessId);
+    const scope = appointmentScope(access);
+    const next = scope.values.length + 1;
+    const rows = await many<DataExportSurvey>(
+      pool,
+      `select v.id, to_char(a.date, 'YYYY-MM-DD') as "appointmentDate", c.name as client, p.display_name as professional,
+              coalesce(s.name, '') as service, v.rating, v.comment, v.answered_at as "answeredAt"
+         from surveys v
+         join appointments a on a.id = v.appointment_id
+         join clients c on c.id = v.client_id
+         join professionals p on p.id = v.professional_id
+         left join services s on s.id = a.service_id
+        where ${scope.where} and v.answered_at is not null and (PLACEHOLDER::uuid is null or v.id > PLACEHOLDER::uuid)
+        order by v.id
+        limit ${APPOINTMENTS_PAGE + 1}`.replaceAll("PLACEHOLDER", `$${next}`),
       [...scope.values, cursor],
     );
     return pageOf(rows, APPOINTMENTS_PAGE);

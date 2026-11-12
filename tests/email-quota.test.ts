@@ -108,6 +108,8 @@ console.log("Cada tipo de email tiene su nivel");
       "payment_reminder",
       // La lista de espera (spec 047).
       "waitlist_joined", "waitlist_offer",
+      // La encuesta después de la cita (spec 048).
+      "survey_request",
     ],
     business: [
       "appointment_copy", "booking_received", "professional_new_appointment", "professional_daily_agenda", "payment_receipt_received", "patient_cancelled",

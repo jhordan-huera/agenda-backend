@@ -37,6 +37,9 @@ export const appointmentPageUrl = (token: string) => `${appOrigin()}/cita/${toke
 /** El enlace personal de quien espera (spec 047): ver lo que pidió y «Salir de la lista». */
 export const waitlistUrl = (token: string) => `${appOrigin()}/lista-de-espera/${token}`;
 
+/** La encuesta después de la cita (spec 048): cada estrella del email le suma ?estrellas=N. */
+export const surveyUrl = (token: string) => `${appOrigin()}/encuesta/${token}`;
+
 /**
  * «Reservar esta hora» (spec 047): la página de reservas con el servicio, el profesional, la fecha y la hora
  * elegidos, y el enlace de la espera para traer el nombre, el email y el teléfono.

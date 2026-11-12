@@ -152,6 +152,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   whatsappFollowUps: true,
   followUps: true,
   monthlyReport: true,
+  surveys: false,
 };
 
 /** Emails de seguimiento (Atendida, No asistió): sólo de citas de hoy o de los últimos 7 días (spec 008). */
@@ -232,6 +233,21 @@ export const WAITLIST_MAX_OFFERS_PER_DAY = 3;
 export const WAITLIST_TIMES_PER_OFFER = 3;
 /** El aviso de una hora libre que no salió en estas horas (p. ej. sin cupo de Gmail) se descarta: ya no sirve. */
 export const WAITLIST_OFFER_DISCARD_HOURS = 3;
+/**
+ * Encuesta después de la cita (spec 048): sale desde las 10:00 de la hora del negocio, del día siguiente a la cita
+ * y hasta 3 días después; a un paciente se le pregunta como mucho una vez cada 90 días; el enlace vale 14 días y el
+ * email que esperó 2 días en la cola (sin cupo de Gmail) se descarta. Con 1 o 2 estrellas avisa la campana.
+ */
+export const SURVEY_SEND_HOUR = 10;
+export const SURVEY_MAX_DAYS_AFTER = 3;
+export const SURVEY_DAYS_BETWEEN = 90;
+export const SURVEY_LINK_DAYS = 14;
+export const SURVEY_QUEUE_DISCARD_HOURS = 48;
+export const SURVEY_LOW_RATING = 2;
+
+/** «Muy mal» a «Muy bien»: lo que dice cada estrella, en el email y en la página. */
+export const SURVEY_RATING_LABELS: Record<number, string> = { 1: "Muy mal", 2: "Mal", 3: "Regular", 4: "Bien", 5: "Muy bien" };
+
 /** Las esperas cerradas se borran a los 30 días. */
 export const WAITLIST_KEEP_CLOSED_DAYS = 30;
 

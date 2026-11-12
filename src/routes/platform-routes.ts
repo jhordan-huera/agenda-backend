@@ -14,6 +14,7 @@ import { platformNoticeService } from "../services/panel-notices.ts";
 import { paymentService } from "../services/payment-service.ts";
 import { publicBookingService } from "../services/public-booking-service.ts";
 import { adminReferralService, publicReferralService } from "../services/referral-service.ts";
+import { surveyService } from "../services/surveys.ts";
 import { waitlistService } from "../services/waitlist-service.ts";
 
 /* -------------------------------------- /api/public (sin sesión) ------------ */
@@ -193,6 +194,27 @@ publicRoutes.post(
   "/waitlist/:token/leave",
   appointmentActionLimit,
   handle((req) => waitlistService.leave(req.params.token)),
+);
+
+// La encuesta después de la cita (spec 048): /encuesta/:token, sin sesión. El token es la autorización, como en
+// «Tu cita»; sin caché.
+publicRoutes.get(
+  "/surveys/:token",
+  appointmentPageLimit,
+  handle(async (req, res) => {
+    res.set("Cache-Control", "private, no-store");
+    return surveyService.get(req.params.token);
+  }),
+);
+publicRoutes.post(
+  "/surveys/:token",
+  appointmentActionLimit,
+  handle((req) => surveyService.answer(req.params.token, req.body)),
+);
+publicRoutes.post(
+  "/surveys/:token/opt-out",
+  appointmentActionLimit,
+  handle((req) => surveyService.optOut(req.params.token)),
 );
 
 /* --------------------------------------- /api/admin (super admin) ----------- */
