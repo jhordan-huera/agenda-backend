@@ -276,6 +276,11 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 - Front: `npm run build` y `npm run lint` deben pasar.
 - Cambios de interfaz: se revisan en un navegador real, también a 390 px de ancho (iPhone, motor de
   Safari), sin desplazamiento horizontal.
+- Además, GitHub Actions (spec 045, flujo «Pruebas») corre en cada PR a `dev` o `main` y en cada subida
+  a `dev`: en el backend, `typecheck` y `npm test`; en el front, `build`, `lint` y todas las `check:*`.
+  Sin secretos ni la base de producción; también en los PR de Dependabot, que el dueño del producto
+  sigue fusionando él. `main` exige que «Comprobar» pase (regla de GitHub). Las pruebas no dependen del
+  día ni de la hora del equipo (2026-11-12).
 
 ### V. Una sola fuente para el código compartido
 
@@ -379,4 +384,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.43.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-11
+**Versión**: 1.44.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-12

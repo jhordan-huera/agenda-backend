@@ -289,7 +289,11 @@ console.log("Seguridad del enlace (auditoría del 2026-11-10)");
 // Caduca 30 días después de la cita, como «Tu cita».
 r = await book(paid.id, slots[6], "caduca1");
 const oldLink = { token: r.body.payment.token as string, id: r.body.appointmentId as string };
-sql(`update appointments set date = '${addDaysISO(now.date, -30)}' where id = '${oldLink.id}'`);
+// A las 23:10, una hora sin citas de demo: moverla a otro día no debe chocar con una cita de ese día a la misma
+// hora (appointments_no_overlap). La caducidad cuenta sólo la fecha.
+const moveOldLink = (days: number) =>
+  sql(`update appointments set date = '${addDaysISO(now.date, days)}', start_time = '23:10', end_time = '23:40' where id = '${oldLink.id}'`);
+moveOldLink(-30);
 r = await anonymous("GET", `/public/payments/${oldLink.token}`);
 ok(r.status === 200, "una cita de hace 30 días: el enlace todavía se abre", r.status);
 const lateReceipt = (await anonymous("POST", `/public/payments/${oldLink.token}/receipts`, receiptInput)).body;
@@ -300,7 +304,7 @@ ok(
   "el comprobante de una cita que ya pasó se recibe, pero no la marca como «Confirmó que va»",
   r.body,
 );
-sql(`update appointments set date = '${addDaysISO(now.date, -31)}' where id = '${oldLink.id}'`);
+moveOldLink(-31);
 r = await anonymous("GET", `/public/payments/${oldLink.token}`);
 ok(r.status === 404, "de hace 31 días: ya no se abre (404, como un enlace que no existe)", r.status);
 r = await anonymous("POST", `/public/payments/${oldLink.token}/receipts`, receiptInput);

@@ -157,7 +157,8 @@ src/
 scripts/            cron.ts (cliente del cron de GitHub + ntfy), test.ts (npm test), dev-local.ts, sync-shared.ts
 tests/              Pruebas de integración (*.test.mjs / *.test.ts)
 .github/workflows/  cron.yml: tareas periódicas cada 10 min en producción; backup.yml: copia diaria;
-                    deploy-lambda.yml: publicación en Lambda. Acciones fijadas por SHA
+                    deploy-lambda.yml: publicación en Lambda; pruebas.yml: typecheck y npm test en cada PR a
+                    dev o main y en cada subida a dev (spec 045). Acciones fijadas por SHA
 .github/dependabot.yml  Actualizaciones semanales de las acciones y de npm (pull requests a dev)
 ```
 
@@ -1181,6 +1182,19 @@ No hay cobro automático: el sistema lleva la cuenta y el dueño aplica el descu
   negocios que ya existían (en una transacción que se deshace).
 - **Publicación:** la migración 046 va antes del backend, como paso aparte (`npm run db:migrate`).
   Después, el PR del backend y luego el del front. Sin variables nuevas.
+
+## Pruebas automáticas (spec 045)
+
+`.github/workflows/pruebas.yml` («Pruebas», trabajo «Comprobar») corre `npm run typecheck` y `npm test` en cada PR a
+`dev` o `main` y en cada subida a `dev`, con Node 24 y el PostgreSQL 16 del servidor de GitHub (`scripts/test.ts` crea
+su base desechable). No usa secretos, así que corre igual en los PR de Dependabot. El resultado sale en el PR.
+
+**La regla de `main`** (una vez, en GitHub): Settings → Rules → Rulesets → New branch ruleset →
+- nombre `main protegida` y «Active»;
+- «Include default branch»;
+- «Restrict deletions», «Block force pushes» y «Require status checks to pass» con `Comprobar`.
+
+Sin aprobaciones de otra persona y sin exigir GitGuardian.
 
 ## Avisos de errores (Sentry, spec 044)
 
