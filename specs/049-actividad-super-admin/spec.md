@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/049-actividad-super-admin` (rama de trabajo: `dev`) · **Creada**: 2026-11-13
 
-**Estado**: Aprobada el 2026-11-13, «me gusta la a, apruebo todo planes y todo no me pidas que configure nada mas de la spec esta bien asi procede»
+**Estado**: Implementada (2026-11-13). Aprobada el 2026-11-13, «me gusta la a, apruebo todo planes y todo no me pidas que configure nada mas de la spec esta bien asi procede»
 
 **Repos**:
 - **agenda-front:** la pantalla `/admin/activity` y sus piezas nuevas.
