@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/046-por-cobrar` (rama de trabajo: `dev`) · **Creada**: 2026-11-12
 
-**Estado**: Implementada (2026-11-12). Aprobada el 2026-11-12, «apruebo con las recomendaciones»
+**Estado**: Publicada (2026-11-12, PR backend #76 y front #61). Aprobada el 2026-11-12, «apruebo con las recomendaciones»
 
 **Repos**:
 - **agenda-backend:** la cuenta de lo que debe cada paciente y la acción de marcar varias citas como pagadas.
