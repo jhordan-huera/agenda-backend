@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada (2026-11-12) · **Fecha**: 2026-11-12
+**Estado**: Publicada (2026-11-12, PR backend #76 y front #61) · **Fecha**: 2026-11-12
 
 **Repos**: los dos · **Migración**: No
 
@@ -58,8 +58,7 @@ Sin migración, sin emails automáticos y sin la beta.
 
 ## Pendientes y riesgos
 
-- **La fecha de inicio** (`PENDING_PAYMENTS_SINCE`) está en 2026-11-12. Si el PR a `main` se fusiona otro día, se
-  ajusta antes.
+- **La fecha de inicio** (`PENDING_PAYMENTS_SINCE`) es el 2026-11-12, el mismo día en que se fusionaron los PR.
 - **Los negocios que nunca marcan los pagos** verán crecer «Por cobrar» desde la publicación. «Marcar todas como
   pagadas» lo limpia por paciente.
 
