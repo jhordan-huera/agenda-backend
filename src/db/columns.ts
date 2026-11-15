@@ -137,6 +137,7 @@ export const serviceColumns = columns({
   modes: "modes",
   homeVisitFee: "home_visit_fee",
   peoplePerSession: "people_per_session",
+  returnAfterDays: "return_after_days",
   isActive: "is_active",
   createdAt: "created_at",
 });

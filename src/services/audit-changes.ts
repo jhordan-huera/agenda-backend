@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import { APPOINTMENT_STATUS_CONFIG } from "../shared/lib/constants/appointment-status.ts";
-import { WEEK_DAYS, describeServiceModes, getTimezoneInfo } from "../shared/lib/constants/business.ts";
+import { WEEK_DAYS, describeReturnAfter, describeServiceModes, getTimezoneInfo } from "../shared/lib/constants/business.ts";
 import { formatCurrency, formatDuration, formatNumericDate } from "../shared/lib/format.ts";
 import type {
   AppointmentStatus,
@@ -69,6 +69,7 @@ export const SERVICE_FIELDS: ChangeField<Service>[] = [
   { key: "modes", label: "Modalidad", format: (value: ServiceMode[]) => describeServiceModes(value) },
   { key: "homeVisitFee", label: "Recargo a domicilio", format: money },
   { key: "peoplePerSession", label: "Personas por sesión" },
+  { key: "returnAfterDays", label: "Volver en", format: (value: number | null) => describeReturnAfter(value) ?? "No" },
   { key: "isActive", label: "Activo", format: yesNo },
 ];
 
@@ -186,6 +187,8 @@ const NOTIFICATION_FIELDS: ChangeField<NotificationSettings>[] = [
   { key: "monthlyReport", label: "Informe mensual", format: yesNo },
   // Spec 048: los negocios guardados antes no lo traen (= apagada).
   { key: "surveys", label: "Encuesta después de la cita", format: (value?: boolean) => yesNo(Boolean(value)) },
+  // Spec 051: los negocios guardados antes no lo traen (= apagado).
+  { key: "controlReminders", label: "Recordatorio de control", format: (value?: boolean) => yesNo(Boolean(value)) },
 ];
 
 const BUSINESS_FIELDS: ChangeField<BusinessForAudit>[] = [

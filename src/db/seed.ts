@@ -14,6 +14,7 @@ import { createSeedDatabase } from "./seed-data.ts";
  *   crea cuentas con contraseñas conocidas (admin@demo.com / demo1234).
  */
 const TABLES = [
+  "control_reminders",
   "surveys",
   "waitlist_freed_slots",
   "waitlist_entries",

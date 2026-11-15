@@ -153,6 +153,7 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
   followUps: true,
   monthlyReport: true,
   surveys: false,
+  controlReminders: false,
 };
 
 /** Emails de seguimiento (Atendida, No asistió): sólo de citas de hoy o de los últimos 7 días (spec 008). */
@@ -250,6 +251,30 @@ export const SURVEY_RATING_LABELS: Record<number, string> = { 1: "Muy mal", 2: "
 
 /** Las esperas cerradas se borran a los 30 días. */
 export const WAITLIST_KEEP_CLOSED_DAYS = 30;
+
+/**
+ * Recordatorio de control (spec 051): «Volver en» de cada servicio, en días (1 mes = 30, 1 año = 365). El email sale
+ * desde las 10:00 de la hora del negocio del día que vence y hasta 30 días después; la hoja «Controles» muestra los
+ * vencidos y los de los próximos 30 días.
+ */
+export const RETURN_AFTER_OPTIONS = [
+  { days: 7, label: "1 semana" },
+  { days: 14, label: "2 semanas" },
+  { days: 30, label: "1 mes" },
+  { days: 60, label: "2 meses" },
+  { days: 90, label: "3 meses" },
+  { days: 180, label: "6 meses" },
+  { days: 365, label: "1 año" },
+] as const;
+export const RETURN_AFTER_DAYS: readonly number[] = RETURN_AFTER_OPTIONS.map((option) => option.days);
+export const CONTROL_SEND_HOUR = 10;
+export const CONTROL_EMAIL_DAYS_LATE = 30;
+export const CONTROL_LIST_DAYS_AHEAD = 30;
+
+/** «6 meses», o null si el servicio no tiene «Volver en». */
+export function describeReturnAfter(days: number | null | undefined): string | null {
+  return RETURN_AFTER_OPTIONS.find((option) => option.days === days)?.label ?? null;
+}
 
 /**
  * Las invitaciones de calendario (spec 027) sólo salen para las citas de hoy a los próximos 14 días: las

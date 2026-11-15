@@ -602,6 +602,7 @@ function seedTenant(
     modes,
     homeVisitFee,
     peoplePerSession: 1,
+    returnAfterDays: null,
     isActive,
     createdAt: daysAgoISO(age - 1),
   }),

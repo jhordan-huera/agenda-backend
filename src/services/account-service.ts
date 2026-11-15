@@ -302,6 +302,11 @@ export const businessService = {
         if (previous?.ownerId !== actor.userId) notifications.monthlyReport = previous?.notificationSettings.monthlyReport ?? true;
         values.push(notifications);
         assignments.push(`notification_settings = $${values.length}`);
+        // Recordatorio de control (spec 051): al encenderlo, desde cuándo vale (no se escribe por lo que ya había
+        // vencido); al apagarlo, sin fecha.
+        if (notifications.controlReminders !== (previous?.notificationSettings.controlReminders === true)) {
+          assignments.push(`control_reminders_since = ${notifications.controlReminders ? "now()" : "null"}`);
+        }
       }
       if (clinical !== null) {
         values.push(clinical);

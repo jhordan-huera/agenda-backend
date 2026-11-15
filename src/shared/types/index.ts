@@ -135,6 +135,11 @@ export interface NotificationSettings {
    * defecto; sólo la cambia el propietario. Los negocios guardados antes no lo traen (= apagada).
    */
   surveys?: boolean;
+  /**
+   * Recordatorio de control (spec 051): el día que le toca volver, «Te toca tu control». Apagado por defecto. Los
+   * negocios guardados antes no lo traen (= apagado).
+   */
+  controlReminders?: boolean;
 }
 
 /**
@@ -491,6 +496,11 @@ export interface Service {
    * multiClientAppointments; en la página de reservas llega ya con el valor efectivo (1 sin él).
    */
   peoplePerSession: number;
+  /**
+   * «Volver en» (spec 051): los días después de una cita Atendida en que le toca volver al paciente (7, 14, 30, 60,
+   * 90, 180 o 365). null: No.
+   */
+  returnAfterDays: number | null;
   isActive: boolean;
   createdAt: ISODateTime;
 }
@@ -768,7 +778,9 @@ export type EmailType =
   /** Al paciente: «Se liberó una hora», con «Reservar esta hora» (spec 047). Sin copia, y se descarta a las 3 horas. */
   | "waitlist_offer"
   /** Al paciente: «¿Cómo te fue en tu cita?», con las estrellas (spec 048). Sin copia, y se descarta a los 2 días en la cola. */
-  | "survey_request";
+  | "survey_request"
+  /** Al paciente: «Te toca tu control», el día que le toca volver (spec 051). Sin copia al profesional. */
+  | "control_reminder";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -2294,6 +2306,37 @@ export type PublicWaitlistEntry =
       phone: string;
     }
   | { closed: true; businessName: string; businessSlug: string };
+
+/* ----------------------------------------------------------- Recordatorio de control (spec 051) -- */
+
+/**
+ * Un control: le toca volver al paciente a un servicio. Sale de su última cita Atendida de ese servicio (`appointmentId`)
+ * más el «Volver en» del servicio. La hoja «Controles» de la Agenda y la ficha del paciente.
+ */
+export interface ControlReminder {
+  /** La cita Atendida de la que sale: identifica el control. */
+  appointmentId: string;
+  clientId: string;
+  clientName: string;
+  clientPhone: string;
+  serviceId: string;
+  serviceName: string;
+  professionalId: string;
+  professionalName: string;
+  /** La fecha de esa cita. */
+  lastDate: ISODate;
+  /** Cuándo le toca volver. */
+  dueOn: ISODate;
+  /** Cuándo se le escribió el email (null: todavía no). */
+  emailedAt: ISODateTime | null;
+}
+
+/** Lo que ve el paciente en /recordatorio/:token, para no recibir más recordatorios de control de ese negocio. */
+export interface PublicControlReminder {
+  businessName: string;
+  /** Ya pidió no recibirlos. */
+  optedOut: boolean;
+}
 
 /* ------------------------------------------------------- Encuesta después de la cita (spec 048) -- */
 

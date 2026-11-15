@@ -12,6 +12,7 @@ import { clinicalService } from "../services/clinical-service.ts";
 import { clinicalTemplateService } from "../services/clinical-template-service.ts";
 import { clientImportService } from "../services/client-import-service.ts";
 import { requireUser } from "../services/context.ts";
+import { controlReminderService } from "../services/control-reminders.ts";
 import { dataExportService } from "../services/data-export-service.ts";
 import {
   appointmentService,
@@ -472,6 +473,15 @@ businessRoutes.post(
 businessRoutes.post(
   "/:businessId/waitlist/:entryId/close",
   handle((req) => waitlistService.close(req.ctx, req.params.businessId, req.params.entryId, req.body)),
+);
+// Recordatorio de control (spec 051): la hoja «Controles» de la Agenda (o, con ?clientId, la ficha) y «Quitar».
+businessRoutes.get(
+  "/:businessId/control-reminders",
+  handle((req) => controlReminderService.list(req.ctx, req.params.businessId, { clientId: queryParam(req, "clientId") })),
+);
+businessRoutes.post(
+  "/:businessId/control-reminders/:appointmentId/remove",
+  handle((req) => controlReminderService.remove(req.ctx, req.params.businessId, req.params.appointmentId)),
 );
 // «Por cobrar» (spec 046): el total de Inicio y «Marcar todas como pagadas» desde la ficha del paciente.
 businessRoutes.get(

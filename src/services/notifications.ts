@@ -40,6 +40,19 @@ export const waitlistUrl = (token: string) => `${appOrigin()}/lista-de-espera/${
 /** La encuesta después de la cita (spec 048): cada estrella del email le suma ?estrellas=N. */
 export const surveyUrl = (token: string) => `${appOrigin()}/encuesta/${token}`;
 
+/** Recordatorio de control (spec 051): la página para confirmar «No quiero recibir estos recordatorios». */
+export const controlReminderUrl = (token: string) => `${appOrigin()}/recordatorio/${token}`;
+
+/**
+ * «Reservar mi control» (spec 051): la página de reservas con el servicio y el profesional elegidos (la página sólo
+ * usa el profesional si atiende ese servicio y el negocio deja elegirlo).
+ */
+export const controlBookUrl = (slug: string, choice: { serviceId: string; professionalId: string }) =>
+  `${appOrigin()}/book/${encodeURIComponent(slug)}?${new URLSearchParams({
+    servicio: choice.serviceId,
+    profesional: choice.professionalId,
+  }).toString()}`;
+
 /**
  * «Reservar esta hora» (spec 047): la página de reservas con el servicio, el profesional, la fecha y la hora
  * elegidos, y el enlace de la espera para traer el nombre, el email y el teléfono.

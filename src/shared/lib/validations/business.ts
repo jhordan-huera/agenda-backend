@@ -107,6 +107,8 @@ export const notificationSettingsSchema = z.object({
   monthlyReport: z.boolean().default(true),
   // Encuesta después de la cita (spec 048): apagada en los negocios guardados antes.
   surveys: z.boolean().default(false),
+  // Recordatorio de control (spec 051): apagado en los negocios guardados antes.
+  controlReminders: z.boolean().default(false),
 });
 
 /** Datos del negocio pedidos en el onboarding (pasos 1–3). */

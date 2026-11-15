@@ -111,8 +111,8 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   modifican (2026-10-28).
 - Cada email al paciente sobre su cita, también los recordatorios, sale con copia al profesional
   (los recordatorios, desde el 2026-10-13), salvo los recordatorios del comprobante de pago (spec 039) y los
-  emails de la lista de espera (spec 047) y la encuesta después de la cita (spec 048), que no son avisos de
-  una cita.
+  emails de la lista de espera (spec 047), la encuesta después de la cita (spec 048) y el recordatorio de control
+  (spec 051), que no son avisos de una cita.
   La copia puede esperar en la cola si un día no hay cupo de Gmail, pero nunca se descarta (2026-10-15).
 - «Pedir el comprobante de pago» (spec 039, 2026-11-09) es un interruptor por negocio, apagado al
   principio, que sólo cambia el super admin desde la ficha del negocio en /admin; el negocio no lo cambia
@@ -160,6 +160,16 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   en la ficha del paciente, con su nombre. Con 1 o 2 estrellas, la campana avisa al propietario y a quien tiene esa
   agenda, sin el comentario; la actividad tampoco lo guarda. El informe mensual suma el promedio y cuántas
   respondieron, y la descarga de datos trae encuestas.xlsx. Se borran con el paciente.
+- El recordatorio de control (spec 051, 2026-11-15): cada servicio puede tener «Volver en» (1 o 2 semanas, 1, 2, 3 o
+  6 meses, o 1 año; «No» por defecto). El control sale de la última cita Atendida del paciente principal en ese
+  servicio y no se guarda: se calcula. La Agenda tiene la hoja «Controles» (los vencidos y los de los próximos 30
+  días) con el WhatsApp ya escrito, «Agendar» y «Quitar», y la ficha del paciente dice su próximo control; quien tiene
+  una cita por delante (de cualquier servicio) no tiene. El email «Te toca tu control» lo enciende el propietario en
+  Configuración → Notificaciones (`notificationSettings.controlReminders`, apagado al principio): sale desde las 10:00
+  de la hora del negocio del día que vence y hasta 30 días después, una sola vez, un email por paciente aunque le
+  toquen varios, y nunca por lo que ya había vencido al encenderlo o al poner «Volver en» en el servicio. Lleva
+  «Reservar mi control» (la página de reservas con el servicio elegido) y «No quiero recibir estos recordatorios»
+  (por negocio, se confirma en /recordatorio/:token). Sin copia al profesional. Se borran con el paciente.
 - Una cita puede tener hasta 3 pacientes (sesiones de pareja), sólo en los negocios que el super
   admin habilite con su interruptor; el negocio no lo cambia. Cada paciente recibe sus avisos, la
   copia al profesional sale una vez y la hora se ocupa una sola vez (2026-10-13).
@@ -419,4 +429,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.48.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-15
+**Versión**: 1.49.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-15

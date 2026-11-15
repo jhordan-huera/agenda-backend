@@ -1,6 +1,13 @@
 import { config } from "../config.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
-import { queueAllReminders, queueCalendarInvites, queuePaymentReminders, queueSurveyRequests, queueWaitlistOffers } from "./scheduled-tasks.ts";
+import {
+  queueAllReminders,
+  queueCalendarInvites,
+  queueControlReminders,
+  queuePaymentReminders,
+  queueSurveyRequests,
+  queueWaitlistOffers,
+} from "./scheduled-tasks.ts";
 
 /**
  * Repite `work` cada `minutes` (0 = nunca), la primera vez a los 10 s; si una vuelta tarda más, la
@@ -54,6 +61,9 @@ export function startReminderJob(): () => void {
     // La encuesta después de la cita (spec 048).
     const surveys = await queueSurveyRequests();
     if (surveys.queued > 0) console.info(`[encuestas] ${surveys.queued} encuesta(s) en cola`);
+    // El recordatorio de control (spec 051).
+    const controls = await queueControlReminders();
+    if (controls.queued > 0) console.info(`[controles] ${controls.queued} recordatorio(s) de control en cola`);
     await deleteExpiredSessions();
   });
   const stopCalendar = every(config.calendarInviteJobIntervalMinutes, "calendario", async () => {

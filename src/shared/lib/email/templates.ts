@@ -171,6 +171,26 @@ export interface SurveyEmailData {
   surveyUrl: string;
 }
 
+/** Recordatorio de control (spec 051): uno o varios servicios a los que le toca volver el mismo día. */
+export interface ControlReminderEmailData {
+  clientName: string;
+  businessName: string;
+  businessAddress: string;
+  businessPhone: string;
+  items: {
+    serviceName: string;
+    professionalName: string;
+    /** La última cita Atendida de ese servicio. */
+    lastDate: ISODate;
+    /** «6 meses»: el «Volver en» del servicio. */
+    returnAfter: string;
+    /** La página de reservas con el servicio (y el profesional) ya elegidos. */
+    bookUrl: string;
+  }[];
+  /** /recordatorio/:token: pide confirmar «No quiero recibir estos recordatorios». */
+  optOutUrl: string;
+}
+
 /** «Tuviste 12 % más citas que en septiembre.», o null si el mes anterior no tuvo citas. */
 function monthComparison(data: MonthlyReportEmailData): string | null {
   if (data.previousAppointments <= 0) return null;
@@ -1378,6 +1398,33 @@ export const emailTemplates = {
         },
         { kind: "link", label: "No quiero recibir estas encuestas", url: `${data.surveyUrl}?no-recibir=1` },
       ],
+    });
+  },
+
+  controlReminder: (data: ControlReminderEmailData): EmailContent => {
+    const [first] = data.items;
+    const several = data.items.length > 1;
+    return composeEmail({
+      subject: several ? `Te toca volver a ${data.businessName}` : `Te toca tu control de ${first.serviceName}`,
+      preheader: several
+        ? `Es momento de tus controles: ${joinNames(data.items.map((item) => item.serviceName))}.`
+        : `Hace ${first.returnAfter} fue tu cita de ${first.serviceName}: reserva tu control.`,
+      title: "Te toca tu control",
+      greeting: `Hola ${data.clientName}:`,
+      blocks: [
+        ...data.items.flatMap((item): EmailBlock[] => [
+          {
+            kind: "text",
+            text: `Hace ${item.returnAfter} fue tu cita de ${item.serviceName} con ${item.professionalName}, el ${formatLongDate(item.lastDate)}. Es momento de tu control.`,
+          },
+          { kind: "button", label: several ? `Reservar ${item.serviceName}` : "Reservar mi control", url: item.bookUrl },
+        ]),
+        { kind: "note", text: "Si ya reservaste, no hace falta que hagas nada." },
+        { kind: "link", label: "No quiero recibir estos recordatorios", url: data.optOutUrl },
+      ],
+      brand: { name: data.businessName },
+      signature: [data.businessName, data.businessAddress, data.businessPhone].filter(Boolean),
+      footer: `Recordatorio enviado con ${APP_NAME}.`,
     });
   },
 

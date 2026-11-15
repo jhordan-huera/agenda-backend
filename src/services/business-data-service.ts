@@ -443,12 +443,14 @@ export const serviceService = {
       const actor = await authorize(db, ctx, businessId, "services.manage", { lock: true });
       const data = parseInput(serviceSchema, input);
       const people = (await canSetPeoplePerSession(db, businessId)) ? (data.peoplePerSession ?? 1) : 1;
+      const returnAfter = data.returnAfterDays ?? null;
+      // «Volver en» (spec 051) y desde cuándo vale: el email nunca sale por controles que ya habían vencido antes.
       const service = (await one<Service>(
         db,
         `insert into services
            (business_id, name, description, duration_minutes, price, show_price, modes, home_visit_fee,
-            is_active, people_per_session)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            is_active, people_per_session, return_after_days, return_after_since)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, case when $11::smallint is null then null else now() end)
          returning ${serviceColumns()}`,
         [
           businessId,
@@ -461,6 +463,7 @@ export const serviceService = {
           data.homeVisitFee,
           data.isActive,
           people,
+          returnAfter,
         ],
       ))!;
       await logAudit(db, {
@@ -485,11 +488,18 @@ export const serviceService = {
         data.peoplePerSession !== undefined && (await canSetPeoplePerSession(db, businessId))
           ? data.peoplePerSession
           : before.peoplePerSession;
+      // «Volver en» (spec 051): sin el campo (un panel anterior), el que tenía. Al ponerlo o cambiarlo, vale desde ahora.
+      const returnAfter = data.returnAfterDays === undefined ? before.returnAfterDays : data.returnAfterDays;
       const service = (await one<Service>(
         db,
         `update services
             set name = $2, description = $3, duration_minutes = $4, price = $5,
-                show_price = $6, modes = $7, home_visit_fee = $8, is_active = $9, people_per_session = $10
+                show_price = $6, modes = $7, home_visit_fee = $8, is_active = $9, people_per_session = $10,
+                return_after_since = case
+                  when $11::smallint is null then null
+                  when return_after_days is not distinct from $11::smallint then return_after_since
+                  else now() end,
+                return_after_days = $11
           where id = $1
           returning ${serviceColumns()}`,
         [
@@ -503,6 +513,7 @@ export const serviceService = {
           data.homeVisitFee,
           data.isActive,
           people,
+          returnAfter,
         ],
       ))!;
       const summary =

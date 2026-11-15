@@ -9,6 +9,7 @@ import { analyticsService } from "../services/analytics-service.ts";
 import { adminBillingService } from "../services/billing-service.ts";
 import { appointmentPageService } from "../services/appointment-page-service.ts";
 import { categoryService } from "../services/category-service.ts";
+import { controlReminderService } from "../services/control-reminders.ts";
 import { databaseStatsService } from "../services/database-stats-service.ts";
 import { platformNoticeService } from "../services/panel-notices.ts";
 import { paymentService } from "../services/payment-service.ts";
@@ -215,6 +216,22 @@ publicRoutes.post(
   "/surveys/:token/opt-out",
   appointmentActionLimit,
   handle((req) => surveyService.optOut(req.params.token)),
+);
+
+// El recordatorio de control (spec 051): /recordatorio/:token, sin sesión, para «No quiero recibir estos
+// recordatorios». El token es la autorización, como en la encuesta; sin caché.
+publicRoutes.get(
+  "/control-reminders/:token",
+  appointmentPageLimit,
+  handle(async (req, res) => {
+    res.set("Cache-Control", "private, no-store");
+    return controlReminderService.get(req.params.token);
+  }),
+);
+publicRoutes.post(
+  "/control-reminders/:token/opt-out",
+  appointmentActionLimit,
+  handle((req) => controlReminderService.optOut(req.params.token)),
 );
 
 /* --------------------------------------- /api/admin (super admin) ----------- */

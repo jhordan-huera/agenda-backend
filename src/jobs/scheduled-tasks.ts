@@ -41,6 +41,7 @@ import { processEmailQueue, scrubEmails, type EmailQueueReport } from "../servic
 import { maskEmail, shortName } from "../services/masking.ts";
 import { runMonthlyReportJob } from "../services/monthly-report.ts";
 import { runDailyAgendaJob, runPaymentReminderJob, runReminderJob } from "../services/notifications.ts";
+import { runControlReminderJob } from "../services/control-reminders.ts";
 import { runSurveyJob } from "../services/surveys.ts";
 import { runWaitlistJob } from "../services/waitlist-offers.ts";
 import { WAITLIST_KEEP_CLOSED_DAYS } from "../shared/lib/constants/business.ts";
@@ -179,6 +180,22 @@ export async function queueSurveyRequests(now: Date = new Date()): Promise<Queue
 }
 
 /**
+ * El recordatorio de control (spec 051), en cada pasada: en cada negocio activo con el email encendido y en su
+ * transacción, desde las 10:00 de su hora (runControlReminderJob). `now`: el momento (las pruebas lo mueven).
+ */
+export async function queueControlReminders(now: Date = new Date()): Promise<QueuedReminders> {
+  const businesses = await many<{ id: string }>(
+    pool,
+    "select id from businesses where status = 'active' and coalesce((notification_settings ->> 'controlReminders')::boolean, false)",
+  );
+  return forEachBusiness(
+    businesses.map(({ id }) => id),
+    "controles",
+    (db, id) => runControlReminderJob(db, id, now),
+  );
+}
+
+/**
  * El informe mensual al propietario (spec 040), en cada pasada: los negocios activos con propietario y el informe
  * encendido, cada uno en su transacción. Sale del día 1 al 7 desde las 8:00 de su hora, una sola vez por mes
  * (runMonthlyReportJob). `now`: el momento (las pruebas lo mueven). `anyDay`: el envío a mano desde Actions, que
@@ -250,6 +267,8 @@ export interface ScheduledTasksReport {
   waitlistOffers?: number;
   /** Encuestas después de la cita (spec 048) puestas en cola. Sólo la cifra (el registro es público). */
   surveyRequests?: number;
+  /** Recordatorios de control (spec 051) puestos en cola. Sólo la cifra (el registro es público). */
+  controlReminders?: number;
   /** Lo que hizo esta ejecución con la cola de emails. */
   emails: EmailQueueReport;
   /** Emails enviados desde la ejecución anterior: también los que salieron al momento (reservas, avisos). */
@@ -467,6 +486,8 @@ export async function runScheduledTasks({ monthlyReportNow = false }: { monthlyR
   const waitlistOffers = await queueWaitlistOffers();
   // La encuesta después de la cita (spec 048), también antes del envío.
   const surveyRequests = await queueSurveyRequests();
+  // El recordatorio de control (spec 051), también antes del envío.
+  const controlReminders = await queueControlReminders();
   const emails = await processEmailQueue({ maxBatches: MAX_EMAIL_BATCHES, deadline: started + EMAIL_BUDGET_MS });
   await deleteExpiredSessions();
   await deleteStalePendingAttachments();
@@ -549,11 +570,13 @@ export async function runScheduledTasks({ monthlyReportNow = false }: { monthlyR
   const report: ScheduledTasksReport = {
     reminders: reminders.queued,
     reminderFailures:
-      reminders.failures + calendarInvites.failures + billing.failures + paymentReminders.failures + monthlyReports.failures + waitlistOffers.failures + surveyRequests.failures,
+      reminders.failures + calendarInvites.failures + billing.failures + paymentReminders.failures + monthlyReports.failures + waitlistOffers.failures + surveyRequests.failures +
+      controlReminders.failures,
     calendarInvites: calendarInvites.queued,
     paymentReminders: paymentReminders.queued,
     waitlistOffers: waitlistOffers.queued,
     surveyRequests: surveyRequests.queued,
+    controlReminders: controlReminders.queued,
     monthlyReports: monthlyReports.queued,
     emails,
     sentSinceLastRun: totals?.sent ?? 0,

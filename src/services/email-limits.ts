@@ -65,6 +65,8 @@ export const EMAIL_PRIORITY: Record<EmailType, EmailPriority> = {
   waitlist_offer: "patient",
   // Encuesta después de la cita (spec 048): al paciente; se descarta si espera 2 días en la cola.
   survey_request: "patient",
+  // Recordatorio de control (spec 051): al paciente; si espera en la cola, sale después (no se descarta).
+  control_reminder: "patient",
   appointment_copy: "business",
   booking_received: "business",
   professional_new_appointment: "business",
