@@ -28,10 +28,14 @@ export const requiredText = (label: string, min = 2, max = 120) =>
  * la plataforma envía a otras direcciones («Hola Ana:», «Ana reservó para ti…»), así que sólo admite
  * un nombre: sin saltos de línea, emails ni enlaces que conviertan ese email en un mensaje ajeno.
  */
-const NOT_A_NAME = [/[\r\n]/, /@/, /:\/\//, /\bwww\./i, /\b[\p{L}\d-]+\.(com|net|org|ec|io|app|co|me|info|online|site|xyz|ly|link|biz|store|shop)\b/iu];
+// El dominio va acotado a 63 caracteres (lo más largo de una parte de un dominio): con `+` sin tope, un
+// texto como «a-a-a-…» tardaba el cuadrado de su largo y bloqueaba la API (2026-11-14).
+const NOT_A_NAME = [/[\r\n]/, /@/, /:\/\//, /\bwww\./i, /\b[\p{L}\d-]{1,63}\.(com|net|org|ec|io|app|co|me|info|online|site|xyz|ly|link|biz|store|shop)\b/iu];
+const PERSON_NAME_MAX = 120;
 export const personNameField = (label: string) =>
-  requiredText(label).refine(
-    (value) => !NOT_A_NAME.some((pattern) => pattern.test(value)),
+  requiredText(label, 2, PERSON_NAME_MAX).refine(
+    // Zod sigue validando aunque el texto pase del máximo: uno demasiado largo ya es inválido y no se revisa.
+    (value) => value.length > PERSON_NAME_MAX || !NOT_A_NAME.some((pattern) => pattern.test(value)),
     `${label}: escribe sólo el nombre, sin enlaces ni emails`,
   );
 

@@ -401,10 +401,12 @@ r = await admin("GET", `/admin/businesses/${(await as("jhordan@demo.com")).sessi
 ok(r.status === 200 && r.body.lastDataExportAt === null, "y null en un negocio que nunca descargó", r.body.lastDataExportAt);
 
 console.log("El límite de peticiones");
-const visitor = agent({ ip: nextIp() });
+// Con sesión: sin ella, la API responde 401 antes de llegar al límite (2026-11-14). La recepción no descarga
+// (403), pero cada intento cuenta igual.
+const visitor = await as("elena@demo.com");
 const statuses: number[] = [];
 for (let i = 0; i < 601; i++) statuses.push((await visitor("GET", `${E}/clients`)).status);
-ok(statuses.slice(0, 600).every((s) => s === 401) && statuses[600] === 429, "la petición 601 en 15 minutos desde la misma conexión: 429", statuses.slice(595));
+ok(statuses.slice(0, 600).every((s) => s === 403) && statuses[600] === 429, "la petición 601 en 15 minutos desde la misma conexión: 429", statuses.slice(595));
 r = await visitor("POST", `${E}/attachments/${valeriaFile}`);
 ok(r.status === 429, "el límite lo comparten todas las rutas de la descarga", r.status);
 
