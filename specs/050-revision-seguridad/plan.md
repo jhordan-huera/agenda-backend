@@ -13,8 +13,8 @@
 ## Constitución
 
 - **Privacidad (principio II):** los enlaces cerrados dejan de mostrar datos; nada nuevo guarda datos de pacientes.
-- **Decisiones guardadas (principio III):** nada de esta spec cambia una decisión del dueño. La enumeración en la
-  reserva sí la cambiaría (la regla «email o teléfono» de la spec 009): queda fuera, para que decida.
+- **Decisiones guardadas (principio III):** la regla «email o teléfono» de la spec 009 pasa a «sólo el email», por
+  decisión del dueño del 2026-11-15. Constitución 1.48.0, en los dos repos. Lo demás no cambia ninguna decisión.
 - **Auditar todo:** no hay acciones nuevas que cambien datos.
 
 ## Diseño
@@ -38,6 +38,9 @@
    la web y nada la incrusta (`frame-ancestors 'none'`).
 9. **GitHub:** `sha_pinning_required` y `approval_policy: all_external_contributors` en los dos repos (todas las
    acciones ya iban por SHA, spec 045). Las 2 alertas del front, descartadas como `tolerable_risk`.
+10. **Sólo el email** (`public-booking-service.ts`): `sameContact` pasa a `sameEmail` en la ficha de la cédula, en el
+    «Por verificar» anterior y en el reintento. `samePhone` queda sólo para el cliente antiguo sin cédula (nombre,
+    email y teléfono). Textos de «Por verificar» en `claim-review.tsx` y en el email al negocio (`templates.ts`).
 
 ## Pruebas
 
@@ -47,3 +50,5 @@
 - `tests/payments.test.ts`: un Supabase de mentira guarda la foto como `text/html` y el comprobante se rechaza.
 - `tests/surveys.test.ts`: la encuesta respondida y la vencida, sin la cita.
 - `tests/security-sessions.test.ts`: un hash de costo 10 pasa a 12 al entrar.
+- `tests/cedula.test.mjs` y `tests/booking-retry.test.ts`: con la cédula y el teléfono pero otro email, «Por verificar»
+  y «hora ocupada». `couple-booking` y `security-scope` siguen probando el acceso pendiente con la cédula y el email.

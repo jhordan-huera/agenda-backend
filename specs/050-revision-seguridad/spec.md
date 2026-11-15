@@ -24,6 +24,10 @@ El 2026-11-15 el dueño pidió:
 
 Esta spec recoge esos arreglos. El dueño los aprobó con esas palabras: no se esperó otra aprobación del plan.
 
+**Decisión del dueño (2026-11-15):** para cerrar «saber si alguien es paciente», la reserva reconoce la ficha sólo si
+coincide el email («Cerrarlo: sólo el email»). Cambia la regla «email o teléfono» de la spec 009 en la constitución
+(1.48.0, en los dos repos).
+
 ## Escenarios de uso y pruebas *(obligatorio)*
 
 ### Historia 1 - Nadie cambia el teléfono de la espera de otra persona (Prioridad: P1)
@@ -59,6 +63,21 @@ quien no es.
 1. **Dado** un comprobante que se sube a Supabase con un tipo distinto del indicado (por ejemplo, una foto guardada
    como `text/html`), **cuando** se completa la subida, **entonces** se rechaza y se borran el archivo y su registro.
 
+### Historia 6 - Con la cédula y el teléfono de alguien no se sabe si es paciente (Prioridad: P1)
+
+Hoy la reserva pública reconoce la ficha por la cédula y el email **o** el teléfono. Con la cédula y el teléfono de
+alguien (que conoce cualquier allegado) la respuesta delata que es paciente: la confirmación sale sin email y, si ya
+tiene una cita ese día, dice «Ya tienes una cita ese día». En psicología, eso ya es un dato de salud.
+
+**Escenarios de aceptación:**
+1. **Dado** la cédula y el teléfono de un paciente con otro email, **cuando** alguien reserva, **entonces** la reserva
+   sale igual que con una cédula nueva, «Por verificar», y la confirmación va al email que escribió.
+2. **Dado** el reintento de una reserva con la misma cédula y el mismo teléfono pero otro email, **entonces** responde
+   «hora ocupada», como a un desconocido.
+3. **Dado** el paciente con su cédula y su email, **entonces** reserva en su ficha como siempre.
+4. **Dado** una reserva «Por verificar», **entonces** el panel y el email al negocio dicen que el email no coincide;
+   al unirla, Recepción puede guardar el email nuevo en la ficha.
+
 ### Historia 5 - Contraseñas, peticiones, cabeceras y GitHub (Prioridad: P3)
 
 1. **Dado** una contraseña guardada con el costo de antes (10), **cuando** la persona inicia sesión, **entonces**
@@ -89,6 +108,9 @@ quien no es.
 - **RF-009**: Los dos repos DEBEN exigir acciones fijadas por SHA y aprobación para los PR de personas externas.
 - **RF-010**: Las 2 alertas de Dependabot del front (`minimatch` y `deepmerge`, sólo al compilar) DEBEN quedar
   descartadas con su motivo.
+- **RF-011**: La reserva pública DEBE reconocer la ficha de una cédula sólo si coincide su email (también al
+  reconocer un reintento). Con sólo el teléfono, la reserva DEBE salir «Por verificar» y la confirmación ir al email
+  escrito. Los textos de «Por verificar» DEBEN decir que el email no coincide.
 
 ## Criterios de éxito *(obligatorio)*
 
@@ -103,12 +125,14 @@ quien no es.
 - **El filtro de enlaces** de la dirección es el mismo que el del nombre (`@`, `://`, `www.` y dominios comunes).
 - **HSTS** va sin `includeSubDomains`, para no tocar otros subdominios del dominio.
 - **bcrypt 12** tarda unos 200 ms por inicio de sesión (50 ms con 10). Un email que no existe tarda lo mismo.
+- **Con la cédula y el email** de alguien todavía se ve el aviso «Ya tienes una cita ese día»: es el mismo dato con el
+  que la plataforma le escribe, y el aviso es para la propia persona (spec 009).
+- **Más «Por verificar»:** las de quien reserva con un email distinto del de su ficha. En el panel el email es
+  obligatorio, así que toda ficha tiene uno.
 
 ## Fuera de alcance
 
 - **El token de Gmail con acceso a todo el buzón:** lo dejó fuera el dueño.
-- **Saber si alguien es paciente con su cédula y su teléfono** (el aviso «Ya tienes una cita ese día» y el email de
-  la confirmación): cerrarlo cambia la regla de la spec 009 que está en la constitución. Queda para que decida el dueño.
 - **El identificador del rol de AWS como secreto y borrar los registros antiguos:** el permiso de la herramienta lo
   bloqueó. Lo hace el dueño (los pasos están en el reporte).
 - **Limitar los secretos a `main`:** hay que volver a escribir cada valor en un entorno de GitHub.

@@ -41,6 +41,15 @@
 - [X] T018 [US5] GitHub: `sha_pinning_required` y `all_external_contributors` en los dos repos
 - [X] T019 [US5] GitHub: las alertas 1 y 3 del front, descartadas como `tolerable_risk`
 
+## Historia 6 - Sólo el email (P1, decisión del dueño del 2026-11-15)
+
+- [X] T022 [US6] back/src/services/public-booking-service.ts: `sameEmail` en lugar de `sameContact` (ficha, «Por
+  verificar» anterior y reintento)
+- [X] T023 [P] [US6] front/src/features/appointments/claim-review.tsx, front/src/lib/email/templates.ts y comentarios:
+  «el email no coincide»; `npm run sync:shared`
+- [X] T024 [US6] .specify/memory/constitution.md de los dos repos: 1.48.0
+- [X] T025 [US6] back/tests/cedula.test.mjs, booking-retry.test.ts, couple-booking.test.ts y security-scope.test.ts
+
 ## Cierre
 
 - [X] T020 back: `npm run typecheck` y `npm test`; front: `npm run build`, `npm run lint` y todas las `check:*`

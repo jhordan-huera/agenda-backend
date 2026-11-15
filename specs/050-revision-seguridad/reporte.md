@@ -8,18 +8,17 @@
 
 ## Resumen
 
-Se cerraron los hallazgos medios y bajos de la revisión de seguridad del 2026-11-14, menos dos.
+Se cerraron los hallazgos medios y bajos de la revisión de seguridad del 2026-11-14, menos el token de Gmail, que dejó
+fuera el dueño.
+- Con la cédula y el teléfono de alguien ya no se sabe si es paciente: la ficha se reconoce sólo si coincide el email
+  (decisión del dueño).
 - Nadie puede cambiar el teléfono de la espera de otra persona.
 - Los enlaces cerrados ya no muestran datos.
 - La dirección de la reserva no admite enlaces.
 - Un comprobante guardado como página web se rechaza.
 
-Para quien usa la plataforma con sus propios datos, nada cambia.
-
-Quedan dos fuera:
-- el token de Gmail, que dejó fuera el dueño;
-- saber si alguien es paciente con su cédula y su teléfono, porque cambia una regla de la spec 009 y la decide el
-  dueño.
+Para quien usa la plataforma con sus propios datos, nada cambia. Lo único que cambia: quien reserva con un email
+distinto del de su ficha queda «Por verificar», y Recepción lo une.
 
 ## Qué se entrega
 
@@ -30,6 +29,7 @@ Quedan dos fuera:
 | H3 – La dirección sin enlaces | P2 | Hecha | Sólo la página de reservas |
 | H4 – Los comprobantes | P2 | Hecha | |
 | H5 – Contraseñas, peticiones, cabeceras y GitHub | P3 | Hecha | El rol de AWS y los registros, en Pendientes |
+| H6 – Sólo el email reconoce la ficha | P1 | Hecha | Decisión del dueño; constitución 1.48.0 |
 
 ## Comprobación
 
@@ -45,6 +45,7 @@ Quedan dos fuera:
 | RF-008 – Cabeceras de la web | Cumple | `front/vercel.json` revisado (JSON válido). Se ven al publicar |
 | RF-009 – Ajustes de Actions | Cumple | API de GitHub: `sha_pinning_required: true` y `approval_policy: all_external_contributors` en los dos repos |
 | RF-010 – Alertas de Dependabot | Cumple | API de GitHub: alertas 1 y 3 del front, `dismissed` / `tolerable_risk` |
+| RF-011 – Sólo el email | Cumple | cedula.test.mjs: con la cédula y el teléfono, «Por verificar», confirmación al email escrito y nada de la ficha en la respuesta; booking-retry.test.ts: el reintento sin el email, «hora ocupada» |
 | CE-001 – Todo pasa | Cumple | Backend 76 de 76 suites; front: compilación, lint y 11 de 11 `check:*` |
 | CE-002 – Cada arreglo con su prueba | Cumple | Las de arriba |
 | CE-003 – Nada cambia con los propios datos | Cumple | Las suites de reservas, pagos, lista de espera, encuestas y sesiones pasan sin tocar sus flujos |
@@ -59,13 +60,8 @@ Quedan dos fuera:
 
 ## Pendientes y riesgos
 
-- **Saber si alguien es paciente** (para que decida el dueño):
-  - con la cédula y el teléfono de alguien, la reserva pública responde distinto si ya es paciente: el email de la
-    confirmación sale vacío;
-  - si ya tiene una cita ese día, responde «Ya tienes una cita ese día»;
-  - para cerrarlo, la ficha se reconocería sólo si coincide el email. Con sólo el teléfono, la reserva saldría igual
-    pero «Por verificar»;
-  - eso cambia la regla «email o teléfono» de la spec 009, que está en la constitución.
+- **Con la cédula y el email** de alguien todavía se ve «Ya tienes una cita ese día» (riesgo aceptado: es el aviso
+  para la propia persona de la spec 009, y es el dato con el que la plataforma le escribe).
 - **El rol de AWS como secreto** (lo hace el dueño: la herramienta no tuvo permiso):
   1. en GitHub, agenda-backend → Settings → Secrets and variables → Actions → Variables, copia el valor de
      `AWS_DEPLOY_ROLE_ARN`;
@@ -88,7 +84,9 @@ Quedan dos fuera:
 |---|---|---|
 | agenda-backend | cff6990 | La lista de espera: el email de otra persona ya no cambia el nombre ni el teléfono |
 | agenda-backend | 89d3308 | La ruta antigua, la dirección, el comprobante, los enlaces cerrados, bcrypt 12 y el tope de 100 kB |
+| agenda-backend | e0e41a0 | Sólo el email reconoce la ficha; constitución 1.48.0 |
 | agenda-front | 3fdcaf4 | La dirección sin enlaces, los enlaces cerrados y las cabeceras |
+| agenda-front | fc8a43c | Sólo el email: los textos de «Por verificar» y la constitución 1.48.0 |
 
 ## Cómo publicarlo
 
@@ -102,6 +100,7 @@ Quedan dos fuera:
 ## Texto para el PR
 
 Spec 050: lo que quedó de la revisión de seguridad.
+- Con la cédula y el teléfono de alguien ya no se sabe si es paciente: sólo el email reconoce la ficha.
 - Nadie puede cambiar el teléfono de la espera de otra persona.
 - Los enlaces cerrados ya no muestran datos.
 - La dirección de la reserva no admite enlaces.
