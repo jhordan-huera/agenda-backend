@@ -227,10 +227,13 @@ export const paymentService = {
           await db.query("delete from payment_receipts where id = $1", [receiptId]);
           return { receipt: null, rejected: { path: receipt.storagePath, error: new AppError("conflict", ALREADY_SENT) } };
         }
-        const size = await storage.sizeOf(receipt.storagePath);
-        if (size === null) throw new AppError("conflict", NOT_UPLOADED);
+        const info = await storage.fileInfo(receipt.storagePath);
+        if (info === null) throw new AppError("conflict", NOT_UPLOADED);
+        const { size } = info;
         let problem: string | null = null;
         if (size > RECEIPT_MAX_BYTES) problem = "El archivo supera los 10 MB.";
+        // El tipo con que se guardó lo eligió el navegador al subirlo: tiene que ser el que se indicó (2026-11-15).
+        else if (info.contentType !== null && info.contentType !== receipt.contentType) problem = NOT_A_RECEIPT;
         else {
           const head = await storage.readHead(receipt.storagePath, SIGNATURE_BYTES);
           if (head === null) throw new AppError("conflict", NOT_UPLOADED);

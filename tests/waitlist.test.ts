@@ -192,7 +192,13 @@ ok(r.status === 200 && entryOf(leaver)[2] === "left", "«Salir de la lista» la 
 ok(auditCount("waitlist.left") === 1, "con su entrada en la actividad");
 r = await link("POST", `/public/waitlist/${leaverToken}/leave`);
 ok(r.status === 200 && auditCount("waitlist.left") === 1, "salir dos veces no hace nada");
-ok(((await link("GET", `/public/waitlist/${leaverToken}`)).body as PublicWaitlistEntry).closed, "el enlace dice que ya no está");
+const closedPage = (await link("GET", `/public/waitlist/${leaverToken}`)).body;
+ok((closedPage as PublicWaitlistEntry).closed, "el enlace dice que ya no está");
+ok(
+  ["name", "email", "phone", "serviceName", "days", "until"].every((key) => !(key in closedPage)) && closedPage.businessSlug === slug,
+  "y ya no muestra sus datos ni lo que pidió (sólo el negocio, para «Ver las horas libres»)",
+  closedPage,
+);
 
 /* ======================================================================================== */
 console.log("\nLa lista del panel");

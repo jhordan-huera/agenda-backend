@@ -1,6 +1,6 @@
 // Copia de agenda-front/src/lib/validations/booking.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
-import { dateField, documentIdField, emailField, homeVisitSchema, optionalText, personNameField, requiredPhoneField, timeField } from "./fields.ts";
+import { dateField, documentIdField, emailField, optionalText, personNameField, publicHomeVisitSchema, requiredPhoneField, timeField } from "./fields.ts";
 
 /**
  * Otra persona de una sesión en pareja o en familia (servicio de 2 o 3 personas): los mismos datos
@@ -33,7 +33,7 @@ export const publicBookingSchema = z
     extraPatients: z.array(bookingPersonSchema).max(2, "Una sesión puede tener como máximo 3 personas.").default([]),
     notes: optionalText(500),
     /** null = cita en el local (o virtual). A domicilio, la ubicación exacta marcada en el mapa es obligatoria. */
-    homeVisit: homeVisitSchema.nullable().default(null),
+    homeVisit: publicHomeVisitSchema.nullable().default(null),
     /** Por videollamada. */
     isVirtual: z.boolean().default(false),
     /** Con quién se atiende; null: el primer profesional libre a esa hora. */

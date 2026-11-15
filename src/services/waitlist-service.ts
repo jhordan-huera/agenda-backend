@@ -262,11 +262,16 @@ export const waitlistService = {
     });
   },
 
-  /** El enlace personal: lo que pidió y sus datos (para «Reservar esta hora»). Una espera cerrada dice que ya no está. */
+  /**
+   * El enlace personal: lo que pidió y sus datos (para «Reservar esta hora»). Una espera cerrada sólo dice que ya no
+   * está: el enlace sigue en los emails y no debe mostrar a nadie su nombre, su email, su teléfono ni lo que pidió.
+   */
   async get(token: string): Promise<PublicWaitlistEntry> {
     const entry = await findByToken(pool, token);
     if (!entry) throw new AppError("not_found", LINK_NOT_FOUND);
+    if (entry.closedAt !== null) return { closed: true, businessName: entry.businessName, businessSlug: entry.businessSlug };
     return {
+      closed: false,
       businessName: entry.businessName,
       businessSlug: entry.businessSlug,
       serviceName: entry.serviceName,
@@ -277,7 +282,6 @@ export const waitlistService = {
       name: entry.name,
       email: entry.email,
       phone: entry.phone,
-      closed: entry.closedAt !== null,
     };
   },
 

@@ -5,6 +5,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
+import bcrypt from "bcryptjs";
 import pg from "pg";
 import { codeAt, timeStep } from "../src/services/totp.ts";
 import { viaProxy } from "./helpers/proxy.mjs";
@@ -178,6 +179,20 @@ try {
   ok(r.body?.twoFactorRequired === true, "también en la API sin la obligación (es la misma cuenta)", r.body);
 } finally {
   strictApi.kill("SIGTERM");
+}
+
+console.log("\nContraseñas con costo 12 (2026-11-15)");
+{
+  // Una contraseña guardada con el costo de antes (10): al entrar se rehace con el 12, y se sigue entrando igual.
+  const email = "laura@demo.com";
+  const old = await bcrypt.hash("demo1234", 10);
+  await db.query("update users set password_hash = $2 where email = $1", [email, old]);
+  const first = await login(email, false);
+  const rounds = async () => bcrypt.getRounds((await db.query("select password_hash from users where email = $1", [email])).rows[0].password_hash);
+  ok(first.r.status === 200 && (await rounds()) === 12, "el hash antiguo se rehace con costo 12 al iniciar sesión", [first.r.status, await rounds()]);
+  ok((await login(email, false)).r.status === 200, "y la misma contraseña sigue entrando");
+  const wrong = await agent()("POST", "/auth/login", { email: "nadie-registrado@demo.com", password: "demo1234", remember: false });
+  ok(wrong.status === 401, "un email que no existe sigue respondiendo lo mismo", wrong.status);
 }
 
 await db.end();

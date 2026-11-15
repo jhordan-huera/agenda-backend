@@ -30,7 +30,9 @@ export const requiredText = (label: string, min = 2, max = 120) =>
  */
 // El dominio va acotado a 63 caracteres (lo más largo de una parte de un dominio): con `+` sin tope, un
 // texto como «a-a-a-…» tardaba el cuadrado de su largo y bloqueaba la API (2026-11-14).
-const NOT_A_NAME = [/[\r\n]/, /@/, /:\/\//, /\bwww\./i, /\b[\p{L}\d-]{1,63}\.(com|net|org|ec|io|app|co|me|info|online|site|xyz|ly|link|biz|store|shop)\b/iu];
+const LINK_PATTERNS = [/@/, /:\/\//, /\bwww\./i, /\b[\p{L}\d-]{1,63}\.(com|net|org|ec|io|app|co|me|info|online|site|xyz|ly|link|biz|store|shop)\b/iu];
+const NOT_A_NAME = [/[\r\n]/, ...LINK_PATTERNS];
+const hasLink = (value: string) => LINK_PATTERNS.some((pattern) => pattern.test(value));
 const PERSON_NAME_MAX = 120;
 export const personNameField = (label: string) =>
   requiredText(label, 2, PERSON_NAME_MAX).refine(
@@ -143,5 +145,19 @@ export const homeVisitSchema = z.object({
   reference: optionalText(200),
   lat: z.number().min(-90).max(90).nullable(),
   lng: z.number().min(-180).max(180).nullable(),
+});
+
+/**
+ * La misma dirección, escrita por el público en la página de reservas: sale en el email que va a la dirección que
+ * escribió quien reserva, así que no admite enlaces ni emails (si no, cualquiera mandaba enlaces desde el Gmail del
+ * negocio, 2026-11-15). El lugar exacto se marca en el mapa. En el panel el equipo sí puede pegar un enlace.
+ */
+const ADDRESS_MAX = 200;
+export const publicHomeVisitSchema = homeVisitSchema.extend({
+  address: requiredText("La dirección", 5, ADDRESS_MAX).refine(
+    (value) => value.length > ADDRESS_MAX || !hasLink(value),
+    "La dirección: escríbela sin enlaces ni emails (el lugar exacto se marca en el mapa)",
+  ),
+  reference: optionalText(ADDRESS_MAX).refine((value) => value.length > ADDRESS_MAX || !hasLink(value), "La referencia: escríbela sin enlaces ni emails"),
 });
 export const dateField = z.string().regex(DATE_REGEX, "Selecciona una fecha");

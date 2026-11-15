@@ -61,7 +61,7 @@ ok(r.body?.userId === ownerId, "sesión con cookie");
 
 console.log("Lecturas del panel");
 const B = `/businesses/${businessId}`;
-for (const path of ["", "/professional", "/team", "/subscription", "/subscription/usage", "/clients", "/services", "/schedules", "/blocked-times", "/notifications", "/audit-logs"]) {
+for (const path of ["", "/team", "/subscription", "/subscription/usage", "/clients", "/services", "/schedules", "/blocked-times", "/notifications", "/audit-logs"]) {
   r = await owner("GET", B + path);
   ok(r.status === 200, `GET ${path || "/"}`, r.body);
 }
@@ -286,8 +286,10 @@ ok(r.status === 400, "una foto nueva dentro del JSON (data URL) ya no se acepta"
 r = await ana("POST", "/images", { target: "avatar", contentType: "image/png", sizeBytes: 100 });
 r = await ana("PUT", `/users/${anaId}`, { ...profileBody, avatarUrl: r.body.url });
 ok(r.status === 200 && r.body.lastName === "Editada", "perfil con la foto del almacenamiento", r.body?.error);
+r = await ana("GET", `${AB}/professionals`);
+ok(r.body?.[0]?.displayName === "Ana Editada", "el profesional se actualiza con el perfil", r.body);
 r = await ana("GET", `${AB}/professional`);
-ok(r.body?.displayName === "Ana Editada", "el profesional se actualiza con el perfil");
+ok(r.status === 404, "la ruta antigua /professional ya no existe (daba el email, la sala y las cuentas bancarias a todo el equipo)", r.status);
 
 console.log("Contraseñas y sesiones");
 r = await ana("POST", "/auth/change-password", { currentPassword: "Clave12345", newPassword: "OtraClave123", confirmPassword: "OtraClave123" });

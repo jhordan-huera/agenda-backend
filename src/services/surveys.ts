@@ -152,18 +152,26 @@ function readFilters(query: { from?: string; to?: string; professionalId?: strin
 export const surveyService = {
   /* ------------------------------------------------------------ Público (sin sesión) -- */
 
-  /** La página de la encuesta: la cita y si está abierta, respondida o cerrada. */
+  /**
+   * La página de la encuesta: la cita mientras está abierta; respondida, sus estrellas; cerrada, sólo el negocio. El
+   * enlace queda en el email: pasados los 14 días ya no muestra la cita (2026-11-15).
+   */
   async get(token: string): Promise<PublicSurvey> {
     const survey = await findByToken(pool, token);
     if (!survey) throw new AppError("not_found", LINK_NOT_FOUND);
+    const status = statusOf(survey);
+    if (status === "answered") {
+      return { status, businessName: survey.businessName, firstName: firstNameOf(survey.clientName), rating: survey.rating! };
+    }
+    if (status === "expired") return { status, businessName: survey.businessName };
     return {
+      status,
       businessName: survey.businessName,
       professionalName: survey.professionalName,
       serviceName: survey.serviceName,
       date: survey.date,
       firstName: firstNameOf(survey.clientName),
-      status: statusOf(survey),
-      rating: survey.rating,
+      rating: null,
     };
   },
 
@@ -196,7 +204,7 @@ export const surveyService = {
           dedupeKey: `survey-low:${survey.id}`,
         });
       }
-      return { ...(await surveyService.get(token)), status: "answered", rating: data.rating };
+      return { status: "answered", businessName: survey.businessName, firstName: firstNameOf(survey.clientName), rating: data.rating };
     });
   },
 

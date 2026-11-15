@@ -2,12 +2,15 @@
 // almacenamiento (bucket privado) y logos y fotos en el bucket público de imágenes.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { createServer, type IncomingMessage } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { fileKindOf, matchesDeclaredType } from "../src/services/file-signature.ts";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
 import { addDaysISO, getZonedNow } from "../src/shared/lib/time.ts";
 import type { Professional, PublicBusinessProfile } from "../src/shared/types/index.ts";
+import { startApi } from "./helpers/harness.ts";
 import { viaProxy } from "./helpers/proxy.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
@@ -144,9 +147,9 @@ const profile: PublicBusinessProfile = (await visitor("GET", `/public/businesses
 const now = getZonedNow(profile.business.timezone);
 const context = { ...profile, settings: profile.business.bookingSettings, now };
 const slots: { date: string; startTime: string }[] = [];
-for (let d = 1; d < 40 && slots.length < 9; d++) {
+for (let d = 1; d < 40 && slots.length < 10; d++) {
   const date = addDaysISO(now.date, d);
-  for (const startTime of getAvailableSlots(date, Math.max(paid.durationMinutes, 30), scopeToProfessional(context, professional.id)).filter((_, i) => i % 3 === 0).slice(0, 9 - slots.length)) {
+  for (const startTime of getAvailableSlots(date, Math.max(paid.durationMinutes, 30), scopeToProfessional(context, professional.id)).filter((_, i) => i % 3 === 0).slice(0, 10 - slots.length)) {
     slots.push({ date, startTime });
   }
 }
@@ -513,6 +516,75 @@ console.log("Migración 030 (varias cuentas)");
        from professionals where id = '${without}' returning bank_accounts = jsonb_build_array(bank_account)`,
   ).split("\n")[0];
   ok(inserted === "t", "y una agenda que crea con cuenta la tiene también en la lista", inserted);
+}
+
+console.log("\nEn Supabase, el tipo con que quedó guardado (2026-11-15)");
+{
+  // Un Supabase Storage de mentira: guarda cada archivo con el `Content-Type` que mandó el navegador al subirlo, que
+  // lo elige quien sube (la carpeta local de las pruebas ya rechaza otro tipo, así que esto sólo se ve aquí).
+  const files = new Map<string, { body: Buffer; type: string }>();
+  const removed: string[] = [];
+  const readBody = async (req: IncomingMessage) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk as Buffer);
+    return Buffer.concat(chunks);
+  };
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url ?? "/", "http://supabase");
+    const route = decodeURIComponent(url.pathname.replace(/^\/storage\/v1/, ""));
+    const body = await readBody(req);
+    const json = (value: unknown) => res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(value));
+    const [, action, kind, ...rest] = route.split("/");
+    if (route === "/bucket") return json({ name: "comprobantes" });
+    if (action === "object" && kind === "upload" && req.method === "POST") return json({ url: `/object/upload/${rest.join("/")}?token=subida` });
+    if (action === "object" && kind === "upload" && req.method === "PUT") {
+      files.set(rest.slice(2).join("/"), { body, type: String(req.headers["content-type"]) });
+      return json({ Key: rest.join("/") });
+    }
+    if (action === "object" && kind === "list") {
+      const { prefix, search } = JSON.parse(body.toString()) as { prefix: string; search: string };
+      const file = files.get(`${prefix}${search}`);
+      return json(file ? [{ name: search, id: "1", metadata: { size: file.body.length, mimetype: file.type } }] : []);
+    }
+    if (action === "object" && kind === "sign" && req.method === "POST") return json({ signedURL: `/object/sign/${rest.join("/")}?token=descarga` });
+    if (action === "object" && kind === "sign" && req.method === "GET") {
+      const file = files.get(rest.slice(1).join("/"));
+      return file ? res.writeHead(200).end(file.body) : res.writeHead(404).end();
+    }
+    if (action === "object" && req.method === "DELETE") {
+      removed.push(...(JSON.parse(body.toString()) as { prefixes: string[] }).prefixes);
+      return json([]);
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const api = await startApi({ SUPABASE_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, SUPABASE_SERVICE_ROLE_KEY: "sb_secret_de_prueba_local_1234" });
+  try {
+    ok(api.exited() === null, "la API arranca con el Supabase de mentira", api.output().slice(-600));
+    const call = async (method: string, path: string, body?: unknown) => {
+      const res = await fetch(api.base + path, {
+        method,
+        headers: { "Content-Type": "application/json", "X-Requested-With": "fetch", ...viaProxy(`198.51.100.${ipCounter++ % 250}`) },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await res.text();
+      return { status: res.status, body: text ? JSON.parse(text) : undefined };
+    };
+    const supabaseToken = (await book(paid.id, slots[9], "supabase1")).body.payment.token;
+    let request = (await call("POST", `/public/payments/${supabaseToken}/receipts`, receiptInput)).body;
+    // La foto de verdad, pero subida como página web: así la serviría el almacenamiento.
+    await fetch(request.upload.url, { method: "PUT", headers: { ...request.upload.headers, "Content-Type": "text/html" }, body: PNG });
+    let done = await call("POST", `/public/payments/${supabaseToken}/receipts/${request.receipt.id}/complete`);
+    ok(done.status === 400 && /no es una foto ni un PDF/.test(done.body?.error?.message ?? ""), "una foto guardada como text/html → 400", done.body);
+    ok(removed.length === 1 && sql(`select count(*) from payment_receipts where id = '${request.receipt.id}'`) === "0", "y se borran el archivo y su registro", removed);
+    request = (await call("POST", `/public/payments/${supabaseToken}/receipts`, receiptInput)).body;
+    await fetch(request.upload.url, { method: "PUT", headers: request.upload.headers, body: PNG });
+    done = await call("POST", `/public/payments/${supabaseToken}/receipts/${request.receipt.id}/complete`);
+    ok(done.status === 200 && done.body.fileName === "transferencia.png", "con el tipo que se indicó, se recibe", done.body);
+  } finally {
+    api.stop();
+    server.close();
+  }
 }
 
 console.log(failures === 0 ? "\nTodo bien." : `\n${failures} fallos.`);

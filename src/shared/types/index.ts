@@ -2273,38 +2273,49 @@ export interface WaitlistEntry {
   createdAt: ISODateTime;
 }
 
-/** Lo que ve la persona en su enlace (/lista-de-espera/:token): lo que pidió y sus datos, para reservar. */
-export interface PublicWaitlistEntry {
-  businessName: string;
-  businessSlug: string;
-  serviceName: string;
-  /** null: «Cualquiera». */
-  professionalName: string | null;
-  days: DayOfWeek[];
-  dayParts: WaitlistDayPart[];
-  until: ISODate;
-  name: string;
-  email: string | null;
-  phone: string;
-  /** Ya no está en la lista (salió, reservó o venció). */
-  closed: boolean;
-}
+/**
+ * Lo que ve la persona en su enlace (/lista-de-espera/:token): lo que pidió y sus datos, para reservar. Cerrada
+ * (salió, reservó o venció), sólo el negocio: el enlace queda en los emails y no debe seguir mostrando sus datos
+ * ni lo que pidió (2026-11-15).
+ */
+export type PublicWaitlistEntry =
+  | {
+      closed: false;
+      businessName: string;
+      businessSlug: string;
+      serviceName: string;
+      /** null: «Cualquiera». */
+      professionalName: string | null;
+      days: DayOfWeek[];
+      dayParts: WaitlistDayPart[];
+      until: ISODate;
+      name: string;
+      email: string | null;
+      phone: string;
+    }
+  | { closed: true; businessName: string; businessSlug: string };
 
 /* ------------------------------------------------------- Encuesta después de la cita (spec 048) -- */
 
-/** Lo que ve el paciente en /encuesta/:token. `status`: abierta, ya respondida o cerrada (pasaron 14 días). */
-export interface PublicSurvey {
-  businessName: string;
-  professionalName: string;
-  serviceName: string;
-  /** La fecha de la cita. */
-  date: ISODate;
-  /** El nombre de pila del paciente, para saludarlo. */
-  firstName: string;
-  status: "open" | "answered" | "expired";
-  /** Sus estrellas, si ya respondió. */
-  rating: number | null;
-}
+/**
+ * Lo que ve el paciente en /encuesta/:token. `status`: abierta, ya respondida o cerrada (pasaron 14 días). La cita
+ * (el servicio, con quién y la fecha) sólo mientras está abierta: el enlace queda en el email (2026-11-15).
+ */
+export type PublicSurvey =
+  | {
+      status: "open";
+      businessName: string;
+      professionalName: string;
+      serviceName: string;
+      /** La fecha de la cita. */
+      date: ISODate;
+      /** El nombre de pila del paciente, para saludarlo. */
+      firstName: string;
+      rating: null;
+    }
+  /** Ya respondió: sus estrellas. */
+  | { status: "answered"; businessName: string; firstName: string; rating: number }
+  | { status: "expired"; businessName: string };
 
 /** Una respuesta, como la ve el equipo en Reportes y en la ficha del paciente. */
 export interface SurveyResponse {

@@ -9,7 +9,7 @@ import { outgoingContent } from "../src/services/mailer.ts";
 import { createBusinessWithOwner } from "./helpers/business.mjs";
 import { startApi } from "./helpers/harness.ts";
 import { emailTemplates } from "../src/shared/lib/email/templates.ts";
-import { personNameField } from "../src/shared/lib/validations/fields.ts";
+import { homeVisitSchema, personNameField, publicHomeVisitSchema } from "../src/shared/lib/validations/fields.ts";
 import { viaProxy } from "./helpers/proxy.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
@@ -234,6 +234,27 @@ ok(
   nameField.safeParse("Ana María Pérez-Soto").success && !nameField.safeParse("visita ana.com").success && !nameField.safeParse("pagina-web.ec").success,
   "sigue aceptando nombres y rechazando enlaces",
 );
+
+const bigBooking = await agent()("POST", `/public/businesses/no-existe/bookings`, { notes: "x".repeat(200_000) });
+ok(bigBooking.status === 400 && /demasiado grandes/.test(bigBooking.body?.error?.message ?? ""), "las rutas públicas no reciben más de 100 kB", bigBooking.body);
+const bigLogin = await agent()("POST", "/auth/login", { email: "x".repeat(200_000), password: "x" });
+ok(bigLogin.status === 400, "el inicio de sesión tampoco", bigLogin.status);
+
+console.log("La dirección de la visita a domicilio, sin enlaces (2026-11-15)");
+const visit = (address: string, reference = "") => ({ address, reference, lat: -0.18, lng: -78.48 });
+ok(
+  publicHomeVisitSchema.safeParse(visit("Av. Amazonas N34-12 y Colón, edificio Torres, piso 3", "Casa azul junto a la farmacia")).success,
+  "una dirección normal pasa",
+);
+ok(
+  ["Calle 1 https://estafa.com", "Visita www.premio.ec", "Escribe a premio@correo.ec", "Gana en premio.com"].every(
+    (address) => !publicHomeVisitSchema.safeParse(visit(address)).success,
+  ) && !publicHomeVisitSchema.safeParse(visit("Av. Amazonas N34-12", "Entra a https://estafa.com")).success,
+  "desde la página de reservas, la dirección y la referencia no admiten enlaces ni emails",
+);
+ok(homeVisitSchema.safeParse(visit("Av. Amazonas N34-12", "Mapa: https://maps.app.goo.gl/abc")).success, "en el panel el equipo sí puede pegar un enlace");
+started = performance.now();
+ok(!publicHomeVisitSchema.safeParse(visit("a-".repeat(1_000_000))).success && performance.now() - started < 500, "una dirección de 2 MB: al momento");
 
 console.log("CAPTCHA (Cloudflare Turnstile, simulado)");
 const verifications: any[] = [];

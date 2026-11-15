@@ -155,6 +155,12 @@ r = await page("POST", `/public/surveys/${anaToken}`, { rating: 4, comment: "Muy
 ok(r.status === 200 && (r.body as PublicSurvey).status === "answered", "responde con 4 estrellas", r.body);
 r = await page("POST", `/public/surveys/${anaToken}`, { rating: 5 });
 ok(r.status === 409, "no responde dos veces", r.status);
+r = await page("GET", `/public/surveys/${anaToken}`);
+ok(
+  r.body?.status === "answered" && r.body.rating === 4 && !("serviceName" in r.body) && !("professionalName" in r.body) && !("date" in r.body),
+  "respondida, el enlace muestra sus estrellas pero ya no la cita",
+  r.body,
+);
 const answeredLog = sql(`select summary from audit_logs where business_id = '${businessId}' and action = 'survey.answered' order by created_at desc limit 1`);
 ok(answeredLog.includes("4 estrellas") && !answeredLog.includes("amable"), "la actividad dice las estrellas, no el comentario", answeredLog);
 ok(count(`select count(*) from panel_notices where kind = 'survey_low' and business_id = '${businessId}'`) === 0, "con 4 estrellas, ningún aviso");
@@ -169,6 +175,11 @@ const hugoToken = tokenOf(hugo.id);
 sql(`update surveys set expires_at = now() - interval '1 minute' where client_id = '${hugo.id}'`);
 r = await page("GET", `/public/surveys/${hugoToken}`);
 ok((r.body as PublicSurvey).status === "expired", "pasados 14 días, cerrada", r.body);
+ok(
+  ["serviceName", "professionalName", "date", "firstName", "rating"].every((key) => !(key in r.body)) && r.body.businessName,
+  "y ya no muestra la cita ni el nombre (sólo el negocio)",
+  r.body,
+);
 r = await page("POST", `/public/surveys/${hugoToken}`, { rating: 5 });
 ok(r.status === 400, "y ya no se responde", r.status);
 r = await page("GET", "/public/surveys/00000000000000000000000000000000");
