@@ -81,9 +81,10 @@ ok(
 ok(count(`select count(*) from appointments a join clients c on c.id = a.client_id where c.document_id = '${ana.documentId}'`) === 1, "no se crea otra cita");
 ok(count(`select count(*) from notifications where appointment_id = '${appointmentId}'`) === emailsAfterFirst, "ni se reenvían los emails");
 const samePhone = await book(day.service.id, day.date, day.slots[0], { ...ana, email: "otro.email@correo.ec", phone: "0994445555" });
+// Desde la spec 050 el teléfono no basta: con la cédula y el teléfono de alguien se sabía que había reservado.
 ok(
-  samePhone.status === 200 && samePhone.body.appointmentId === appointmentId && samePhone.body.clientEmail === "",
-  "con su cédula y su teléfono (escrito de otra forma) también es su reserva, sin mostrar el email de la ficha",
+  samePhone.status === 409 && !JSON.stringify(samePhone.body).includes(appointmentId) && !JSON.stringify(samePhone.body).includes("ana."),
+  "con su cédula y su teléfono pero otro email ya no es su reserva: sólo «hora ocupada», como con un desconocido",
   samePhone.body,
 );
 const onlyDocument = await book(day.service.id, day.date, day.slots[0], { ...ana, email: "adivino@correo.ec", phone: "+593 98 000 0000" });
