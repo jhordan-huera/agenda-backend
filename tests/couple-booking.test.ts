@@ -388,10 +388,11 @@ const hilda = await existing("Hilda Paciente");
 const hidden = (res: { status: number; body: unknown }) => res.status === 404 || res.body === null;
 r = await valeria("GET", `${B}/clients/${hilda.id}`);
 ok(hidden(r), "Valeria no ve a Hilda (no es su paciente)", r.status);
-// Alguien que sabe la cédula y el teléfono de Hilda se reserva una sesión de pareja con Valeria.
+// Alguien que sabe la cédula y el email de Hilda se reserva una sesión de pareja con Valeria (con sólo el teléfono,
+// desde la spec 050, ni llega a su ficha: queda «Por verificar», como en cedula.test.mjs).
 const attacker = person("Ivan Atacante");
-r = await book(couple.id, await freeSlot(couple.id, valeriaAgenda.id), attacker, [{ ...person("Hilda Escrita"), documentId: hilda.documentId, phone: hilda.phone }], valeriaAgenda.id);
-ok(r.status === 200, "la reserva se hace (coincide el teléfono, como con quien reserva)", r.body);
+r = await book(couple.id, await freeSlot(couple.id, valeriaAgenda.id), attacker, [{ ...person("Hilda Escrita"), documentId: hilda.documentId, email: hilda.email }], valeriaAgenda.id);
+ok(r.status === 200, "la reserva se hace (coincide el email, como con quien reserva)", r.body);
 const attack = r.body.appointmentId;
 ok(sql(`select client_access_pending from appointment_clients where appointment_id = '${attack}'`) === "t", "Hilda queda con el acceso pendiente");
 r = await valeria("GET", `${B}/clients/${hilda.id}`);

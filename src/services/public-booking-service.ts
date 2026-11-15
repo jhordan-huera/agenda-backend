@@ -42,7 +42,7 @@ import { findProfessional, listProfessionals } from "./professional-service.ts";
  *
  * Nada de la página dice si una cédula es de un paciente del negocio (la cédula es casi pública: de
  * un psicólogo, eso ya es un dato sensible). El paciente escribe siempre todos sus datos y la reserva
- * sólo se une a una ficha existente si coinciden su email o su teléfono. Si no coinciden, la reserva
+ * sólo se une a una ficha existente si coincide su email (spec 050). Si no coinciden, la reserva
  * sale igual que con una cédula nueva y queda «Por verificar» (spec 009): ni la respuesta, ni los
  * emails, ni los topes, ni la hora ocupada dejan saber que la cédula ya era de alguien.
  */
@@ -178,13 +178,15 @@ export function comparablePhone(phone: string, timezone: string): string {
 }
 
 /**
- * ¿Es la persona de la ficha? Basta con que coincida el email o el teléfono guardados (sin
- * mayúsculas, espacios ni formato). Una ficha sin email ni teléfono no se puede confirmar.
+ * ¿Es la persona de la ficha? Tiene que coincidir el email guardado (sin mayúsculas ni espacios): es adonde le llega
+ * todo. Una ficha sin email no se puede confirmar. Hasta el 2026-11-15 bastaba el teléfono, pero así, con la cédula y
+ * el teléfono de alguien (que conoce cualquier allegado), la reserva dejaba ver si era paciente: la confirmación salía
+ * sin email y el tope del día decía «Ya tienes una cita ese día» (spec 050). Con sólo el teléfono, la reserva sale
+ * igual, «Por verificar», y el negocio la une a la ficha (y puede guardar el email nuevo).
  */
-function sameContact(stored: { email: string; phone: string }, typed: { email: string; phone: string }, timezone: string): boolean {
+function sameEmail(stored: { email: string }, typed: { email: string }): boolean {
   const email = stored.email.trim().toLowerCase();
-  if (email !== "" && email === typed.email.trim().toLowerCase()) return true;
-  return samePhone(stored.phone, typed.phone, timezone);
+  return email !== "" && email === typed.email.trim().toLowerCase();
 }
 
 /** El mismo teléfono, escrito como sea. Al menos 7 dígitos además del prefijo: uno vacío nunca coincide. */
@@ -243,7 +245,7 @@ const REPEATED_BOOKING_MINUTES = 30;
  * confirmar. Su propia cita ocupa esa hora, así que se busca una cita activa reservada online hace
  * poco con su cédula y el mismo servicio, fecha, hora y modalidad (y el mismo profesional, si lo
  * eligió), y con las mismas otras personas (sus cédulas, en cualquier orden; ninguna en una cita
- * individual). Sólo las recientes, y sólo si coinciden el email o el teléfono (ver book).
+ * individual). Sólo las recientes, y sólo si coincide el email (ver book).
  */
 async function findRepeatedBooking(
   db: Db,
@@ -293,7 +295,7 @@ async function findRepeatedBooking(
 
 /**
  * La persona de la reserva por su cédula, como siempre: si ya existe en el negocio, sólo se reutiliza
- * (sin tocar sus datos de contacto) si coinciden su email o su teléfono. Si no coinciden, la reserva
+ * (sin tocar sus datos de contacto) si coincide su email (spec 050; antes, también el teléfono). Si no coincide, la reserva
  * sigue como la de una cédula nueva, pero con un paciente «Por verificar» aparte (ver
  * resolveClaimingClient): nadie de fuera sabe que la cédula ya era de alguien, ni llega nada a esa
  * ficha. Si la cédula no existe, se crea (con los topes de pacientes nuevos del día y del plan). Vale
@@ -308,7 +310,7 @@ async function resolveBookingClient(
 ): Promise<Client> {
   const found = await findClientByDocument(db, business.id, person.documentId);
   if (found) {
-    if (sameContact(found, person, business.timezone)) return found;
+    if (sameEmail(found, person)) return found;
     return resolveClaimingClient(db, business, found, person, options.address);
   }
   // Cliente antiguo sin cédula con el mismo nombre, email y teléfono: se le añade la cédula en lugar
@@ -336,7 +338,7 @@ async function resolveBookingClient(
 }
 
 /**
- * «Por verificar» (spec 009): la cédula es de `claimed`, pero no coinciden ni su email ni su teléfono.
+ * «Por verificar» (spec 009): la cédula es de `claimed`, pero no coincide su email.
  * Antes se rechazaba la reserva, y ese rechazo decía que la cédula era de un paciente (de un
  * psicólogo, eso ya es un dato de salud). Ahora la reserva sale como la de una cédula nueva, con un
  * paciente aparte: sin cédula, con los datos que se escribieron y apuntando a la ficha, que no se toca
@@ -350,7 +352,7 @@ async function resolveClaimingClient(db: Db, business: Business, claimed: Client
       business.id,
       claimed.id,
     ])
-  ).find((candidate) => sameContact(candidate, person, business.timezone));
+  ).find((candidate) => sameEmail(candidate, person));
   if (previous) return previous;
   return insertBookingClient(db, business, person, { documentId: "", address, claimedClientId: claimed.id });
 }
@@ -513,7 +515,7 @@ export const publicBookingService = {
 
   /**
    * Revalida la disponibilidad, los topes del día y el plan, reutiliza el cliente de la cédula (si
-   * coinciden su email o su teléfono) o lo crea, crea la cita y envía los emails. En un servicio para
+   * coincide su email) o lo crea, crea la cita y envía los emails. En un servicio para
    * 2 o 3 personas (spec 005), lo mismo con cada una: quien reserva es el paciente principal y las
    * demás quedan como los otros pacientes de la cita. Todo o nada: si algo falla, no se crea nadie.
    */
@@ -565,7 +567,7 @@ export const publicBookingService = {
       // Reintento de una reserva que ya se hizo: la misma confirmación, sin otra cita ni más emails.
       // Con otro email y otro teléfono no es su reserva: sigue como una nueva (y esa hora está ocupada).
       const repeated = await findRepeatedBooking(db, business, service.id, data);
-      if (repeated && sameContact({ email: repeated.clientEmail, phone: repeated.clientPhone }, data, business.timezone)) {
+      if (repeated && sameEmail({ email: repeated.clientEmail }, data)) {
         const { clientEmail, clientPhone: _phone, ...appointment } = repeated;
         const emailSent = await one(
           db,

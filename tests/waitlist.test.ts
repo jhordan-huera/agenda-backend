@@ -1,7 +1,7 @@
 // Lista de espera (spec 047). El interruptor (sólo el propietario, con su entrada en la actividad); anotarse desde
-// la página de reservas (apagada: 404; el mismo email actualiza; el tope de 5; la validación; el email «Te anotamos»
-// sin copia; el aviso de la campana sin nombres); el enlace personal (ver y «Salir de la lista»); el disparador que
-// anota la hora liberada (cancelar, cambiar la hora, borrar al paciente; no con la lista apagada); el aviso del cron
+// la página de reservas (apagada: 404; el mismo email actualiza lo que pidió, no el nombre ni el teléfono; el tope
+// de 5; la validación; el email «Te anotamos» sin copia; el aviso de la campana sin nombres); el enlace personal (ver
+// y «Salir de la lista»); el disparador que anota la hora liberada (cancelar, cambiar la hora, borrar al paciente; no con la lista apagada); el aviso del cron
 // (queueWaitlistOffers, con el momento como parámetro): a quién le sirve, todos a la vez, varias horas en un email,
 // el tope de 3 al día, la anticipación mínima (sin email pero con aviso), sin copia al profesional y el descarte a
 // las 3 horas; reservar cierra la espera; la lista del panel (anotar, quitar, agendar; el rol Profesional, sólo su
@@ -127,6 +127,33 @@ ok(auditCount("waitlist.joined") === 1, "queda en la actividad");
 r = await join({ email: anaEmail, days: [workDay, (workDay + 1) % 7] });
 ok(r.status === 200 && count(`select count(*) from waitlist_entries where email = '${anaEmail}' and closed_at is null`) === 1, "el mismo email actualiza, no repite");
 ok(sql(`select cardinality(days) from waitlist_entries where id = '${anaId}'`) === "2", "con los días nuevos");
+// Con el email de otra persona no se cambian su nombre ni su teléfono, sólo lo que pidió (2026-11-15).
+r = await join({ email: anaEmail, name: "Otra Persona", phone: "+593 99 000 0000" });
+ok(r.status === 200 && r.body.until === addDaysISO(D, 5), "con otro nombre y teléfono responde igual que siempre", r.body);
+ok(
+  sql(`select name || '|' || phone || '|' || cardinality(days) from waitlist_entries where id = '${anaId}'`) === "Ana Espera|+593 98 765 4321|1",
+  "los días cambian, el nombre y el teléfono no",
+  sql(`select name || '|' || phone || '|' || cardinality(days) from waitlist_entries where id = '${anaId}'`),
+);
+const lastJoined = sql(`select body from notifications where to_email = '${anaEmail}' and type = 'waitlist_joined' order by created_at desc limit 1`);
+ok(emailsTo(anaEmail, "waitlist_joined") === 3 && lastJoined.includes("Hola Ana") && !lastJoined.includes("Otra"), "a Ana le llega «Te anotamos» con su nombre", lastJoined.slice(0, 300));
+const lastUpdated = sql(`select summary from audit_logs where business_id = '${businessId}' and action = 'waitlist.updated' order by created_at desc limit 1`);
+ok(lastUpdated.startsWith("Ana Espera cambió") && !lastUpdated.includes("Otra"), "la actividad dice Ana", lastUpdated);
+const teamEmail = mail();
+const teamEntry = sql(
+  `insert into waitlist_entries (business_id, service_id, professional_id, name, email, phone, days, day_parts, until, source, created_by)
+   values ('${businessId}', '${service}', '${valeriaAgenda}', 'Anotada Por Equipo', '${teamEmail}', '+593 98 444 5555', '{${(workDay + 3) % 7}}', '{morning}', '${D}',
+           'dashboard', (select id from users where email = 'elena@demo.com'))
+   returning id`,
+).split("\n")[0];
+r = await join({ email: teamEmail, name: "Otra Persona", phone: "+593 99 000 0000" });
+ok(
+  r.status === 200 && sql(`select name || '|' || phone || '|' || until from waitlist_entries where id = '${teamEntry}'`) === `Anotada Por Equipo|+593 98 444 5555|${addDaysISO(D, 5)}`,
+  "tampoco en la que anotó el equipo",
+  sql(`select name || '|' || phone || '|' || until from waitlist_entries where id = '${teamEntry}'`),
+);
+// Que no cuente en los avisos de más abajo.
+sql(`update waitlist_entries set closed_at = now(), closed_reason = 'removed' where id = '${teamEntry}'`);
 r = await join({ until: addDaysISO(today, 400) });
 ok(r.status === 400, "una fecha más allá de los días hacia adelante, rechazada", r.status);
 r = await join({ days: [] });
@@ -165,7 +192,13 @@ ok(r.status === 200 && entryOf(leaver)[2] === "left", "«Salir de la lista» la 
 ok(auditCount("waitlist.left") === 1, "con su entrada en la actividad");
 r = await link("POST", `/public/waitlist/${leaverToken}/leave`);
 ok(r.status === 200 && auditCount("waitlist.left") === 1, "salir dos veces no hace nada");
-ok(((await link("GET", `/public/waitlist/${leaverToken}`)).body as PublicWaitlistEntry).closed, "el enlace dice que ya no está");
+const closedPage = (await link("GET", `/public/waitlist/${leaverToken}`)).body;
+ok((closedPage as PublicWaitlistEntry).closed, "el enlace dice que ya no está");
+ok(
+  ["name", "email", "phone", "serviceName", "days", "until"].every((key) => !(key in closedPage)) && closedPage.businessSlug === slug,
+  "y ya no muestra sus datos ni lo que pidió (sólo el negocio, para «Ver las horas libres»)",
+  closedPage,
+);
 
 /* ======================================================================================== */
 console.log("\nLa lista del panel");
@@ -195,6 +228,21 @@ r = await ricardo("POST", `${B}/waitlist`, {
   email: ricardoOnly,
 });
 ok(r.status === 200, "y a alguien en la agenda de Ricardo", r.body);
+r = await ricardo("POST", `${B}/waitlist`, {
+  serviceId: service,
+  professionalId: ricardoAgenda,
+  days: [workDay],
+  dayParts: [partOf(T1)],
+  until: addDaysISO(D, 3),
+  name: "Carla Corregida",
+  email: ricardoOnly,
+  phone: "+593 98 222 1111",
+});
+ok(
+  r.status === 200 && (r.body as WaitlistEntry).name === "Carla Corregida" && (r.body as WaitlistEntry).phone === "+593 98 222 1111" && entryOf(ricardoOnly)[0] === (r.body as WaitlistEntry).id,
+  "desde el panel, el equipo sí corrige el nombre y el teléfono (sin repetirla)",
+  r.body,
+);
 let list = (await valeria("GET", `${B}/waitlist`)).body as WaitlistEntry[];
 ok(list.length > 0 && list.every((entry) => entry.professionalId === valeriaAgenda), "el rol Profesional ve sólo las de su agenda", list.length);
 list = (await elena("GET", `${B}/waitlist`)).body as WaitlistEntry[];

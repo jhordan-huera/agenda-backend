@@ -91,15 +91,19 @@ async function resolvePreferences(db: Db, business: Business, data: Preferences,
 
 /**
  * Anota a la persona o, si ya esperaba con ese email el mismo servicio con el mismo profesional, actualiza lo
- * que pidió. Devuelve la espera y si es nueva. Una persona tiene como mucho WAITLIST_MAX_OPEN_PER_PERSON
- * esperas abiertas en el negocio.
+ * que pidió. Devuelve la espera, el nombre con el que quedó y si es nueva. Una persona tiene como mucho
+ * WAITLIST_MAX_OPEN_PER_PERSON esperas abiertas en el negocio.
+ *
+ * Desde la página de reservas nadie prueba que el email sea suyo: ahí se cambian los días, las partes del día y la
+ * fecha, pero el nombre y el teléfono quedan como estaban. Si no, cualquiera con el email de otra persona ponía
+ * los suyos y el consultorio llamaba a quien no era (2026-11-15). Desde el panel, el equipo sí los cambia.
  */
 async function saveEntry(
   db: Db,
   business: Business,
   data: Preferences & { name: string; email: string | null; phone: string; clientId?: string | null },
   origin: { source: "booking_page" | "dashboard"; createdBy: string | null },
-): Promise<{ id: string; token: string; created: boolean }> {
+): Promise<{ id: string; token: string; name: string; created: boolean }> {
   const existing = data.email
     ? await one<{ id: string }>(
         db,
@@ -110,12 +114,12 @@ async function saveEntry(
       )
     : null;
   if (existing) {
-    const row = (await one<{ id: string; token: string }>(
+    const row = (await one<{ id: string; token: string; name: string }>(
       db,
-      `update waitlist_entries set name = $2, phone = $3, days = $4::smallint[], day_parts = $5::text[], until = $6,
-              client_id = coalesce($7::uuid, client_id), updated_at = now()
-        where id = $1 returning id, token`,
-      [existing.id, data.name, data.phone, data.days, data.dayParts, data.until, data.clientId ?? null],
+      `update waitlist_entries set name = case when $8::boolean then name else $2 end, phone = case when $8::boolean then phone else $3 end,
+              days = $4::smallint[], day_parts = $5::text[], until = $6, client_id = coalesce($7::uuid, client_id), updated_at = now()
+        where id = $1 returning id, token, name`,
+      [existing.id, data.name, data.phone, data.days, data.dayParts, data.until, data.clientId ?? null, origin.source === "booking_page"],
     ))!;
     return { ...row, created: false };
   }
@@ -153,7 +157,7 @@ async function saveEntry(
       origin.createdBy,
     ],
   ))!;
-  return { ...row, created: true };
+  return { ...row, name: data.name, created: true };
 }
 
 /** «Te anotamos en la lista de espera», con el enlace para salir. Sin copia al profesional (no es de una cita). */
@@ -249,19 +253,25 @@ export const waitlistService = {
         action: entry.created ? "waitlist.joined" : "waitlist.updated",
         entityType: "waitlist",
         entityId: entry.id,
-        summary: `${data.name} ${entry.created ? "se anotó en" : "cambió lo que pidió en"} la lista de espera: ${describeRequest(service, professional, preferences)}`,
+        summary: `${entry.name} ${entry.created ? "se anotó en" : "cambió lo que pidió en"} la lista de espera: ${describeRequest(service, professional, preferences)}`,
       });
-      await queueJoinedEmail(db, business, entry, { ...preferences, email: data.email }, service, professional);
+      // El saludo, con el nombre que quedó guardado: no con el que escribió quien mandó el formulario.
+      await queueJoinedEmail(db, business, entry, { ...preferences, name: entry.name, email: data.email }, service, professional);
       if (entry.created) await noticeJoined(db, business.id, service, professional);
       return { until: preferences.until };
     });
   },
 
-  /** El enlace personal: lo que pidió y sus datos (para «Reservar esta hora»). Una espera cerrada dice que ya no está. */
+  /**
+   * El enlace personal: lo que pidió y sus datos (para «Reservar esta hora»). Una espera cerrada sólo dice que ya no
+   * está: el enlace sigue en los emails y no debe mostrar a nadie su nombre, su email, su teléfono ni lo que pidió.
+   */
   async get(token: string): Promise<PublicWaitlistEntry> {
     const entry = await findByToken(pool, token);
     if (!entry) throw new AppError("not_found", LINK_NOT_FOUND);
+    if (entry.closedAt !== null) return { closed: true, businessName: entry.businessName, businessSlug: entry.businessSlug };
     return {
+      closed: false,
       businessName: entry.businessName,
       businessSlug: entry.businessSlug,
       serviceName: entry.serviceName,
@@ -272,7 +282,6 @@ export const waitlistService = {
       name: entry.name,
       email: entry.email,
       phone: entry.phone,
-      closed: entry.closedAt !== null,
     };
   },
 

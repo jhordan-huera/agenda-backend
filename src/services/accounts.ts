@@ -3,7 +3,8 @@ import { userColumns } from "../db/columns.ts";
 import { one, type Db } from "../db/pool.ts";
 import type { User } from "../shared/types/index.ts";
 
-const BCRYPT_ROUNDS = 10;
+/** Costo de bcrypt: 12 desde el 2026-11-15 (antes 10). Unos 200 ms por inicio de sesión. */
+const BCRYPT_ROUNDS = 12;
 
 export function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, BCRYPT_ROUNDS);
@@ -11,6 +12,15 @@ export function hashPassword(password: string): Promise<string> {
 
 export function verifyPassword(password: string, hash: string): Promise<boolean> {
   return bcrypt.compare(password, hash);
+}
+
+/** Un hash hecho con un costo menor que el actual: se rehace al iniciar sesión con la contraseña correcta. */
+export function needsRehash(hash: string): boolean {
+  try {
+    return bcrypt.getRounds(hash) < BCRYPT_ROUNDS;
+  } catch {
+    return false;
+  }
 }
 
 export async function isEmailRegistered(db: Db, email: string): Promise<boolean> {

@@ -123,10 +123,16 @@ ok(r.status === 200 && r.body.clientEmail === "pedro.nuevo@example.com", "client
 ok((await countClients()) === before + 1, "se crea un cliente");
 ok(sql(`select source from clients where document_id = '${nuevo}'`) === "booking_page", "creado por la página de reservas");
 r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[2], { documentId: nuevo, name: "Otro Nombre", email: "otro@example.com", phone: "099 555 0001" }));
-ok(r.status === 200 && (await countClients()) === before + 1, "con su cédula y su teléfono escrito de otra forma (099… = +593 99…) no duplica", r.body);
-ok(r.body.clientEmail === "", "y como escribió otro email, la confirmación no muestra el de la ficha", r.body);
+// Desde la spec 050 el teléfono solo no basta: con la cédula y el teléfono de alguien se sabía si era paciente.
 const pedro = (await owner("GET", `${B}/clients`)).body.find((c) => c.documentId === nuevo);
+ok(
+  r.status === 200 && r.body.clientEmail === "otro@example.com" && sql(`select count(*) from clients where claimed_client_id = '${pedro?.id}'`) === "1",
+  "con su cédula y su teléfono pero otro email: la reserva sale igual, «Por verificar», y la confirmación va al email que escribió",
+  r.body,
+);
+ok(!JSON.stringify(r.body).includes("Pedro") && !JSON.stringify(r.body).includes("pedro.nuevo"), "la respuesta no dice nada de la ficha", r.body);
 ok(pedro?.name === "Pedro Nuevo" && pedro.email === "pedro.nuevo@example.com", "y no cambia los datos del cliente", pedro);
+before += 1;
 
 const hijo = cedulaFor("hijo-1");
 r = await pub("POST", "/public/businesses/jhordan/bookings", booking(freeSlots[3], { documentId: hijo, name: "Hijo Nuevo", email: "pedro.nuevo@example.com", phone: "+593 99 555 0003" }));

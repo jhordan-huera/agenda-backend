@@ -32,7 +32,6 @@ import type {
   PlanChangeRequest,
   PlanId,
   PlanUsage,
-  Professional,
   Subscription,
   TeamMember,
   User,
@@ -46,7 +45,6 @@ import { requireAssignableCategory } from "./category-service.ts";
 import { authorize, parseInput, requireUser, type RequestContext } from "./context.ts";
 import { assertRoleAllowed, countUsers, getPlanUsage } from "./plan-limits.ts";
 import { appOrigin, queueEmail } from "./notifications.ts";
-import { listProfessionals } from "./professional-service.ts";
 import { notifyNewBusiness, notifyPlanRequest } from "./push-notices.ts";
 import { logSessionEvent, recordFailedSessionCheck, startSessionCheck, type ClientConnection } from "./session-security.ts";
 
@@ -355,13 +353,6 @@ export const businessService = {
   async isSlugAvailable(ctx: RequestContext, slug: string, excludeBusinessId?: string): Promise<boolean> {
     requireUser(ctx);
     return !(await isSlugTaken(pool, slug.trim().toLowerCase(), isUuid(excludeBusinessId) ? excludeBusinessId : undefined));
-  },
-
-  /** La primera agenda activa (versiones anteriores del panel; las nuevas usan /professionals). */
-  async getProfessional(ctx: RequestContext, businessId: string): Promise<Professional | null> {
-    await authorize(pool, ctx, businessId);
-    const [first] = await listProfessionals(pool, businessId, { activeOnly: true });
-    return first ?? null;
   },
 };
 

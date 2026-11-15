@@ -35,6 +35,11 @@ export interface FileStorage {
   pathOfPublicUrl(url: string): string | null;
   /** Tamaño del archivo subido, o null si no existe. */
   sizeOf(objectPath: string): Promise<number | null>;
+  /**
+   * El tamaño y el tipo con que quedó guardado (el `Content-Type` de la subida, que elige el navegador), o null si no
+   * existe. En la carpeta local el tipo es null: la subida ya exige el que se indicó (file-routes.ts).
+   */
+  fileInfo(objectPath: string): Promise<{ size: number; contentType: string | null } | null>;
   /** Los primeros `bytes` del archivo (para ver qué es de verdad), o null si no existe. */
   readHead(objectPath: string, bytes: number): Promise<Buffer | null>;
   /** Borra los archivos (los que no existan se ignoran). */
@@ -137,6 +142,19 @@ function supabaseStorage(baseUrl: string, key: string, spec: BucketSpec): FileSt
     return `${api}${signedURL}`;
   };
 
+  const fileInfo = async (objectPath: string) => {
+    const folder = path.posix.dirname(objectPath);
+    const name = path.posix.basename(objectPath);
+    const objects = await request<{ name: string; metadata?: { size?: number; mimetype?: string } }[]>("POST", `/object/list/${bucket}`, {
+      prefix: `${folder}/`,
+      search: name,
+      limit: 5,
+    });
+    const found = objects.find((object) => object.name === name);
+    if (typeof found?.metadata?.size !== "number") return null;
+    return { size: found.metadata.size, contentType: found.metadata.mimetype ?? null };
+  };
+
   return {
     kind: "supabase",
     bucket,
@@ -150,17 +168,8 @@ function supabaseStorage(baseUrl: string, key: string, spec: BucketSpec): FileSt
     createDownloadUrl: (objectPath) => signDownload(objectPath),
     publicUrl: (objectPath) => publicBase + encodePath(objectPath),
     pathOfPublicUrl: (url) => pathAfter(publicBase, url),
-    async sizeOf(objectPath) {
-      const folder = path.posix.dirname(objectPath);
-      const name = path.posix.basename(objectPath);
-      const objects = await request<{ name: string; metadata?: { size?: number } }[]>("POST", `/object/list/${bucket}`, {
-        prefix: `${folder}/`,
-        search: name,
-        limit: 5,
-      });
-      const found = objects.find((object) => object.name === name);
-      return found ? (found.metadata?.size ?? null) : null;
-    },
+    sizeOf: async (objectPath) => (await fileInfo(objectPath))?.size ?? null,
+    fileInfo,
     async readHead(objectPath, bytes) {
       // Con la misma URL firmada con que el negocio abre el archivo (la que ya se usa en producción).
       let url: string;
@@ -277,6 +286,11 @@ const LOCAL_PUBLIC_PREFIX = "/api/files/public/";
 function localStorage(spec: BucketSpec): FileStorage {
   const bucket = spec.name;
   const publicBase = `${LOCAL_PUBLIC_PREFIX}${bucket}/`;
+  const sizeOf = async (objectPath: string) =>
+    stat(localFilePath(bucket, objectPath)).then(
+      (info) => info.size,
+      () => null,
+    );
   return {
     kind: "local",
     bucket,
@@ -290,11 +304,10 @@ function localStorage(spec: BucketSpec): FileStorage {
     },
     publicUrl: (objectPath) => publicBase + encodePath(objectPath),
     pathOfPublicUrl: (url) => pathAfter(publicBase, url),
-    async sizeOf(objectPath) {
-      return stat(localFilePath(bucket, objectPath)).then(
-        (info) => info.size,
-        () => null,
-      );
+    sizeOf,
+    async fileInfo(objectPath) {
+      const size = await sizeOf(objectPath);
+      return size === null ? null : { size, contentType: null };
     },
     async readHead(objectPath, bytes) {
       const handle = await open(localFilePath(bucket, objectPath), "r").catch(() => null);

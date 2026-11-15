@@ -93,10 +93,6 @@ businessRoutes.patch(
   "/:businessId",
   handle((req) => businessService.update(req.ctx, req.params.businessId, req.body)),
 );
-businessRoutes.get(
-  "/:businessId/professional",
-  handle((req) => businessService.getProfessional(req.ctx, req.params.businessId)),
-);
 
 // Profesionales (agendas): los ve todo el equipo; los gestionan el propietario y los administradores.
 businessRoutes.get(

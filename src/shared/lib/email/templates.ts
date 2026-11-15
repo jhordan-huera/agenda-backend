@@ -73,7 +73,7 @@ export interface AppointmentEmailData {
   bookedBy?: string;
   /**
    * Reserva «Por verificar» (spec 009): alguna persona escribió la cédula de un paciente del negocio
-   * con otro email y otro teléfono. Sólo lo dice el email al negocio, para que la revise.
+   * con otro email (spec 050: el teléfono solo no basta). Sólo lo dice el email al negocio, para que la revise.
    */
   toVerify?: boolean;
 }
@@ -777,7 +777,7 @@ export const emailTemplates = {
                 kind: "callout",
                 tone: "warning",
                 text:
-                  "Por verificar: la cédula es de un paciente de tu negocio, pero el email y el teléfono no coinciden con su ficha. " +
+                  "Por verificar: la cédula es de un paciente de tu negocio, pero el email no coincide con el de su ficha. " +
                   "La reserva quedó aparte: revísala en la agenda y únela a su ficha si es la misma persona.",
               } satisfies EmailBlock,
             ]

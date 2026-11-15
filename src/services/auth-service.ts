@@ -8,7 +8,7 @@ import { emailTemplates } from "../shared/lib/email/templates.ts";
 import { formatSupportContact, getFullName } from "../shared/lib/format.ts";
 import { changePasswordSchema, loginSchema, registerSchema, themeModeSchema, twoFactorLoginSchema } from "../shared/lib/validations/auth.ts";
 import type { BrandColors, BusinessRole, BusinessStatus, PlatformRole, ThemeMode, TwoFactorChallenge, User } from "../shared/types/index.ts";
-import { hashPassword, verifyPassword } from "./accounts.ts";
+import { hashPassword, needsRehash, verifyPassword } from "./accounts.ts";
 import { logAudit } from "./audit.ts";
 import { parseInput, requireUser, type RequestContext } from "./context.ts";
 import { queueEmail } from "./notifications.ts";
@@ -87,7 +87,7 @@ const sha256 = (value: string) => createHash("sha256").update(value).digest("hex
  * Fijo (de una contraseña aleatoria que nadie conoce, con el mismo coste que las reales): así no
  * se gasta CPU en calcularlo cada vez que arranca el servidor.
  */
-const DUMMY_PASSWORD_HASH = "$2b$10$xLkJUyZsnCD8ukHE6RxWguQec45gX8EGopr0e0EODO/I9dNPtdc1a";
+const DUMMY_PASSWORD_HASH = "$2b$12$9PfTLcduCrpzXq42WwlcRuyP6cf8HmcoIqDRGpO.I/s12UC5QFGeG";
 
 /** La cuenta como la lee el inicio de sesión: con la contraseña, la verificación y el modo de pantalla (spec 019). */
 type LoginRow = User & { passwordHash: string; twoFactor: boolean; themeMode: ThemeMode };
@@ -262,6 +262,14 @@ export const authService = {
       throw new AppError("unauthorized", "Email o contraseña incorrectos.");
     }
     if (!user.isActive) return blockInactive(user, connection);
+    // Las contraseñas de antes del costo 12 se rehacen al entrar (sólo si nadie la cambió entretanto).
+    if (needsRehash(row!.passwordHash)) {
+      await pool.query("update users set password_hash = $2 where id = $1 and password_hash = $3", [
+        user.id,
+        await hashPassword(password),
+        row!.passwordHash,
+      ]);
+    }
     // Con la verificación en dos pasos, la sesión se abre al escribir el código (verifyTwoFactor).
     if (row?.twoFactor) {
       return { twoFactor: { twoFactorRequired: true, challenge: await createLoginChallenge(pool, user.id, remember) } };

@@ -97,11 +97,12 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   el dígito verificador de la cédula ecuatoriana (spec 038, 2026-10-29; riesgo aceptado: una cédula mal
   escrita puede crear un paciente repetido). La reserva online no reconoce al paciente por la cédula ni
   muestra sus datos: siempre pide nombre, email y teléfono.
-- Si la cédula de una reserva online es de un paciente y no coinciden ni su email ni su teléfono, la
-  reserva se acepta igual que con una cédula nueva (nadie de fuera nota la diferencia) y queda «Por
-  verificar»: un paciente aparte, sin cédula, que no da acceso a la ficha. El negocio la une a la
-  ficha o la cancela; el rol Profesional no la une. Vale para cada persona de una sesión
-  (2026-10-14).
+- Si la cédula de una reserva online es de un paciente y no coincide su email, la reserva se acepta
+  igual que con una cédula nueva (nadie de fuera nota la diferencia) y queda «Por verificar»: un
+  paciente aparte, sin cédula, que no da acceso a la ficha. El negocio la une a la ficha o la cancela;
+  el rol Profesional no la une. Vale para cada persona de una sesión (2026-10-14). Desde el
+  2026-11-15 el teléfono no basta: con la cédula y el teléfono de alguien se sabía si era paciente
+  (spec 050, decisión del dueño).
 - Las sesiones con «Recordarme» duran como mucho 30 días desde que se inician, y 7 las del super
   admin (2026-10-14).
 - La fecha del consentimiento la pone el sistema. La de cada evolución la elige quien la registra (hoy
@@ -163,8 +164,8 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   admin habilite con su interruptor; el negocio no lo cambia. Cada paciente recibe sus avisos, la
   copia al profesional sale una vez y la hora se ocupa una sola vez (2026-10-13).
 - Con ese interruptor, un servicio puede ser para 2 o 3 personas. La página de reservas pide los
-  datos de cada una y reconoce a cada persona por su cédula como a quien reserva (si no coinciden
-  su email o su teléfono, no se usa su ficha y queda «Por verificar»); las que no existen se registran como nuevas. Quien
+  datos de cada una y reconoce a cada persona por su cédula como a quien reserva (si no coincide
+  su email, no se usa su ficha y queda «Por verificar»); las que no existen se registran como nuevas. Quien
   reserva es el paciente principal y sólo él recibe los datos de pago. En el panel, si faltan
   pacientes, se avisa sin bloquear (2026-10-13).
 - El panel del super admin va en tarjetas, con botón para pasar a lista en Negocios y Usuarios, y
@@ -418,4 +419,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.47.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-12
+**Versión**: 1.48.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-15

@@ -1,6 +1,6 @@
 // Copia de agenda-front/src/lib/validations/booking.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
-import { dateField, documentIdField, emailField, homeVisitSchema, optionalText, personNameField, requiredPhoneField, timeField } from "./fields.ts";
+import { dateField, documentIdField, emailField, optionalText, personNameField, publicHomeVisitSchema, requiredPhoneField, timeField } from "./fields.ts";
 
 /**
  * Otra persona de una sesión en pareja o en familia (servicio de 2 o 3 personas): los mismos datos
@@ -16,8 +16,8 @@ export const bookingPersonSchema = z.object({
 /**
  * Reserva desde la página pública. El paciente escribe siempre su cédula, nombre, email y teléfono:
  * la página no dice si la cédula ya es de un cliente del negocio. Si lo es, la API sólo une la
- * reserva a esa ficha cuando coinciden el email o el teléfono guardados; si no, la reserva sale igual
- * y queda «Por verificar» para que el negocio la revise. En un servicio para varias
+ * reserva a esa ficha cuando coincide el email guardado (el teléfono solo no basta, spec 050); si no,
+ * la reserva sale igual y queda «Por verificar» para que el negocio la revise. En un servicio para varias
  * personas, quien reserva es el paciente principal y las demás van en `extraPatients`.
  */
 export const publicBookingSchema = z
@@ -33,7 +33,7 @@ export const publicBookingSchema = z
     extraPatients: z.array(bookingPersonSchema).max(2, "Una sesión puede tener como máximo 3 personas.").default([]),
     notes: optionalText(500),
     /** null = cita en el local (o virtual). A domicilio, la ubicación exacta marcada en el mapa es obligatoria. */
-    homeVisit: homeVisitSchema.nullable().default(null),
+    homeVisit: publicHomeVisitSchema.nullable().default(null),
     /** Por videollamada. */
     isVirtual: z.boolean().default(false),
     /** Con quién se atiende; null: el primer profesional libre a esa hora. */

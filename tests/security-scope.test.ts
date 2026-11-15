@@ -144,7 +144,8 @@ console.log("El ataque: reservarse una cita con la cédula de un paciente ajeno"
 const ajeno = await strangerPatient("ajeno");
 let access = await canOpen(ajeno.id);
 ok(!access.client && access.record === 404, "antes: su ficha y su historia no existen para Valeria (404)", access);
-r = await bookOnline({ documentId: ajeno.documentId, phone: ajeno.phone });
+// Con su cédula y su email (con sólo el teléfono, desde la spec 050, ni llega a su ficha: queda «Por verificar»).
+r = await bookOnline({ documentId: ajeno.documentId, email: ajeno.email });
 ok(r.status === 200 && r.body.professionalId === valeriaAgenda.id, "Valeria se reserva una cita online con esa cédula, en su agenda", r.body);
 const attackId: string = r.body.appointmentId;
 ok((await pendingOf(attackId)) === true, "la cita queda marcada: no da acceso al paciente", await pendingOf(attackId));

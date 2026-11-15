@@ -63,10 +63,16 @@ app.use(cors({ origin: config.frontendUrls, credentials: true }));
 // Las imágenes van al almacenamiento, pero las antiguas (data URL) aún llegan sin cambios dentro del
 // JSON al guardar el perfil o el negocio, hasta pasarlas con src/db/move-images-to-storage.ts (npm run db:move-images).
 // Importar pacientes (spec 012) lee su cuerpo en la ruta, de hasta 4 MB y después de comprobar la
-// sesión (ver business-routes.ts): ninguna otra ruta necesita más de 2 MB.
+// sesión (ver business-routes.ts): ninguna otra ruta necesita más de 2 MB. Las que atienden sin sesión (las
+// públicas, el acceso y los avisos del celular) reciben datos pequeños: 100 kB (2026-11-15).
 const jsonBody = express.json({ limit: "2mb" });
+const smallJsonBody = express.json({ limit: "100kb" });
 const CLIENT_IMPORT_PATH = /^\/api\/businesses\/[^/]+\/clients\/import$/;
-app.use((req, res, next) => (req.method === "POST" && CLIENT_IMPORT_PATH.test(req.path) ? next() : jsonBody(req, res, next)));
+const SMALL_BODY_PATH = /^\/api\/(public|auth|push)(\/|$)/;
+app.use((req, res, next) => {
+  if (req.method === "POST" && CLIENT_IMPORT_PATH.test(req.path)) return next();
+  return (SMALL_BODY_PATH.test(req.path) ? smallJsonBody : jsonBody)(req, res, next);
+});
 app.use(cookieParser());
 // En AWS Lambda la ejecución se congela al responder: los emails que la petición puso en cola (y
 // los avisos por ntfy y en el celular) se envían antes de que salga la respuesta (ver flushEmailDelivery).
