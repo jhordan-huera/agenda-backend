@@ -314,9 +314,10 @@ export const waitlistService = {
 
   /** «Anotar» desde el panel: un paciente que ya existe o datos nuevos (el email es opcional). */
   async add(ctx: RequestContext, businessId: string, input: unknown): Promise<WaitlistEntry> {
-    const data = parseInput(waitlistEntrySchema, input);
     return transaction(async (db) => {
+      // Primero quién pide, después lo que manda: sin sesión no se valida nada (2026-11-14).
       const actor = await authorize(db, ctx, businessId, "appointments.manage", { lock: true });
+      const data = parseInput(waitlistEntrySchema, input);
       const { professionalId: ownAgenda } = await agendaScope(db, actor, businessId);
       const business = await loadBusiness(db, businessId);
       if (!waitlistEnabled(business)) throw new AppError("validation", "Enciende la lista de espera en Configuración → Agenda.");

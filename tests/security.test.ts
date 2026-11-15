@@ -9,6 +9,7 @@ import { outgoingContent } from "../src/services/mailer.ts";
 import { createBusinessWithOwner } from "./helpers/business.mjs";
 import { startApi } from "./helpers/harness.ts";
 import { emailTemplates } from "../src/shared/lib/email/templates.ts";
+import { personNameField } from "../src/shared/lib/validations/fields.ts";
 import { viaProxy } from "./helpers/proxy.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
@@ -208,6 +209,31 @@ r = await owner("PUT", `${ownerBusiness}/services/${service.id}`, { ...full, pri
 ok(r.status === 200, "ocultar el precio de un servicio", r.body);
 const hidden = (await agent()("GET", "/public/businesses/jhordan")).body.services.find((s: any) => s.id === service.id);
 ok(hidden.price === 0 && hidden.homeVisitFee === 0 && hidden.showPrice === false, "con el precio oculto no se envía el precio", hidden);
+
+console.log("Textos enormes que hacían trabajar a la API (la regla del nombre, 2026-11-14)");
+// Con la regla vieja, «a-a-a-…» de 1 MB tardaba minutos: el tiempo crecía con el cuadrado del largo.
+const slowName = "a-".repeat(500_000);
+const timed = async (work: () => Promise<{ status: number; body: any }>) => {
+  const started = performance.now();
+  const reply = await work();
+  return { ...reply, ms: Math.round(performance.now() - started) };
+};
+let slow = await timed(() => agent()("POST", `${ownerBusiness}/waitlist`, { name: slowName, phone: "0991234567" }));
+ok(slow.status === 401 && slow.ms < 3000, "sin sesión, «Anotar» responde 401 sin validar el cuerpo", { status: slow.status, ms: slow.ms });
+slow = await timed(() => owner("POST", `${ownerBusiness}/waitlist`, { name: slowName, phone: "0991234567" }));
+ok(slow.status === 400 && slow.ms < 3000, "con sesión, un nombre enorme se rechaza al momento", { status: slow.status, ms: slow.ms });
+slow = await timed(() => agent()("POST", `${ownerBusiness}/clients`, { name: slowName }));
+ok(slow.status === 401 && slow.ms < 3000, "las demás rutas del panel, también 401 antes de leer nada", { status: slow.status, ms: slow.ms });
+const nameField = personNameField("El nombre");
+let started = performance.now();
+const tooLong = nameField.safeParse("a-".repeat(1_000_000));
+ok(!tooLong.success && performance.now() - started < 500, "la regla sola con 2 MB: al momento", Math.round(performance.now() - started));
+started = performance.now();
+ok(!nameField.safeParse(`${"a-".repeat(55)}x.com`).success && performance.now() - started < 50, "120 caracteres con un enlace: se rechazan al momento");
+ok(
+  nameField.safeParse("Ana María Pérez-Soto").success && !nameField.safeParse("visita ana.com").success && !nameField.safeParse("pagina-web.ec").success,
+  "sigue aceptando nombres y rechazando enlaces",
+);
 
 console.log("CAPTCHA (Cloudflare Turnstile, simulado)");
 const verifications: any[] = [];

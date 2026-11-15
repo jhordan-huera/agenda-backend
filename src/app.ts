@@ -6,7 +6,7 @@ import { config } from "./config.ts";
 import { pool } from "./db/pool.ts";
 import { errorHandler, notFoundHandler } from "./http/errors.ts";
 import { fromFrontendProxy } from "./http/client-ip.ts";
-import { loadSession, requireAjaxHeader } from "./http/session.ts";
+import { loadSession, requireAjaxHeader, requireSignedIn } from "./http/session.ts";
 import { noStore } from "./http/no-store.ts";
 import { authRoutes } from "./routes/auth-routes.ts";
 import { businessRoutes, imageRoutes, userRoutes } from "./routes/business-routes.ts";
@@ -134,10 +134,11 @@ api.use("/public", (req, _res, next) => {
 }, publicRoutes);
 api.use(loadSession);
 api.use("/auth", authRoutes);
-api.use("/users", userRoutes);
-api.use("/images", imageRoutes);
-api.use("/businesses", businessRoutes);
-api.use("/admin", adminRoutes);
+// Sin sesión, 401 antes de leer o validar el cuerpo (ver requireSignedIn). /push y /auth tienen las suyas.
+api.use("/users", requireSignedIn, userRoutes);
+api.use("/images", requireSignedIn, imageRoutes);
+api.use("/businesses", requireSignedIn, businessRoutes);
+api.use("/admin", requireSignedIn, adminRoutes);
 api.use("/push", pushRoutes);
 
 // Las respuestas de /api, sin caché salvo las rutas que ponen la suya (ver http/no-store.ts).

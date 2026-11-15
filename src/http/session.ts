@@ -1,7 +1,7 @@
 import type { CookieOptions, RequestHandler, Response } from "express";
 import { config } from "../config.ts";
 import { findSessionByToken, type IssuedSession } from "../services/auth-service.ts";
-import { superAdminNeedsTwoFactor, TWO_FACTOR_REQUIRED_CODE, TWO_FACTOR_REQUIRED_MESSAGE } from "../services/context.ts";
+import { requireUser, superAdminNeedsTwoFactor, TWO_FACTOR_REQUIRED_CODE, TWO_FACTOR_REQUIRED_MESSAGE } from "../services/context.ts";
 import { AppError } from "./errors.ts";
 
 const COOKIE_NAME = "agendo_session";
@@ -53,6 +53,16 @@ export const loadSession: RequestHandler = async (req, res, next) => {
 export const requireSuperAdminTwoFactor: RequestHandler = (req, res, next) => {
   if (!superAdminNeedsTwoFactor(req.ctx)) return next();
   res.status(403).json({ error: { code: TWO_FACTOR_REQUIRED_CODE, message: TWO_FACTOR_REQUIRED_MESSAGE } });
+};
+
+/**
+ * Las rutas del panel (/businesses, /users, /images, /admin) sólo atienden a quien tiene sesión: sin ella,
+ * el mismo 401 que daría cada servicio, pero antes de validar nada de lo que manda la petición. Así un
+ * desconocido no hace trabajar a la API con cuerpos grandes (2026-11-14, el fallo de la regla del nombre).
+ */
+export const requireSignedIn: RequestHandler = (req, _res, next) => {
+  requireUser(req.ctx);
+  next();
 };
 
 /**
