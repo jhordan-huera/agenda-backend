@@ -13,7 +13,9 @@ import { clinicalTemplateService } from "../services/clinical-template-service.t
 import { clientImportService } from "../services/client-import-service.ts";
 import { requireUser } from "../services/context.ts";
 import { controlReminderService } from "../services/control-reminders.ts";
+import { loyaltyScanService } from "../services/loyalty-scan.ts";
 import { loyaltyService } from "../services/loyalty.ts";
+import { patientAccountService } from "../services/patient-accounts.ts";
 import { dataExportService } from "../services/data-export-service.ts";
 import {
   appointmentService,
@@ -532,6 +534,23 @@ businessRoutes.get(
 businessRoutes.post(
   "/:businessId/loyalty/rewards/:rewardId/redeem",
   handle((req) => loyaltyService.redeem(req.ctx, req.params.businessId, req.params.rewardId, req.body)),
+);
+// «Escanear» el QR de la cuenta del paciente (spec 052): identificarlo, unir la cuenta a su ficha y marcar la cita.
+businessRoutes.post(
+  "/:businessId/scan",
+  handle((req) => loyaltyScanService.scan(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.post(
+  "/:businessId/scan/link",
+  handle((req) => loyaltyScanService.link(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.post(
+  "/:businessId/scan/complete",
+  handle((req) => loyaltyScanService.complete(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.post(
+  "/:businessId/clients/:clientId/patient-reset-link",
+  handle((req) => patientAccountService.resetLink(req.ctx, req.params.businessId, req.params.clientId)),
 );
 businessRoutes.get(
   "/:businessId/clients/:clientId/loyalty",

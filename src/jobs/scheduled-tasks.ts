@@ -3,6 +3,7 @@ import { deleteExpiredRateLimits } from "../http/rate-limit-store.ts";
 import { accountChangeNotice, findAccountChanges } from "../services/account-alerts.ts";
 import { refreshAnalytics, type AnalyticsRefresh } from "../services/analytics-service.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
+import { deleteExpiredPatientSessions } from "../services/patient-accounts.ts";
 import {
   billableBusinessIds,
   deleteStalePendingBillingReceipts,
@@ -490,6 +491,7 @@ export async function runScheduledTasks({ monthlyReportNow = false }: { monthlyR
   const controlReminders = await queueControlReminders();
   const emails = await processEmailQueue({ maxBatches: MAX_EMAIL_BATCHES, deadline: started + EMAIL_BUDGET_MS });
   await deleteExpiredSessions();
+  await deleteExpiredPatientSessions();
   await deleteStalePendingAttachments();
   await deleteStalePendingReceipts();
   await deleteStalePendingBillingReceipts();

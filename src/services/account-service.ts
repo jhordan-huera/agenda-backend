@@ -22,6 +22,7 @@ import {
   onboardingSchema,
   professionalScopeSchema,
   profileSchema,
+  socialLinksSchema,
 } from "../shared/lib/validations/business.ts";
 import { weeklyScheduleSchema } from "../shared/lib/validations/schedule.ts";
 import { serviceSchema } from "../shared/lib/validations/service.ts";
@@ -253,6 +254,7 @@ export const businessService = {
       clientRequiredFields: _clientRequiredFields,
       multiClientAppointments: _multiClientAppointments,
       paymentReminders: _paymentReminders,
+      socialLinks,
       ...profile
     } = (input ?? {}) as Record<string, unknown>;
     const profileData = Object.keys(profile).length ? parseInput(businessProfileSchema.partial(), profile) : {};
@@ -262,6 +264,8 @@ export const businessService = {
     // undefined: no se tocan; null: vuelven los colores de Agenda360.
     const brand = brandColors === undefined ? undefined : parseInput(brandColorsSchema, brandColors);
     const scope = professionalScope === undefined ? null : parseInput(professionalScopeSchema, professionalScope);
+    // Las redes del negocio (spec 052): undefined, no se tocan.
+    const social = socialLinks === undefined ? null : parseInput(socialLinksSchema, socialLinks);
 
     const updated = await transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "business.manage", { lock: true });
@@ -320,6 +324,14 @@ export const businessService = {
         values.push(scope);
         assignments.push(`professional_scope = $${values.length}`);
       }
+      if (social !== null) {
+        values.push(social.facebook, social.instagram, social.tiktok);
+        assignments.push(
+          `facebook_url = $${values.length - 2}`,
+          `instagram_url = $${values.length - 1}`,
+          `tiktok_url = $${values.length}`,
+        );
+      }
       const business = assignments.length
         ? await one<Business>(
             db,
@@ -339,7 +351,9 @@ export const businessService = {
               ? "los colores de la marca"
               : scope !== null
                 ? "qué pacientes ve cada profesional"
-                : "los datos del negocio";
+                : social !== null
+                  ? "las redes del negocio"
+                  : "los datos del negocio";
       await logAudit(db, {
         businessId,
         actor,

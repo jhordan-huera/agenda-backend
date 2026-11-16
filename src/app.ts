@@ -11,6 +11,7 @@ import { noStore } from "./http/no-store.ts";
 import { authRoutes } from "./routes/auth-routes.ts";
 import { businessRoutes, imageRoutes, userRoutes } from "./routes/business-routes.ts";
 import { fileRoutes } from "./routes/file-routes.ts";
+import { patientRoutes } from "./routes/patient-routes.ts";
 import { adminRoutes, publicRoutes } from "./routes/platform-routes.ts";
 import { pushRoutes } from "./routes/push-routes.ts";
 import { flushAlerts } from "./services/alerts.ts";
@@ -68,7 +69,7 @@ app.use(cors({ origin: config.frontendUrls, credentials: true }));
 const jsonBody = express.json({ limit: "2mb" });
 const smallJsonBody = express.json({ limit: "100kb" });
 const CLIENT_IMPORT_PATH = /^\/api\/businesses\/[^/]+\/clients\/import$/;
-const SMALL_BODY_PATH = /^\/api\/(public|auth|push)(\/|$)/;
+const SMALL_BODY_PATH = /^\/api\/(public|auth|push|patient)(\/|$)/;
 app.use((req, res, next) => {
   if (req.method === "POST" && CLIENT_IMPORT_PATH.test(req.path)) return next();
   return (SMALL_BODY_PATH.test(req.path) ? smallJsonBody : jsonBody)(req, res, next);
@@ -138,6 +139,11 @@ api.use("/public", (req, _res, next) => {
   req.ctx = { user: null, sessionId: null };
   next();
 }, publicRoutes);
+// La cuenta del paciente (spec 052): su propia cookie; nunca la sesión del equipo.
+api.use("/patient", (req, _res, next) => {
+  req.ctx = { user: null, sessionId: null };
+  next();
+}, patientRoutes);
 api.use(loadSession);
 api.use("/auth", authRoutes);
 // Sin sesión, 401 antes de leer o validar el cuerpo (ver requireSignedIn). /push y /auth tienen las suyas.

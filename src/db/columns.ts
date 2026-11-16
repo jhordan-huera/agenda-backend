@@ -55,7 +55,8 @@ const businessOwnColumns = columns({
  */
 export const businessColumns = (alias?: string) => {
   const c = (column: string) => (alias ? `${alias}.${column}` : column);
-  return `${businessOwnColumns(alias)}, json_build_object('enabled', ${c("payment_reminders")}, 'days', ${c("payment_reminder_days")}) as "paymentReminders"`;
+  return `${businessOwnColumns(alias)}, json_build_object('enabled', ${c("payment_reminders")}, 'days', ${c("payment_reminder_days")}) as "paymentReminders",
+    json_build_object('facebook', ${c("facebook_url")}, 'instagram', ${c("instagram_url")}, 'tiktok', ${c("tiktok_url")}) as "socialLinks"`;
 };
 
 const professionalOwnColumns = columns({

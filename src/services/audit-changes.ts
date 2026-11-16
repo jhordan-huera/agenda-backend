@@ -13,6 +13,7 @@ import type {
   Schedule,
   Service,
   ServiceMode,
+  SocialLinks,
 } from "../shared/types/index.ts";
 
 /**
@@ -207,6 +208,12 @@ const BUSINESS_FIELDS: ChangeField<BusinessForAudit>[] = [
     key: "professionalScope",
     label: "Pacientes que ve cada profesional",
     format: (value: string) => (value === "own" ? "Sólo los suyos" : "Todos"),
+  },
+  {
+    key: "socialLinks",
+    label: "Redes",
+    format: (value: SocialLinks | undefined) =>
+      [value?.facebook && "Facebook", value?.instagram && "Instagram", value?.tiktok && "TikTok"].filter(Boolean).join(", ") || "Ninguna",
   },
   {
     key: "brandColors",

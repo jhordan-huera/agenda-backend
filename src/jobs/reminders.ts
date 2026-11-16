@@ -1,5 +1,6 @@
 import { config } from "../config.ts";
 import { deleteExpiredSessions } from "../services/auth-service.ts";
+import { deleteExpiredPatientSessions } from "../services/patient-accounts.ts";
 import {
   queueAllReminders,
   queueCalendarInvites,
@@ -65,6 +66,7 @@ export function startReminderJob(): () => void {
     const controls = await queueControlReminders();
     if (controls.queued > 0) console.info(`[controles] ${controls.queued} recordatorio(s) de control en cola`);
     await deleteExpiredSessions();
+    await deleteExpiredPatientSessions();
   });
   const stopCalendar = every(config.calendarInviteJobIntervalMinutes, "calendario", async () => {
     const { queued, failures } = await queueCalendarInvites();
