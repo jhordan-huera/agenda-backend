@@ -75,6 +75,25 @@ async function benefitsOf(db: Db, businessId: string, onlyActive = false): Promi
   );
 }
 
+/** Un beneficio activo, sin contar cuántas veces se ganó (lo que necesitan el desbloqueo y el próximo premio). */
+type ActiveBenefit = Omit<LoyaltyBenefit, "timesWon" | "isActive">;
+
+/**
+ * Los beneficios activos de menos a más citas, en una consulta liviana: la usan el desbloqueo (en cada cita que pasa a
+ * Atendida) y el próximo premio, así que no cuenta las recompensas de cada uno como la lista del panel.
+ */
+async function activeBenefits(db: Db, businessId: string): Promise<ActiveBenefit[]> {
+  return many<ActiveBenefit>(
+    db,
+    `select b.id, b.name, b.description, b.visits_required as "visitsRequired", b.kind, b.value::float8 as value,
+            b.service_id as "serviceId", s.name as "serviceName", b.conditions, b.valid_days as "validDays"
+       from loyalty_benefits b left join services s on s.id = b.service_id
+      where b.business_id = $1 and b.archived_at is null and b.is_active
+      order by b.visits_required`,
+    [businessId],
+  );
+}
+
 const kindLabel = (kind: string) => BENEFIT_KINDS.find((item) => item.value === kind)?.label ?? kind;
 
 function benefitChanges(before: LoyaltyBenefit | null, after: LoyaltyBenefit): AuditChange[] {
@@ -150,20 +169,36 @@ const stampsIn = async (db: Db, clientId: string, cardNumber: number) =>
  * una vez por tarjeta) y, con «Empezar una tarjeta nueva», pasa a la siguiente al ganar el último. Con la tarjeta
  * apagada, nada.
  */
-async function unlock(db: Db, businessId: string, clientId: string, program: LoyaltyProgram): Promise<UnlockedReward[]> {
-  if (!program.enabled) return [];
+async function unlock(
+  db: Db,
+  businessId: string,
+  clientId: string,
+  program: LoyaltyProgram,
+  benefits: ActiveBenefit[],
+): Promise<UnlockedReward[]> {
+  if (!program.enabled || benefits.length === 0) return [];
   const cardNumber = await cardOf(db, businessId, clientId);
   const stamps = await stampsIn(db, clientId, cardNumber);
-  const benefits = (await benefitsOf(db, businessId, true)).filter((benefit) => benefit.visitsRequired <= stamps);
+  const reachable = benefits.filter((benefit) => benefit.visitsRequired <= stamps);
   const unlocked: UnlockedReward[] = [];
-  const { timezone } = (await one<{ timezone: string }>(db, "select timezone from businesses where id = $1", [businessId]))!;
-  for (const benefit of benefits) {
-    const won = await one(db, "select 1 from loyalty_rewards where client_id = $1 and benefit_id = $2 and card_number = $3", [
-      clientId,
-      benefit.id,
-      cardNumber,
-    ]);
-    if (won) continue;
+  // Lo ya ganado en esta tarjeta, en una sola consulta.
+  const won = new Set(
+    reachable.length === 0
+      ? []
+      : (
+          await many<{ benefitId: string }>(
+            db,
+            `select benefit_id as "benefitId" from loyalty_rewards where client_id = $1 and card_number = $2`,
+            [clientId, cardNumber],
+          )
+        ).map((row) => row.benefitId),
+  );
+  const pending = reachable.filter((benefit) => !won.has(benefit.id));
+  const timezone =
+    pending.length === 0
+      ? ""
+      : (await one<{ timezone: string }>(db, "select timezone from businesses where id = $1", [businessId]))!.timezone;
+  for (const benefit of pending) {
     for (let attempt = 0; attempt < 8; attempt++) {
       const row = await one<UnlockedReward>(
         db,
@@ -202,7 +237,7 @@ async function unlock(db: Db, businessId: string, clientId: string, program: Loy
     }
   }
   if (program.afterLast === "restart") {
-    const last = (await benefitsOf(db, businessId, true)).at(-1);
+    const last = benefits.at(-1);
     if (last && stamps >= last.visitsRequired) {
       await db.query("update loyalty_cards set card_number = card_number + 1 where client_id = $1 and card_number = $2", [clientId, cardNumber]);
     }
@@ -247,6 +282,7 @@ export async function onAppointmentStatus(
   }
   const program = await programOf(db, after.businessId);
   if (!program.enabled) return [];
+  const benefits = await activeBenefits(db, after.businessId);
   const clientIds = (
     await many<{ id: string }>(db, "select id from clients where id = any($1::uuid[]) and business_id = $2 and is_active", [
       appointmentClientIds(after),
@@ -266,22 +302,39 @@ export async function onAppointmentStatus(
        returning 1`,
       [after.id, clientId, after.businessId, cardNumber],
     );
-    if (stamped) unlocked.push(...(await unlock(db, after.businessId, clientId, program)));
+    if (stamped) unlocked.push(...(await unlock(db, after.businessId, clientId, program, benefits)));
   }
   return unlocked;
 }
 
-/** Al guardar un beneficio o encender la tarjeta: lo que ya alcanzaban los pacientes se desbloquea (sin email). */
+/**
+ * Al guardar un beneficio: lo que ya alcanzaban los pacientes se desbloquea (sin email). Una sola consulta encuentra
+ * las tarjetas a las que les falta algún premio que ya alcanzan; sólo esas se revisan (no todas las del negocio).
+ */
 async function unlockAll(db: Db, businessId: string): Promise<void> {
   const program = await programOf(db, businessId);
   if (!program.enabled) return;
-  const cards = await many<{ clientId: string }>(
+  const benefits = await activeBenefits(db, businessId);
+  if (benefits.length === 0) return;
+  const candidates = await many<{ clientId: string }>(
     db,
-    `select k.client_id as "clientId" from loyalty_cards k join clients c on c.id = k.client_id and c.is_active
-      where k.business_id = $1 order by k.client_id`,
+    `with current_cards as (
+       select k.client_id, k.card_number, count(s.client_id)::int as stamps
+         from loyalty_cards k
+         join clients c on c.id = k.client_id and c.is_active
+         left join loyalty_stamps s on s.client_id = k.client_id and s.card_number = k.card_number and s.voided_at is null
+        where k.business_id = $1
+        group by k.client_id, k.card_number
+     )
+     select cc.client_id as "clientId" from current_cards cc
+      where exists (
+        select 1 from loyalty_benefits b
+         where b.business_id = $1 and b.archived_at is null and b.is_active and b.visits_required <= cc.stamps
+           and not exists (select 1 from loyalty_rewards r where r.client_id = cc.client_id and r.benefit_id = b.id and r.card_number = cc.card_number))
+      order by cc.client_id`,
     [businessId],
   );
-  for (const { clientId } of cards) await unlock(db, businessId, clientId, program);
+  for (const { clientId } of candidates) await unlock(db, businessId, clientId, program, benefits);
 }
 
 /**
@@ -318,7 +371,7 @@ export async function mergeLoyalty(db: Db, businessId: string, fromClientId: str
       [toClientId, businessId, from.cardNumber, from.accountId, from.linkedAt, from.linkedBy],
     );
   }
-  await unlock(db, businessId, toClientId, await programOf(db, businessId));
+  await unlock(db, businessId, toClientId, await programOf(db, businessId), await activeBenefits(db, businessId));
 }
 
 /* ---------------------------------------------------- Lo que ve el equipo -- */
@@ -334,27 +387,45 @@ const REWARD_COLUMNS = `r.id, r.client_id as "clientId", c.name as "clientName",
 
 const withCode = (reward: LoyaltyReward): LoyaltyReward => ({ ...reward, code: formatRewardCode(reward.code) });
 
-function nextOf(benefits: LoyaltyBenefit[], stamps: number): LoyaltyNext | null {
+function nextOf(benefits: ActiveBenefit[], stamps: number): LoyaltyNext | null {
   const next = benefits.find((benefit) => benefit.visitsRequired > stamps);
   return next ? { benefitId: next.id, name: next.name, visitsRequired: next.visitsRequired, missing: next.visitsRequired - stamps } : null;
 }
 
 type MemberRow = Omit<LoyaltyMember, "level" | "next">;
 
-async function membersOf(db: Db, businessId: string, clientId: string | null): Promise<LoyaltyMember[]> {
+/**
+ * Las tarjetas del negocio (o de esos pacientes) con sus sellos y sus premios disponibles. Los conteos se agrupan una
+ * vez por tabla (no una subconsulta por cada tarjeta): «Pacientes» de un negocio grande sigue siendo una consulta.
+ */
+async function membersOf(db: Db, businessId: string, clientIds: string[] | null): Promise<LoyaltyMember[]> {
   const rows = await many<MemberRow>(
     db,
-    `select k.client_id as "clientId", c.name as "clientName", c.phone as "clientPhone", k.card_number as "cardNumber",
-            (select count(*) from loyalty_stamps s where s.client_id = k.client_id and s.card_number = k.card_number and s.voided_at is null)::int as stamps,
-            (select count(*) from loyalty_stamps s where s.client_id = k.client_id and s.voided_at is null)::int as "totalStamps",
-            (select count(*) from loyalty_rewards r where r.client_id = k.client_id and r.status = 'available'
-                and (r.expires_at is null or r.expires_at > now()))::int as "availableRewards",
-            k.patient_account_id is not null as "hasAccount"
-       from loyalty_cards k join clients c on c.id = k.client_id
-      where k.business_id = $1 and ($2::uuid is null or k.client_id = $2::uuid)`,
-    [businessId, clientId],
+    `with cards as (
+       select k.client_id, k.card_number, k.patient_account_id from loyalty_cards k
+        where k.business_id = $1 and ($2::uuid[] is null or k.client_id = any($2::uuid[]))
+     ),
+     stamped as (
+       select s.client_id, count(*) filter (where s.card_number = cards.card_number)::int as stamps, count(*)::int as total
+         from loyalty_stamps s join cards on cards.client_id = s.client_id
+        where s.voided_at is null
+        group by s.client_id
+     ),
+     available as (
+       select r.client_id, count(*)::int as count
+         from loyalty_rewards r join cards on cards.client_id = r.client_id
+        where r.status = 'available' and (r.expires_at is null or r.expires_at > now())
+        group by r.client_id
+     )
+     select cards.client_id as "clientId", c.name as "clientName", c.phone as "clientPhone", cards.card_number as "cardNumber",
+            coalesce(stamped.stamps, 0) as stamps, coalesce(stamped.total, 0) as "totalStamps",
+            coalesce(available.count, 0) as "availableRewards", cards.patient_account_id is not null as "hasAccount"
+       from cards join clients c on c.id = cards.client_id
+       left join stamped on stamped.client_id = cards.client_id
+       left join available on available.client_id = cards.client_id`,
+    [businessId, clientIds],
   );
-  const benefits = await benefitsOf(db, businessId, true);
+  const benefits = rows.length === 0 ? [] : await activeBenefits(db, businessId);
   return rows.map((row) => ({ ...row, level: levelOf(row.cardNumber), next: nextOf(benefits, row.stamps) }));
 }
 
@@ -367,9 +438,7 @@ export async function loyaltyProgressFor(
   const progress = new Map<string, { programName: string; stamps: number; next: { name: string; missing: number } | null }>();
   const program = await programOf(db, businessId);
   if (!program.enabled || clientIds.length === 0) return progress;
-  for (const clientId of clientIds) {
-    const [member] = await membersOf(db, businessId, clientId);
-    if (!member) continue;
+  for (const member of await membersOf(db, businessId, clientIds)) {
     progress.set(member.clientId, {
       programName: program.name,
       stamps: member.stamps,
@@ -539,7 +608,7 @@ export const loyaltyService = {
     await assertClientInScope(pool, await agendaScope(pool, actor, businessId), clientId);
     const [program, [card = null], rewards] = await Promise.all([
       programOf(pool, businessId),
-      membersOf(pool, businessId, clientId),
+      membersOf(pool, businessId, [clientId]),
       many<LoyaltyReward>(
         pool,
         `select ${REWARD_COLUMNS} from loyalty_rewards r join clients c on c.id = r.client_id left join users u on u.id = r.redeemed_by

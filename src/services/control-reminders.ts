@@ -57,10 +57,15 @@ async function findControls(
 ): Promise<ControlRow[]> {
   return many<ControlRow>(
     db,
+    // Para no leer todas las citas del negocio en cada pasada del cron: con `dueFrom`, sólo las de hasta un año antes
+    // (el «Volver en» más largo), que son las únicas que pueden vencer desde ese día; con `clientId`, sólo las suyas
+    // (el índice de cada uno). El resultado es el mismo.
     `with latest as (
        select distinct on (a.client_id, a.service_id) a.id, a.client_id, a.service_id, a.professional_id, a.date
          from appointments a
         where a.business_id = $1 and a.status = 'completed'
+          and ($7::date is null or a.date >= $7::date - 365)
+          and ($6::uuid is null or a.client_id = $6::uuid)
         order by a.client_id, a.service_id, a.date desc, a.start_time desc
      )
      select l.id as "appointmentId", l.client_id as "clientId", c.name as "clientName", c.phone as "clientPhone",
@@ -108,6 +113,10 @@ export async function runControlReminderJob(db: Db, businessId: string, at: Date
   if (!business || business.notificationSettings.controlReminders !== true || !business.controlRemindersSince) return 0;
   const now = getZonedNow(business.timezone, at);
   if (now.minutes < CONTROL_SEND_HOUR * 60) return 0;
+  // Sin ningún servicio con «Volver en», no hay controles: nada que buscar en esta pasada.
+  if (!(await one(db, "select 1 from services where business_id = $1 and return_after_days is not null and is_active limit 1", [businessId]))) {
+    return 0;
+  }
   const today = now.date;
   const oldest = addDaysISO(today, -CONTROL_EMAIL_DAYS_LATE);
   const since = business.controlRemindersSince;
