@@ -69,7 +69,8 @@ patientRoutes.post("/signup", signupLimit, requireCaptcha, async (req, res) => {
   res.json(await patientAccountService.me(accountId));
 });
 
-patientRoutes.post("/login", loginLimit, async (req, res) => {
+// Con el CAPTCHA (revisión de seguridad): sin él, un programa prueba contraseñas comunes contra muchos teléfonos.
+patientRoutes.post("/login", loginLimit, requireCaptcha, async (req, res) => {
   const accountId = await patientAccountService.login(req.body);
   await startSession(res, accountId);
   res.json(await patientAccountService.me(accountId));
@@ -93,12 +94,20 @@ patientRoutes.post(
   "/qr",
   handle(async (req) => patientAccountService.newQr(await requireAccount(req))),
 );
+const passwordLimit = limitRequests({
+  name: "paciente-contrasena",
+  windowMinutes: 15,
+  max: 10,
+  message: "Demasiados intentos. Espera unos minutos e inténtalo de nuevo.",
+});
+
 patientRoutes.put(
   "/password",
+  passwordLimit,
   handle(async (req) => patientAccountService.changePassword(await requireAccount(req), req.body, tokenOf(req))),
 );
-patientRoutes.delete("/account", async (req, res) => {
-  await patientAccountService.deleteAccount(await requireAccount(req));
+patientRoutes.delete("/account", passwordLimit, async (req, res) => {
+  await patientAccountService.deleteAccount(await requireAccount(req), req.body);
   res.clearCookie(COOKIE_NAME, cookieOptions());
   res.status(204).end();
 });

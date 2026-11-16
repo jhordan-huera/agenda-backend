@@ -63,10 +63,22 @@ export const loyaltyRedeemSchema = z.object({ appointmentId: z.string().nullable
 
 const captchaToken = z.string().max(4096).optional();
 
+/** Las contraseñas más usadas, que se adivinan primero: no se aceptan para la cuenta del paciente. */
+const COMMON_PASSWORDS = new Set([
+  "12345678", "123456789", "1234567890", "87654321", "11111111", "00000000", "12341234", "11223344",
+  "password", "password1", "contraseña", "contrasena", "qwertyui", "qwerty123", "abcd1234", "asdfghjk",
+  "iloveyou", "teamo123", "ecuador1", "agenda360",
+]);
+const patientPasswordField = passwordField.refine(
+  (value) => !COMMON_PASSWORDS.has(value.trim().toLowerCase()),
+  "Esa contraseña es muy fácil de adivinar: elige otra",
+);
+
 export const patientSignupSchema = z.object({
-  name: personNameField("Tu nombre"),
+  // Hasta 80 caracteres, como la cuenta en la base (059).
+  name: personNameField("Tu nombre").refine((value) => value.length <= 80, "Tu nombre: máximo 80 caracteres"),
   phone: patientPhoneField,
-  password: passwordField,
+  password: patientPasswordField,
   captchaToken,
 });
 
@@ -78,10 +90,13 @@ export const patientLoginSchema = z.object({
 
 export const patientPasswordSchema = z.object({
   currentPassword: z.string().min(1, "Escribe tu contraseña actual").max(200),
-  newPassword: passwordField,
+  newPassword: patientPasswordField,
 });
 
-export const patientResetSchema = z.object({ password: passwordField });
+export const patientResetSchema = z.object({ password: patientPasswordField });
+
+/** Eliminar la cuenta pide la contraseña: con una sesión olvidada abierta, nadie la borra de un toque. */
+export const patientDeleteSchema = z.object({ password: z.string().min(1, "Escribe tu contraseña").max(200) });
 
 /* -- «Escanear» en el panel -- */
 

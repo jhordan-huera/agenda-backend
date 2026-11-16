@@ -3,7 +3,13 @@ import { isUuid, many, one, pool, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { incrementCounter } from "../http/rate-limit-store.ts";
 import { formatRewardCode, levelOf, LOYALTY_MIN_SLOTS, PATIENT_RESET_HOURS } from "../shared/lib/constants/loyalty.ts";
-import { patientLoginSchema, patientPasswordSchema, patientResetSchema, patientSignupSchema } from "../shared/lib/validations/loyalty.ts";
+import {
+  patientDeleteSchema,
+  patientLoginSchema,
+  patientPasswordSchema,
+  patientResetSchema,
+  patientSignupSchema,
+} from "../shared/lib/validations/loyalty.ts";
 import type { BrandColors, LoyaltyNext, PatientAccount, PatientCard, PatientResetLink, PatientReward, SocialLinks } from "../shared/types/index.ts";
 import { hashPassword, verifyPassword } from "./accounts.ts";
 import { agendaScope, assertClientInScope } from "./agenda-scope.ts";
@@ -105,7 +111,11 @@ async function cardsOf(db: Db, accountId: string): Promise<PatientCard[]> {
        join businesses b on b.id = k.business_id and b.status = 'active'
        join loyalty_programs p on p.business_id = k.business_id and p.enabled_at is not null
        join clients c on c.id = k.client_id and c.is_active
+       join patient_accounts a on a.id = k.patient_account_id
       where k.patient_account_id = $1
+        -- Revisión de seguridad: quien cambió la contraseña con el enlace de un consultorio ve sólo la tarjeta de ese
+        -- consultorio y las de los que lo vuelvan a escanear después (no las visitas a otros consultorios).
+        and (a.reset_at is null or k.business_id = a.reset_by_business_id or k.linked_at > a.reset_at)
       order by b.name`,
     [accountId],
   );
@@ -224,12 +234,16 @@ export const patientAccountService = {
       accountId,
       await hashPassword(data.newPassword),
     ]);
-    // Las demás sesiones se cierran: si alguien más conocía la contraseña, ya no entra.
+    // Las demás sesiones se cierran y los enlaces del consultorio que quedaban dejan de servir.
     await pool.query("delete from patient_sessions where account_id = $1 and token_hash <> $2", [accountId, sha256(keepSessionToken)]);
+    await pool.query("update patient_password_links set used_at = now() where account_id = $1 and used_at is null", [accountId]);
   },
 
   /** Eliminar la cuenta: los negocios conservan la ficha, los sellos y los premios; la cuenta y su QR desaparecen. */
-  async deleteAccount(accountId: string): Promise<void> {
+  async deleteAccount(accountId: string, input: unknown): Promise<void> {
+    const { password } = parseInput(patientDeleteSchema, input ?? {});
+    const row = await one<{ passwordHash: string }>(pool, `select password_hash as "passwordHash" from patient_accounts where id = $1`, [accountId]);
+    if (!row || !(await verifyPassword(password, row.passwordHash))) throw new AppError("validation", "Tu contraseña no coincide.");
     await pool.query("delete from patient_accounts where id = $1", [accountId]);
   },
 
@@ -266,6 +280,8 @@ export const patientAccountService = {
         [link.accountId, hash, link.businessId],
       );
       await db.query("delete from patient_sessions where account_id = $1", [link.accountId]);
+      // Los otros enlaces que quedaban (de cualquier consultorio) dejan de servir.
+      await db.query("update patient_password_links set used_at = now() where account_id = $1 and used_at is null", [link.accountId]);
       return link.accountId;
     });
   },
@@ -287,6 +303,8 @@ export const patientAccountService = {
         [clientId, businessId],
       );
       if (!account) throw new AppError("conflict", "Este paciente no tiene una cuenta unida a su ficha.");
+      // Un enlace nuevo anula los anteriores sin usar.
+      await db.query("update patient_password_links set used_at = now() where account_id = $1 and used_at is null", [account.id]);
       const token = randomBytes(32).toString("base64url");
       const row = (await one<{ expiresAt: string }>(
         db,

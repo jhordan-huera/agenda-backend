@@ -549,6 +549,10 @@ businessRoutes.post(
   handle((req) => loyaltyScanService.complete(req.ctx, req.params.businessId, req.body)),
 );
 businessRoutes.post(
+  "/:businessId/clients/:clientId/patient-unlink",
+  handle((req) => loyaltyScanService.unlink(req.ctx, req.params.businessId, req.params.clientId)),
+);
+businessRoutes.post(
   "/:businessId/clients/:clientId/patient-reset-link",
   handle((req) => patientAccountService.resetLink(req.ctx, req.params.businessId, req.params.clientId)),
 );

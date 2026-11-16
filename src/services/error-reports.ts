@@ -18,7 +18,7 @@ import { config } from "../config.ts";
 const ROOT = join(import.meta.dirname, "..", "..");
 
 /** Los prefijos de montaje de app.ts: la ruta del aviso es el prefijo más `req.route.path`. */
-const MOUNTS = ["/api/files", "/api/public", "/api/auth", "/api/users", "/api/images", "/api/businesses", "/api/admin", "/api/push"];
+const MOUNTS = ["/api/files", "/api/public", "/api/auth", "/api/users", "/api/images", "/api/businesses", "/api/admin", "/api/push", "/api/patient"];
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const BUSINESS_IN_PATH = new RegExp(`^/api/(?:admin/)?businesses/(${UUID})(?:/|$)`, "i");

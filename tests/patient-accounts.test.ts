@@ -61,6 +61,7 @@ r = await browser()("POST", "/patient/signup", { name: "Otra", phone: `+593 ${ph
 ok(r.status === 409, "el mismo teléfono escrito de otra forma: ya hay cuenta", r.status);
 ok((await browser()("POST", "/patient/signup", { name: "Corto", phone: "123", password: "secreta123" })).status === 400, "un teléfono que no es, rechazado");
 ok((await browser()("POST", "/patient/signup", { name: "Corta", phone: "0987654321", password: "123" })).status === 400, "una contraseña corta, también");
+ok((await browser()("POST", "/patient/signup", { name: "Común", phone: "0987654322", password: "12345678" })).status === 400, "y una de las más comunes (revisión de seguridad)");
 ok(((await maria("GET", "/patient/cards")).body as PatientCard[]).length === 0, "sin escanear, no ve ninguna tarjeta");
 ok((await maria("POST", "/patient/logout")).status === 204 && (await maria("GET", "/patient/me")).status === 401, "sale, y ya no entra sin sesión");
 ok((await maria("POST", "/patient/login", { phone: `0${phoneDigits}`, password: "mala-clave" })).status === 401, "con otra contraseña, no entra");
@@ -101,6 +102,13 @@ ok(
   r.status === 200 && scan.status === "unlinked" && scan.accountName === "María Paciente" && scan.appointments.some((a) => a.id === mariaToday && a.clientId === mariaClient),
   "la primera vez: el nombre de la cuenta y las citas de hoy para elegir",
   r.body,
+);
+ok(
+  (scan as { accountPhoneEnd?: string }).accountPhoneEnd === phoneDigits.slice(-4) &&
+    scan.appointments.find((a) => a.id === mariaToday)?.phoneMatches === true &&
+    scan.appointments.find((a) => a.id === otherToday)?.phoneMatches === false,
+  "con los 4 últimos dígitos del teléfono y si coincide con el de cada ficha (el nombre lo escribe la cuenta)",
+  scan,
 );
 ok(((await valeria("POST", `${B}/scan`, { token: account.qrToken })).body as ScanResult).appointments.every((a) => a.id !== mariaToday), "el Profesional ve sólo las citas de hoy de su agenda");
 ok((await valeria("POST", `${B}/scan/link`, { token: account.qrToken, appointmentId: mariaToday, clientId: mariaClient })).status === 400, "y no une con una cita de otra agenda");
@@ -153,8 +161,46 @@ ok((await maria("GET", "/patient/me")).status === 401, "las sesiones de antes se
 ok((await reset("POST", `/patient/reset/${token}`, { password: "otra-clave-2" })).status === 404, "el enlace sirve una sola vez");
 ok((await browser()("POST", "/patient/login", { phone: `0${phoneDigits}`, password: "nueva-clave-1" })).status === 200, "y entra con la nueva");
 
+console.log("\nDespués de un enlace de contraseña, sólo la tarjeta de ese consultorio (revisión de seguridad)");
+const lauraBusiness: string = laura.session.businessId;
+await laura("PUT", `/businesses/${lauraBusiness}/loyalty`, { enabled: true, name: "Club Laura", description: "", stampIcon: "heart", afterLast: "keep" });
+const lauraZone = sql(`select timezone from businesses where id = '${lauraBusiness}'`);
+const lauraClient = sql(
+  `insert into clients (business_id, name, document_id, email, phone)
+   values ('${lauraBusiness}', 'María en otro consultorio', '${cedulaFor(`cta-l-${tag}`)}', 'cta.l.${tag}@correo.ec', '0${phoneDigits}') returning id`,
+).split("\n")[0];
+const lauraAgenda = sql(`select id from professionals where business_id = '${lauraBusiness}' order by created_at limit 1`);
+const lauraService = sql(`select id from services where business_id = '${lauraBusiness}' and is_active order by created_at limit 1`);
+const lauraToday = sql(
+  `insert into appointments (business_id, client_id, service_id, professional_id, date, start_time, end_time, status, price, source)
+   values ('${lauraBusiness}', '${lauraClient}', '${lauraService}', '${lauraAgenda}', (now() at time zone '${lauraZone}')::date, '23:58', '23:59', 'confirmed', 20, 'dashboard') returning id`,
+).split("\n")[0];
+r = await reset("POST", "/patient/login", { phone: `0${phoneDigits}`, password: "nueva-clave-1" });
+const relogged = (r.body as PatientAccount).qrToken;
+ok(((await laura("POST", `/businesses/${lauraBusiness}/scan/link`, { token: relogged, appointmentId: lauraToday, clientId: lauraClient })).body as ScanResult).status === "linked", "otro consultorio también la une");
+ok(((await reset("GET", "/patient/cards")).body as PatientCard[]).length === 2, "y ve las dos tarjetas");
+const second1 = (await elena("POST", `${B}/clients/${mariaClient}/patient-reset-link`)).body as PatientResetLink;
+const second2 = (await elena("POST", `${B}/clients/${mariaClient}/patient-reset-link`)).body as PatientResetLink;
+ok((await browser()("GET", `/patient/reset/${second1.url.split("/").pop()}`)).body?.valid === false, "un enlace nuevo anula el anterior");
+r = await reset("POST", `/patient/reset/${second2.url.split("/").pop()}`, { password: "otra-clave-3" });
+let after = (await reset("GET", "/patient/cards")).body as PatientCard[];
+ok(r.status === 200 && after.length === 1 && after[0].business.id === businessId, "con el enlace de un consultorio, la cuenta ve sólo su tarjeta (no las visitas a otros)", after.map((c) => c.business.name));
+await laura("POST", `/businesses/${lauraBusiness}/scan`, { token: relogged });
+after = (await reset("GET", "/patient/cards")).body as PatientCard[];
+ok(after.length === 2, "y la del otro vuelve cuando la escanea de nuevo en persona", after.length);
+
+console.log("\nDesunir la cuenta");
+ok((await laura("POST", `${B}/clients/${mariaClient}/patient-unlink`)).status === 403, "otro negocio, no");
+r = await elena("POST", `/businesses/${lauraBusiness}/clients/${lauraClient}/patient-unlink`);
+ok(r.status === 403, "ni el equipo de otro negocio en el suyo", r.status);
+r = await laura("POST", `/businesses/${lauraBusiness}/clients/${lauraClient}/patient-unlink`);
+ok(r.status === 200 && ((await reset("GET", "/patient/cards")).body as PatientCard[]).length === 1, "el negocio la desune y la cuenta deja de ver esa tarjeta", r.body);
+ok(count(`select count(*) from audit_logs where business_id = '${lauraBusiness}' and action = 'loyalty.account_unlinked'`) === 1, "con la actividad");
+ok((await laura("POST", `/businesses/${lauraBusiness}/clients/${lauraClient}/patient-unlink`)).status === 409, "sin cuenta unida, no hay nada que desunir");
+
 console.log("\nEliminar la cuenta");
-r = await reset("DELETE", "/patient/account");
+ok((await reset("DELETE", "/patient/account", { password: "mala" })).status === 400, "pide la contraseña");
+r = await reset("DELETE", "/patient/account", { password: "otra-clave-3" });
 ok(r.status === 204 && count(`select count(*) from patient_accounts where id = '${account.id}'`) === 0, "la elimina", r.status);
 ok(
   count(`select count(*) from loyalty_cards where client_id = '${mariaClient}' and patient_account_id is null`) === 1 &&
