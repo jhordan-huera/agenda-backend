@@ -110,7 +110,7 @@ ok(
     received.every(
       (n) =>
         n === gmailNotice ||
-        /^Agenda360: (nueva reserva|más reservas|nueva cita|más citas|nuevo paciente|más pacientes nuevos|recordatorios de citas por cerrar enviados)$/.test(n.title),
+        /^Agenda360: (reserva online|más reservas online|nueva cita|más citas|nuevo paciente|más pacientes nuevos|recordatorios de citas por cerrar enviados)$/.test(n.title),
     ),
   "avisa que faltan las credenciales de Gmail",
   received.map((n) => n.title),

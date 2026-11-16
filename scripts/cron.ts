@@ -219,10 +219,10 @@ export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
   const rest = (report.onlineBookings ?? 0) - notices.length;
   if (rest > 0) {
     notices.push({
-      title: "Agenda360: más reservas",
+      title: "Agenda360: más reservas online",
       message: `…y ${plural(rest, "reserva más", "reservas más")} por la página (detalle en el panel de cada negocio).`,
       priority: 3,
-      tags: ["calendar"],
+      tags: ["globe_with_meridians"],
       click: "/admin/businesses",
     });
   }
