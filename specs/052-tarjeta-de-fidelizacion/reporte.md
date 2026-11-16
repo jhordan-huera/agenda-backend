@@ -1,0 +1,152 @@
+# Reporte final: Tarjeta de fidelización
+
+**Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
+
+**Estado**: Implementada en dev (sin PR a `main` hasta que el dueño lo pida) · **Fecha**: 2026-11-16
+
+**Repos**: los dos · **Migración**: Sí: `059_tarjeta_de_fidelizacion.sql` (después de la 058)
+
+## Resumen
+
+Cada consultorio puede armar su tarjeta de fidelización, con sus propios beneficios. Cada cita atendida suma un sello y,
+al llegar a un beneficio, el paciente gana su premio con un código, que Recepción canjea (si es un descuento, baja el
+precio de la cita). El paciente puede crear una cuenta con su teléfono y una contraseña. En su cuenta ve su tarjeta
+(diseño B, «Tarjeta clara») y tiene un QR que el profesional escanea en la cita: la primera vez lo une a su ficha, y
+después marca la cita como atendida. Reservar sigue igual, sin cuenta.
+
+## Qué se entrega
+
+| Historia | Prioridad | Estado | Notas |
+|---|---|---|---|
+| H1 – El consultorio arma su programa | P1 | Hecha | «Fidelización» en el menú (propietario y administrador) |
+| H2 – Las citas atendidas suman sellos | P1 | Hecha | Por cualquier camino; corrección, ciclos y niveles |
+| H3 – La cuenta y la tarjeta del paciente | P1 | Hecha | /mi-tarjeta, diseño B, colores de cada negocio |
+| H4 – «Escanear» | P1 | Hecha | Cámara del navegador o lector de respaldo; también la cámara del celular con /q/:token |
+| H5 – El canje | P2 | Hecha | En la ficha, en la cita y en «Recompensas» |
+| H6 – Avisos y contraseña | P2 | Hecha | Email «Ganaste un premio» con copia; progreso en el de seguimiento; enlace por WhatsApp |
+| H7 – Las cifras | P3 | Hecha | Cifras, «Pacientes» y «Recompensas» con filtros y código |
+| H8 – Las redes | P3 | Hecha | Configuración → Negocio, página de reservas y tarjeta |
+
+## Comprobación
+
+| Requisito o criterio | Resultado | Cómo se comprobó |
+|---|---|---|
+| RF-001 – Un programa por negocio, apagado al empezar | Cumple | `loyalty.test.ts` (apagado, quién lo configura, la actividad) |
+| RF-002 – Beneficios sin límite, sin repetir citas entre los activos | Cumple | `loyalty.test.ts` (tres beneficios, 409 con citas repetidas, validaciones) |
+| RF-003 – Editar, activar, borrar o archivar | Cumple | `loyalty.test.ts` (desactivar y activar, borrar sin historial, archivar ganado) |
+| RF-004 – La recompensa guarda el beneficio como era | Cumple | `loyalty.test.ts` (editar no cambia lo ganado) |
+| RF-005 – Un sello por paciente y cita Atendida, desde que se enciende | Cumple | `loyalty.test.ts` (la ficha, «Marcar todas», el QR, grupo, no dos veces, no lo anterior) |
+| RF-006 – Desbloqueo de varios a la vez, sin duplicados | Cumple | `loyalty.test.ts` (2 y 4 a la vez; dos cierres a la vez, un solo premio) |
+| RF-007 – La corrección quita el sello y anula lo no canjeado | Cumple | `loyalty.test.ts` |
+| RF-008 – Niveles con «Empezar una tarjeta nueva» | Cumple | `loyalty.test.ts` (Plata en la segunda tarjeta, lo ganado se conserva) |
+| RF-009 – Estados Disponible, Canjeada, Vencida y Anulada | Cumple | `loyalty.test.ts` (vencida y anulada no se canjean) |
+| RF-010 – Nadie suma ni quita sellos a mano | Cumple | No hay ninguna ruta para eso; sólo los cambios de estado de la cita |
+| RF-011 – Canje una vez, quién puede | Cumple | `loyalty.test.ts` (Recepción sí, Profesional y otro negocio no, 409 la segunda vez) |
+| RF-012 – El canje ajusta el precio de una cita sin pagar | Cumple | `loyalty.test.ts` ($40 a $20; una pagada no cambia) y el recorrido ($35 a $17,50) |
+| RF-013 – Cuenta con teléfono (+593) y contraseña, opcional | Cumple | `patient-accounts.test.ts` (los dos formatos del teléfono, 409 si ya existe) |
+| RF-014 – Sesión del paciente aparte | Cumple | `patient-accounts.test.ts` (no entra a /businesses; la del equipo no sirve en /patient) |
+| RF-015 – Contraseña cifrada, límite de intentos, CAPTCHA | Cumple | bcrypt 12, 10 intentos por teléfono cada 15 min (prueba), el límite por conexión, CAPTCHA al crear la cuenta y al entrar, sin contraseñas comunes |
+| RF-016 – QR propio que se puede cambiar | Cumple | `patient-accounts.test.ts` (el anterior responde 404) |
+| RF-017 – La cuenta se une sólo con el escaneo | Cumple | `patient-accounts.test.ts` (sólo con una cita de hoy que el usuario ve; una cuenta con el teléfono de otro no ve nada) |
+| RF-018 – El QR marca la cita de hoy por el mismo camino | Cumple | `patient-accounts.test.ts` (Atendida, el sello, las dos entradas de la actividad, 409 la segunda vez) |
+| RF-019 – El paciente ve sólo sus tarjetas | Cumple | `patient-accounts.test.ts` (sin datos de otros pacientes) |
+| RF-020 – Enlace de contraseña del consultorio | Cumple | `patient-accounts.test.ts` (un uso, cierra las sesiones, el aviso, la actividad, otro negocio no) |
+| RF-021 – Cambiar contraseña, salir y eliminar la cuenta | Cumple | `patient-accounts.test.ts` (al eliminarla, el negocio conserva la ficha y los sellos) |
+| RF-022 – Email del premio con copia; progreso en el de seguimiento | Cumple | `loyalty.test.ts` (asunto sin el servicio, el código, la copia, «Llevas 1 sello… te falta 1 cita…») |
+| RF-023 – «Fidelización»: cifras, pacientes, recompensas | Cumple | `loyalty.test.ts` y el recorrido con capturas |
+| RF-024 – Las redes del negocio | Cumple | `patient-accounts.test.ts` (@usuario a enlace, otro dominio no, Recepción no, página de reservas) y `check:loyalty` |
+| RF-025 – La actividad | Cumple | Las pruebas cuentan las entradas de cada acción |
+| RF-026 – Los textos de «sin cuenta» y /privacidad | Cumple | `check:landing` y la sección nueva de /privacidad |
+| CE-001 – Las 16 pruebas del pedido | Cumple | `loyalty.test.ts` y `patient-accounts.test.ts` (numeradas en cada línea) |
+| CE-002 – Un escaneo y un toque | Cumple | El recorrido del panel: el QR abre la cita de hoy con «Marcar como atendida» |
+| CE-003 – Una cuenta con el teléfono de otro no ve nada | Cumple | `patient-accounts.test.ts` |
+| CE-004 – 390 y 1440 px, claro y oscuro, sin desplazamiento | Cumple | Recorridos con Playwright (desborde 0 en todas las pantallas) |
+| CE-005 – Lo que ya existía sigue igual | Cumple | Backend 79 de 79 suites; front build, lint y 13 de 13 `check:*` |
+
+**Pruebas automáticas:**
+- backend: `typecheck` y `npm test`, 79 de 79 suites (2 nuevas);
+- front: `tsc`, `lint`, `build` y 13 de 13 `check:*` (con `check:loyalty`, nueva).
+
+**Recorridos:** con la API real en local:
+- programa, beneficios, tres citas atendidas, la cuenta, el escaneo, unir y marcar;
+- capturas de «Mi tarjeta» (390 px, claro y oscuro), el QR, «Entrar», «Fidelización» y la ficha (1440 px).
+
+El panel y la app del paciente se recorrieron además por separado, incluida la cámara con un video falso, con el lector del
+navegador y con el de respaldo.
+
+## Cambios respecto al plan
+
+- **El CAPTCHA al entrar:** se pide siempre (no sólo desde el tercer intento), además del límite por teléfono y por conexión.
+- **Menos CPU** (pedido del dueño, 2026-11-16):
+  - guardar un beneficio busca con una consulta sólo las tarjetas que ganan un premio, en lugar de revisarlas todas;
+  - el desbloqueo usa una consulta liviana;
+  - «Pacientes» y la ficha agrupan los conteos.
+- **La cámara en Vercel:**
+  - `Permissions-Policy` pasa de `camera=()` a `camera=(self)`;
+  - la CSP suma `'wasm-unsafe-eval'` para el lector de respaldo de Safari y Firefox (sólo permite compilar WebAssembly).
+- **La analítica:** el token del enlace de contraseña (base64url) se tapa por su ruta en `anonymize-url.ts`.
+- **«Escanear» en la Agenda y en Inicio:** entre 640 y 1536 px muestra sólo el ícono, para no empujar «Nueva cita».
+
+## Revisión de seguridad (2026-11-16)
+
+La hizo un revisor nuevo, que no vio cómo se construyó, sobre los commits de los dos repos. Encontró problemas reales,
+y casi todos se corrigieron con sus pruebas (backend d124414, front 9b66a70):
+
+| Hallazgo | Severidad | Qué se hizo |
+|---|---|---|
+| Con el enlace de contraseña, un empleado (o alguien con un negocio propio y una foto del QR) entraba a la cuenta y veía las visitas del paciente en **otros** consultorios | Alta | Después de un enlace del consultorio X, la cuenta ve sólo la tarjeta de X y las de los consultorios que la vuelvan a escanear en persona. Prueba en `patient-accounts.test.ts` |
+| La unión cuenta–ficha se decidía por el nombre, que escribe el dueño de la cuenta, y no se podía deshacer | Media | El escaneo muestra los 4 últimos dígitos del teléfono de la cuenta y marca las fichas con el mismo teléfono. «Desunir la cuenta» en la ficha, con la actividad. Pruebas |
+| Entrar no pedía CAPTCHA (lo pedía la spec) | Media | CAPTCHA al entrar; se rechazan las contraseñas más comunes |
+| Cambiar la contraseña sin límite de intentos; eliminar la cuenta sin la contraseña | Baja | Límite de intentos; eliminar pide la contraseña. Prueba |
+| Los enlaces de contraseña no se anulaban entre sí | Baja | Un enlace nuevo, cambiar o restablecer la contraseña anulan los anteriores. Prueba |
+| El Profesional («sólo sus pacientes») podía unir una ficha fuera de su alcance | Baja | Se comprueba el alcance al unir |
+| Un nombre de 81 a 120 caracteres daba error 500; `/api/patient` mal etiquetado en los avisos de errores | Informativo | Nombre hasta 80; `/api/patient` en los avisos |
+
+Lo que la revisión encontró bien resuelto:
+- las sesiones separadas;
+- la protección CSRF;
+- las cookies y los tokens;
+- el inicio de sesión sin revelar si hay cuenta;
+- que no se pueda leer datos de otro negocio cambiando un identificador;
+- el doble canje;
+- SQL, XSS y las redirecciones;
+- la analítica y Sentry sin tokens;
+- RLS en las tablas nuevas.
+
+## Pendientes y riesgos
+
+- **Queda (bajo):** alguien puede registrar primero el teléfono de otra persona.
+  - No ve nada de ningún consultorio, pero el dueño real ya no puede crear su cuenta con ese número.
+  - Hoy no hay forma de liberarlo. Se propone que el super admin pueda borrar una cuenta sin fichas unidas.
+- **Queda (bajo):** quien tenga el QR de un paciente y cree un negocio propio puede unirlo a una ficha falsa y cambiarle
+  la contraseña.
+  - Ya no ve nada de sus consultorios.
+  - Sí puede dejarlo fuera de su cuenta hasta que su consultorio le mande otro enlace.
+  - El paciente puede pedir un QR nuevo.
+- **Riesgo aceptado de la spec:** una foto del QR sólo sirve para unir con una cita de hoy, y el QR se puede cambiar.
+- **Las preguntas frecuentes de la portada que dicen que el paciente no crea cuenta siguen siendo ciertas** (hablan de reservar). Se pueden matizar si el dueño quiere.
+
+## Commits
+
+- **agenda-backend:**
+  - e5965e6 (spec);
+  - cbdd2bf (plan);
+  - 9ad6f34 (parte 1);
+  - a067149 (parte 2);
+  - 114259c (constitución 1.50.0);
+  - 7fae5a2 (menos CPU);
+  - d124414 (revisión de seguridad).
+- **agenda-front:**
+  - 78213cf (lo compartido);
+  - 186688b (base);
+  - c73525a (constitución);
+  - c9ddb23 (panel y app del paciente);
+  - 4b63419 («Te falta 1 cita»);
+  - 9b66a70 (revisión de seguridad).
+
+## Cómo publicarlo (cuando el dueño lo pida)
+
+1. Aplicar en producción la migración 058 (si todavía no está) y después la 059.
+2. Abrir el PR de `dev` a `main` del backend y después el del front.
+3. Todo sale apagado: cada negocio enciende su tarjeta en «Fidelización».
+4. Después de publicar, probar «Escanear» en un iPhone (Safari usa el lector de respaldo).

@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/052-tarjeta-de-fidelizacion` (rama de trabajo: `dev`) · **Creada**: 2026-11-16
 
-**Estado**: Aprobada el 2026-11-16 («si aprobado procede»). Las decisiones del dueño del producto están al final.
+**Estado**: Implementada en dev (2026-11-16). Aprobada el 2026-11-16 («si aprobado procede»). Las decisiones del dueño del producto están al final.
 El dueño eligió la vista previa B, «Tarjeta clara» (lienzo https://claude.ai/artifact/FaEHLgwVqbgtVbpd356czH), y aprobó el plan el 2026-11-16.
 
 **Repos**:
