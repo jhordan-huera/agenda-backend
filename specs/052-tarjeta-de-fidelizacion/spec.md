@@ -3,7 +3,7 @@
 **Carpeta**: `specs/052-tarjeta-de-fidelizacion` (rama de trabajo: `dev`) · **Creada**: 2026-11-16
 
 **Estado**: Aprobada el 2026-11-16 («si aprobado procede»). Las decisiones del dueño del producto están al final.
-Antes de programar la tarjeta del paciente, el dueño elige entre 2 o 3 vistas previas.
+El dueño eligió la vista previa B, «Tarjeta clara» (lienzo https://claude.ai/artifact/FaEHLgwVqbgtVbpd356czH), y aprobó el plan el 2026-11-16.
 
 **Repos**:
 - **agenda-backend:** el programa, los beneficios, los sellos, las recompensas, el canje, la cuenta del paciente, el

@@ -76,6 +76,27 @@ export interface AppointmentEmailData {
    * con otro email (spec 050: el teléfono solo no basta). Sólo lo dice el email al negocio, para que la revise.
    */
   toVerify?: boolean;
+  /**
+   * Tarjeta de fidelización (spec 052), en el email de seguimiento de una cita Atendida: cuántos sellos lleva, el
+   * próximo premio y el enlace a «Mi tarjeta». Sólo con la tarjeta encendida.
+   */
+  loyalty?: LoyaltyEmailProgress | null;
+}
+
+/** El progreso de la tarjeta en un email: «Llevas 7 sellos en Club Sonrisa: te faltan 3 para Blanqueamiento gratis». */
+export interface LoyaltyEmailProgress {
+  programName: string;
+  stamps: number;
+  /** El próximo premio (null: ya ganó todos los de esta tarjeta). */
+  next: { name: string; missing: number } | null;
+  cardUrl: string;
+}
+
+/** «Ganaste un premio» (spec 052): las recompensas que se desbloquearon con esta cita, con su código. */
+export interface LoyaltyRewardEmailData extends AppointmentEmailData {
+  programName: string;
+  rewards: { name: string; description: string; conditions: string; code: string; expiresAt: ISODate | null }[];
+  cardUrl: string;
 }
 
 /**
@@ -515,6 +536,19 @@ const policy = (data: AppointmentEmailData): EmailBlock[] =>
  * barreras: la copia se arma sin `appointmentPage` y, además, aquí no se pone). «Ver o cancelar mi
  * cita» sólo si podrá cancelar desde ahí; si no, «Ver mi cita».
  */
+/** El progreso de la tarjeta de fidelización (spec 052) en el email de seguimiento; nada si no hay tarjeta. */
+function loyaltyProgress(loyalty: LoyaltyEmailProgress | null | undefined): EmailBlock[] {
+  if (!loyalty) return [];
+  const stamps = loyalty.stamps === 1 ? "1 sello" : `${loyalty.stamps} sellos`;
+  const next = loyalty.next
+    ? `: te ${loyalty.next.missing === 1 ? "falta 1 cita" : `faltan ${loyalty.next.missing} citas`} para ${loyalty.next.name}`
+    : "";
+  return [
+    { kind: "text", text: `Llevas ${stamps} en ${loyalty.programName}${next}.` },
+    { kind: "link", label: "Ver mi tarjeta", url: loyalty.cardUrl },
+  ];
+}
+
 const hasAppointmentPage = (data: AppointmentEmailData) => Boolean(data.appointmentPage && !data.professionalCopy);
 
 const appointmentPageLink = (data: AppointmentEmailData): EmailBlock[] =>
@@ -1042,10 +1076,38 @@ export const emailTemplates = {
       greeting: `Hola ${data.clientName}:`,
       blocks: [
         { kind: "text", text: `Gracias por tu visita del ${formatLongDate(data.date)} a ${data.businessName}. Fue un gusto atenderte.` },
+        ...loyaltyProgress(data.loyalty),
         { kind: "text", text: "Cuando quieras volver, puedes reservar tu próxima cita aquí:" },
         { kind: "button", label: "Reservar de nuevo", url: data.bookingUrl },
       ],
     }),
+
+  /** Tarjeta de fidelización (spec 052): se desbloqueó uno o más premios con esta cita. El asunto no lleva el servicio. */
+  loyaltyReward: (data: LoyaltyRewardEmailData): EmailContent => {
+    const several = data.rewards.length > 1;
+    return clientEmail(data, {
+      subject: several ? `Ganaste ${data.rewards.length} premios en ${data.businessName}` : `Ganaste un premio en ${data.businessName}`,
+      preheader: several ? "Tus premios ya están en tu tarjeta." : `${data.rewards[0]?.name ?? "Tu premio"}: ya está en tu tarjeta.`,
+      title: several ? "Ganaste premios" : "Ganaste un premio",
+      greeting: `Hola ${data.clientName}:`,
+      blocks: [
+        { kind: "text", text: `Con tu visita del ${formatLongDate(data.date)} llegaste a un premio de ${data.programName}. Muéstralo en tu próxima cita:` },
+        ...data.rewards.map(
+          (reward): EmailBlock => ({
+            kind: "details",
+            title: reward.name,
+            rows: [
+              { label: "Código", value: reward.code, mono: true },
+              ...(reward.description ? [{ label: "Qué es", value: reward.description }] : []),
+              ...(reward.conditions ? [{ label: "Condiciones", value: reward.conditions }] : []),
+              ...(reward.expiresAt ? [{ label: "Vence", value: formatLongDate(reward.expiresAt) }] : []),
+            ],
+          }),
+        ),
+        { kind: "button", label: "Ver mi tarjeta", url: data.cardUrl },
+      ],
+    });
+  },
 
   /** El paciente no asistió: invitación a elegir otra hora (spec 008). */
   appointmentNoShow: (data: AppointmentEmailData): EmailContent =>

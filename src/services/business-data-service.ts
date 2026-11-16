@@ -65,7 +65,8 @@ import {
 import { WITHOUT_NOTICE } from "./booking-alerts.ts";
 import { syncCalendarInvites } from "./calendar-invites.ts";
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
-import { isRescheduled, notifyAppointmentChange } from "./notifications.ts";
+import { mergeLoyalty, onAppointmentStatus } from "./loyalty.ts";
+import { isRescheduled, notifyAppointmentChange, notifyLoyaltyRewards } from "./notifications.ts";
 import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
 import { pendingPaymentSql } from "./pending-payments.ts";
 import { assertAppointmentLimit, assertClientLimit } from "./plan-limits.ts";
@@ -405,6 +406,8 @@ export const clientService = {
           returning ${clientColumns()}`,
         [claimed.id, updateEmail, provisional.email, updatePhone, provisional.phone],
       ))!;
+      // Su tarjeta de fidelización, sus sellos y sus recompensas pasan a la ficha (spec 052).
+      await mergeLoyalty(db, businessId, clientId, claimed.id);
       await db.query("delete from clients where id = $1", [clientId]);
       // El evento de calendario de esas citas lleva ahora el nombre de la ficha (spec 027).
       await syncCalendarInvites(db, [
@@ -796,7 +799,10 @@ async function saveStatusChange(
   const appointment = await saveAppointment(db, updated, resetsSchedule(before, updated));
   // Confirmada (o atendida) por recepción, un administrador o el propietario: el paciente pasa a ser del profesional.
   await releaseClientAccess(db, actor, appointment.id);
+  // Tarjeta de fidelización (spec 052): el sello (o su anulación) antes del email, que dice cuántos lleva.
+  const unlocked = await onAppointmentStatus(db, before, appointment, actor);
   if (notifyPatient) await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
+  await notifyLoyaltyRewards(db, appointment, unlocked);
   // El calendario del profesional se pone al día también sin avisar al paciente (spec 027).
   await syncCalendarInvites(db, [appointment.id]);
   await logAudit(db, {
@@ -960,7 +966,10 @@ export const appointmentService = {
         ],
       ))!;
       const appointment = await saveExtraClients(db, inserted, extraClientIds, []);
+      // Una cita que se registra ya Atendida suma su sello (spec 052).
+      const unlocked = await onAppointmentStatus(db, null, appointment, actor);
       await notifyAppointmentChange(db, null, appointment, "dashboard", actor.userId);
+      await notifyLoyaltyRewards(db, appointment, unlocked);
       await syncCalendarInvites(db, [appointment.id]);
       await logAudit(db, {
         businessId,
@@ -1022,7 +1031,9 @@ export const appointmentService = {
       const saved = await saveAppointment(db, updated, resetsSchedule(before, updated));
       const appointment = await saveExtraClients(db, saved, extraClientIds, before.extraClientIds);
       await releaseClientAccess(db, actor, appointment.id);
+      const unlocked = await onAppointmentStatus(db, before, appointment, actor);
       await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
+      await notifyLoyaltyRewards(db, appointment, unlocked);
       // Sólo sale algo si cambió lo que se ve en el calendario (la huella): no por el precio ni las notas.
       await syncCalendarInvites(db, [appointment.id]);
 

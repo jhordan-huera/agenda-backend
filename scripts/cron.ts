@@ -59,6 +59,7 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   waitlist_offer: ["Hora libre para la lista de espera", "Horas libres para la lista de espera"],
   survey_request: ["Encuesta después de la cita", "Encuestas después de la cita"],
   control_reminder: ["Recordatorio de control", "Recordatorios de control"],
+  loyalty_reward: ["Premio de la tarjeta", "Premios de la tarjeta"],
   booking_received: ["Aviso de nueva reserva (al negocio)", "Avisos de nueva reserva (al negocio)"],
   professional_new_appointment: ["Aviso de cita nueva (al profesional)", "Avisos de cita nueva (al profesional)"],
   appointment_copy: ["Copia al profesional", "Copias al profesional"],

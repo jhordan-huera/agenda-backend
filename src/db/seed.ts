@@ -14,6 +14,14 @@ import { createSeedDatabase } from "./seed-data.ts";
  *   crea cuentas con contraseñas conocidas (admin@demo.com / demo1234).
  */
 const TABLES = [
+  "loyalty_rewards",
+  "loyalty_stamps",
+  "loyalty_cards",
+  "loyalty_benefits",
+  "loyalty_programs",
+  "patient_password_links",
+  "patient_sessions",
+  "patient_accounts",
   "control_reminders",
   "surveys",
   "waitlist_freed_slots",

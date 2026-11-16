@@ -67,6 +67,7 @@ export const EMAIL_PRIORITY: Record<EmailType, EmailPriority> = {
   survey_request: "patient",
   // Recordatorio de control (spec 051): al paciente; si espera en la cola, sale después (no se descarta).
   control_reminder: "patient",
+  loyalty_reward: "patient",
   appointment_copy: "business",
   booking_received: "business",
   professional_new_appointment: "business",
