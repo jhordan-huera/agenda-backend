@@ -2,8 +2,8 @@
 
 **Carpeta**: `specs/052-tarjeta-de-fidelizacion` (rama de trabajo: `dev`) · **Creada**: 2026-11-16
 
-**Estado**: Borrador para aprobar. Las decisiones del dueño del producto (2026-11-16) están al final; falta su visto
-bueno a la spec completa y a las vistas previas de la tarjeta antes de programar la parte visual.
+**Estado**: Aprobada el 2026-11-16 («si aprobado procede»). Las decisiones del dueño del producto están al final.
+Antes de programar la tarjeta del paciente, el dueño elige entre 2 o 3 vistas previas.
 
 **Repos**:
 - **agenda-backend:** el programa, los beneficios, los sellos, las recompensas, el canje, la cuenta del paciente, el
