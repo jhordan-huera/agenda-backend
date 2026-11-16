@@ -270,6 +270,8 @@ export const RETURN_AFTER_DAYS: readonly number[] = RETURN_AFTER_OPTIONS.map((op
 export const CONTROL_SEND_HOUR = 10;
 export const CONTROL_EMAIL_DAYS_LATE = 30;
 export const CONTROL_LIST_DAYS_AHEAD = 30;
+/** Hasta cuántos días de vencido sale un control en la hoja (lo más antiguo: Reportes → «Pacientes que no volvieron»). */
+export const CONTROL_LIST_DAYS_BEHIND = 90;
 
 /** «6 meses», o null si el servicio no tiene «Volver en». */
 export function describeReturnAfter(days: number | null | undefined): string | null {

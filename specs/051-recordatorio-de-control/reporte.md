@@ -2,7 +2,8 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev (sólo `dev`, para probarla esta semana; sin PR a `main`) · **Fecha**: 2026-11-15
+**Estado**: Implementada en dev y aprobada después de la revisión del EGM (2026-11-16). Sólo `dev`, sin PR a `main`
+hasta que el dueño lo pida · **Fecha**: 2026-11-15
 
 **Repos**: los dos · **Migración**: Sí: `058_recordatorio_de_control.sql`
 
@@ -52,9 +53,32 @@ Cada servicio puede tener «Volver en», por ejemplo la limpieza en 6 meses.
 - **Front:** `npm run build` y `npm run lint` sin errores, y las 12 `check:*` en «Todo bien», también la nueva
   `check:control-reminders`.
 
+## Revisión del EGM (2026-11-16)
+
+Revisión con el Elephant-Goldfish Model, con 7 revisores nuevos en 4 etapas
+([consolidado](revision-egm/consolidated_review_report.md)). Encontró dos fallas reales, ya corregidas:
+- **Un control quedaba marcado como enviado sin email.** Pasaba con un segundo control del mismo paciente en otra
+  pasada del mismo día. Ahora la clave del email es la cita del primer control. La prueba nueva falla con la clave
+  anterior y pasa con la nueva.
+- **La lista «Vencidos» no tenía límite.** Ahora muestra los de los últimos 90 días; la ficha, todos. Tiene su prueba.
+
+También:
+- la hoja ya no promete el email a todos;
+- la spec dice lo que hace el código.
+
+**Comprobación:**
+- backend: `typecheck` y `npm test`, 77 de 77 suites;
+- front: build, lint y 12 de 12 `check:*`.
+
+Las opciones que quedan para el dueño están en la spec («Revisión del EGM»).
+
 ## Cambios respecto al plan
 
 - **`cron.test.mjs`:** su patrón del registro del cron ahora incluye «controles: N».
+- **Revisión del EGM:**
+  - `findControls` tiene `dueFrom`;
+  - la hoja muestra 90 días (`CONTROL_LIST_DAYS_BEHIND`);
+  - la clave del email es `control:{cita}`.
 
 ## Pendientes y riesgos
 

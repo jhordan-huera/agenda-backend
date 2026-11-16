@@ -148,6 +148,10 @@ ok(r.status === 403, "otro negocio, 403", r.status);
 const carlaFicha = await listOf(ricardo, carla.id);
 ok(carlaFicha.length === 1 && carlaFicha[0].dueOn === addDaysISO(T, 80), "la ficha muestra también el que vence más adelante", carlaFicha);
 ok((await listOf(ricardo, "no-es-un-id")).length === 0, "un paciente que no es un id: nada");
+const vito = patient("Vito Muy Vencido");
+appointment(vito.id, limpieza.id, addDaysISO(T, -280)); // venció hace 100 días
+ok(inList(await listOf(ricardo), vito.id).length === 0, "la hoja no muestra lo vencido hace más de 90 días (revisión del EGM)");
+ok((await listOf(ricardo, vito.id))[0]?.dueOn === addDaysISO(T, -100), "la ficha sí");
 
 console.log("\n«Quitar»");
 r = await valeria("POST", `${B}/control-reminders/${anaRow.appointmentId}/remove`);
@@ -199,6 +203,8 @@ const blanqueamiento = r.body as Service;
 sql(`update services set return_after_since = now() + interval '20 days' where id = '${blanqueamiento.id}'`);
 const sara = patient("Sara Servicio Nuevo");
 appointment(sara.id, blanqueamiento.id, addDaysISO(T, -170));
+const zoe = patient("Zoe Dos Pasadas");
+appointment(zoe.id, limpieza.id, addDaysISO(T, -170));
 
 result = await queueControlReminders(at(D, "09:30"));
 ok(result.queued === 0, "antes de las 10:00 no sale nada", result);
@@ -227,6 +233,16 @@ ok(
 ok((await listOf(ricardo, kiko.id))[0]?.emailedAt !== null, "la ficha dice que se le escribió");
 result = await queueControlReminders(at(D, "11:00"));
 ok(emailsTo(kiko.email) === 1 && emailsTo(oscar.email) === 1, "la pasada siguiente no repite", result);
+// Un segundo control del mismo paciente que aparece más tarde el mismo día (otra cita Atendida cerrada tarde): con la
+// clave «paciente y día» quedaba marcado como escrito sin email (revisión del EGM, 2026-11-16).
+ok(emailsTo(zoe.email) === 1, "Zoe recibió el de su limpieza");
+appointment(zoe.id, ortodoncia.id, addDaysISO(T, -170));
+result = await queueControlReminders(at(D, "11:30"));
+ok(emailsTo(zoe.email) === 2, "un segundo control el mismo día, en otra pasada, también sale", result);
+ok(
+  count(`select count(*) from control_reminders where client_id = '${zoe.id}' and emailed_at is not null`) === 2,
+  "y cada control queda marcado una sola vez",
+);
 const quique = patient("Quique Tarde");
 appointment(quique.id, limpieza.id, addDaysISO(T, -150)); // vence en T + 30
 await queueControlReminders(at(addDaysISO(T, 61), "10:30"));

@@ -4,6 +4,7 @@ import { AppError } from "../http/errors.ts";
 import {
   CONTROL_EMAIL_DAYS_LATE,
   CONTROL_LIST_DAYS_AHEAD,
+  CONTROL_LIST_DAYS_BEHIND,
   CONTROL_SEND_HOUR,
   describeReturnAfter,
 } from "../shared/lib/constants/business.ts";
@@ -43,15 +44,16 @@ interface ControlRow extends ControlReminder {
 }
 
 /**
- * Los controles de un negocio en `today` (la fecha del negocio). `dueUntil`: sólo los que vencen hasta ese día (null:
- * todos). `professionalId`: los de esa agenda (el rol Profesional). `clientId`: los de ese paciente.
+ * Los controles de un negocio en `today` (la fecha del negocio). `dueFrom` y `dueUntil`: sólo los que vencen desde y
+ * hasta esos días (null: sin límite). `professionalId`: los de esa agenda (el rol Profesional). `clientId`: los de ese
+ * paciente.
  */
 async function findControls(
   db: Db,
   businessId: string,
   timezone: string,
   today: ISODate,
-  filters: { dueUntil?: ISODate | null; professionalId?: string | null; clientId?: string | null },
+  filters: { dueFrom?: ISODate | null; dueUntil?: ISODate | null; professionalId?: string | null; clientId?: string | null },
 ): Promise<ControlRow[]> {
   return many<ControlRow>(
     db,
@@ -75,6 +77,7 @@ async function findControls(
        left join control_reminders r on r.appointment_id = l.id
       where r.removed_at is null
         and ($4::date is null or l.date + s.return_after_days <= $4::date)
+        and ($7::date is null or l.date + s.return_after_days >= $7::date)
         and ($5::uuid is null or l.professional_id = $5::uuid)
         and ($6::uuid is null or l.client_id = $6::uuid)
         and not exists (
@@ -83,7 +86,7 @@ async function findControls(
              and (f.client_id = l.client_id
                   or exists (select 1 from appointment_clients ac where ac.appointment_id = f.id and ac.client_id = l.client_id)))
       order by l.date + s.return_after_days, c.name, s.name`,
-    [businessId, timezone, today, filters.dueUntil ?? null, filters.professionalId ?? null, filters.clientId ?? null],
+    [businessId, timezone, today, filters.dueUntil ?? null, filters.professionalId ?? null, filters.clientId ?? null, filters.dueFrom ?? null],
   );
 }
 
@@ -108,12 +111,11 @@ export async function runControlReminderJob(db: Db, businessId: string, at: Date
   const today = now.date;
   const oldest = addDaysISO(today, -CONTROL_EMAIL_DAYS_LATE);
   const since = business.controlRemindersSince;
-  const due = (await findControls(db, businessId, business.timezone, today, { dueUntil: today })).filter(
+  const due = (await findControls(db, businessId, business.timezone, today, { dueFrom: oldest, dueUntil: today })).filter(
     (control) =>
       control.emailedAt === null &&
       !control.optedOut &&
       control.clientEmail.trim() !== "" &&
-      control.dueOn >= oldest &&
       control.dueOn >= since &&
       control.serviceSince !== null &&
       control.dueOn >= control.serviceSince,
@@ -144,7 +146,10 @@ export async function runControlReminderJob(db: Db, businessId: string, at: Date
       type: "control_reminder",
       to: first.control.clientEmail,
       appointmentId: first.control.appointmentId,
-      dedupeKey: `control:${clientId}:${today}`,
+      // La cita del primer control: cada control se escribe una sola vez (control_reminders), así que la clave no se
+      // repite. Con «paciente y día», un segundo control del mismo día en otra pasada quedaba marcado sin email
+      // (revisión del EGM, 2026-11-16).
+      dedupeKey: `control:${first.control.appointmentId}`,
       ...emailTemplates.controlReminder({
         clientName: firstNameOf(first.control.clientName),
         businessName: business.name,
@@ -229,7 +234,10 @@ export const controlReminderService = {
     if (query.clientId && !clientId) return [];
     const { timezone } = (await one<{ timezone: string }>(pool, "select timezone from businesses where id = $1", [businessId]))!;
     const today = getZonedNow(timezone).date;
+    // La hoja: los vencidos de los últimos 90 días (los más antiguos están en Reportes → «Pacientes que no volvieron»)
+    // y los de los próximos 30. La ficha: todos los del paciente.
     const controls = await findControls(pool, businessId, timezone, today, {
+      dueFrom: clientId ? null : addDaysISO(today, -CONTROL_LIST_DAYS_BEHIND),
       dueUntil: clientId ? null : addDaysISO(today, CONTROL_LIST_DAYS_AHEAD),
       professionalId,
       clientId,
