@@ -145,6 +145,8 @@ export function normalizePhone(phone: string, callingCode = "593"): string | nul
   else if (digits.startsWith("00")) full = digits.slice(2);
   else if (digits.startsWith(callingCode) && digits.length > 10) full = digits;
   else full = callingCode + digits.replace(/^0+/, "");
+  // «+593 099…»: el 0 del número local no va después del código del país (como en comparablePhone).
+  if (full.startsWith(callingCode)) full = callingCode + full.slice(callingCode.length).replace(/^0+/, "");
   return /^[1-9]\d{7,14}$/.test(full) ? `+${full}` : null;
 }
 

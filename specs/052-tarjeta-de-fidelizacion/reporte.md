@@ -128,6 +128,29 @@ Lo que la revisión encontró bien resuelto:
 - la analítica y Sentry sin tokens;
 - RLS en las tablas nuevas.
 
+## Segunda revisión (2026-11-16, después de los cambios del dueño)
+
+Dos revisores nuevos (seguridad y lógica) sobre los commits 4b54800 y 032cfc3 (backend) y 0cf110f y a73d1e6 (front).
+El dueño pidió corregir todo «según como sea mejor»; se aplicaron las tres recomendaciones:
+
+- **Un QR que llega como enlace no se escanea solo** (`/q/:token`, `?qr=`): pide «El paciente está aquí: escanear» y el
+  código se quita de la dirección, así recargar o volver atrás no repite el escaneo. Antes, mandar el enlace por
+  WhatsApp bastaba para dejar la cita atendida, para volver a mostrar tarjetas ocultas tras un enlace de contraseña o
+  para unir con un toque una cuenta con el teléfono de otro.
+- **La cita se marca sola sólo si es la única pendiente o confirmada, de un solo paciente y desde una hora antes de su
+  inicio** (`completesOnScan`, `startsSoon`); las demás, con «Marcar como atendida». El aviso dice que sólo el
+  propietario la corrige («Corregir estado»).
+- **«Tu cuenta quedó unida»** al email de la ficha cuando se une una cuenta (`loyalty_linked`, sin copia al
+  profesional: no es de una cita).
+- **El bloqueo ya no se salta en paralelo** (`checkPassword`, una transacción con `for update`) y vale también para
+  cambiar la contraseña y eliminar la cuenta.
+- `normalizePhone` quita el 0 después del +593 («+593 099…»); las fichas inactivas salen marcadas y no se unen; aviso de
+  la tarjeta apagada en «QR para tus pacientes»; «Paciente nuevo» advierte si ya hay una ficha con su teléfono y explica
+  qué hacer si su ficha tiene otro; la lámina de reservas vuelve a su corrección de errores de antes; el resultado del
+  escaneo no espera las recargas; `/mi-tarjeta?consultorio=` espera el consultorio sin saltos; los QR y el enlace de
+  reservas usan la dirección pública del sitio en lo que se publica (`src/lib/public-url.ts`).
+- Las citas de prueba ya no dependen de la hora a la que se corre la suite.
+
 ## Pendientes y riesgos
 
 - **Queda (bajo):** alguien puede registrar primero el teléfono de otra persona.
@@ -142,10 +165,16 @@ Lo que la revisión encontró bien resuelto:
   teléfono, y el QR se puede cambiar.
 - **Unir por teléfono sin cita (2026-11-16):** quien escanea debe comprobar que la persona es la de la ficha (sale el
   final de su cédula). Si une a otra persona con el teléfono del paciente, la ficha lo dice y se puede desunir.
+- **Queda (bajo):** la ficha dice si un teléfono tiene cuenta. Alguien con un negocio propio podría consultar teléfonos
+  así; saber eso vale poco.
+- **Queda (bajo):** quien sepa el teléfono de un paciente puede dejar su cuenta esperando hasta 24 horas con intentos
+  fallidos. El enlace del consultorio la desbloquea.
+- **Queda (bajo, CPU):** buscar la ficha por teléfono recorre las fichas del negocio, sólo la primera vez que se escanea
+  una cuenta (milisegundos con miles de fichas). Si crece mucho, un índice de expresión sobre el teléfono.
 - **El PIN de 4 números (2026-11-16):** 10.000 combinaciones. Lo cuidan el bloqueo creciente (con un fallo al día como
   mucho, adivinar uno que no sea de los fáciles tomaría años), el CAPTCHA y que se rechazan los fáciles.
-- **Escanear marca la cita (2026-11-16):** si se escanea antes de la sesión, igual queda Atendida y sale el email de
-  seguimiento. Si no correspondía, se cambia desde la Agenda (el sello se quita solo).
+- **Escanear marca la cita (2026-11-16):** desde una hora antes de su inicio queda Atendida y sale el email de
+  seguimiento. Si no correspondía, sólo el propietario la corrige («Corregir estado»; el sello se quita solo).
 - **Las preguntas frecuentes de la portada que dicen que el paciente no crea cuenta siguen siendo ciertas** (hablan de reservar). Se pueden matizar si el dueño quiere.
 
 ## Commits

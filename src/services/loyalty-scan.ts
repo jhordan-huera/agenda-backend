@@ -2,6 +2,8 @@ import { appointmentColumns } from "../db/columns.ts";
 import { isUuid, many, one, transaction, type Db } from "../db/pool.ts";
 import { AppError } from "../http/errors.ts";
 import { APPOINTMENT_STATUS_CONFIG } from "../shared/lib/constants/appointment-status.ts";
+import { startsSoon } from "../shared/lib/constants/loyalty.ts";
+import { emailTemplates } from "../shared/lib/email/templates.ts";
 import { getZonedNow } from "../shared/lib/time.ts";
 import { scanCompleteSchema, scanLinkSchema, scanNewClientSchema, scanSchema } from "../shared/lib/validations/loyalty.ts";
 import type { Appointment, ScanAppointment, ScanClient, ScanResult } from "../shared/types/index.ts";
@@ -10,14 +12,17 @@ import { agendaScope, assertAppointmentInScope, assertClientInScope, ownClientCo
 import { logAudit } from "./audit.ts";
 import { changeAppointmentStatus, insertClient } from "./business-data-service.ts";
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
+import { patientCardUrl, queueEmail } from "./notifications.ts";
 
 /*
  * «Escanear» (spec 052): el QR de la cuenta del paciente, en el panel. La primera vez en un negocio, el usuario elige
  * quién es: la ficha con el mismo teléfono que la cuenta (sin cita), la ficha de una de las citas de hoy que puede ver
  * o una ficha nueva con el teléfono de la cuenta. La cuenta queda unida a esa ficha: ese escaneo en persona es la
- * verificación (con sólo registrarse con un teléfono, nadie ve nada de un negocio). Al escanear o al unir, la única
- * cita de hoy pendiente o confirmada del paciente queda atendida sola (pedido del dueño), por el mismo camino que la
- * ficha; con varias, se elige cuál. Funciona aunque la tarjeta esté apagada.
+ * verificación (con sólo registrarse con un teléfono, nadie ve nada de un negocio). Al unirla, el email de la ficha
+ * recibe «Tu cuenta quedó unida» (si no fue el paciente, se entera). Al escanear o al unir, su cita de hoy queda
+ * atendida sola si es la única pendiente o confirmada, de un solo paciente y desde una hora antes de su inicio
+ * (decisiones del dueño, 2026-11-16), por el mismo camino que la ficha; las demás, con «Marcar como atendida».
+ * Funciona aunque la tarjeta esté apagada. El panel pide un toque antes de escanear un QR que llega como enlace.
  */
 
 const QR_GONE = "Este QR ya no sirve: pídele al paciente que abra su tarjeta.";
@@ -34,9 +39,9 @@ async function accountByToken(db: Db, token: string): Promise<ScannedAccount> {
   return account;
 }
 
-async function todayOf(db: Db, businessId: string): Promise<string> {
+async function nowOf(db: Db, businessId: string) {
   const { timezone } = (await one<{ timezone: string }>(db, "select timezone from businesses where id = $1", [businessId]))!;
-  return getZonedNow(timezone).date;
+  return getZonedNow(timezone);
 }
 
 const isOpen = (status: string) => status === "pending" || status === "confirmed";
@@ -52,10 +57,12 @@ async function todayAppointments(
   clientId: string | null,
   account: ScannedAccount,
 ): Promise<ScanAppointment[]> {
-  const rows = await many<Omit<ScanAppointment, "phoneMatches"> & { clientPhone: string }>(
+  const now = await nowOf(db, businessId);
+  const rows = await many<Omit<ScanAppointment, "phoneMatches" | "completesOnScan"> & { clientPhone: string }>(
     db,
     `select a.id, p.client_id as "clientId", c.name as "clientName", s.name as "serviceName", pr.display_name as "professionalName",
-            left(a.start_time::text, 5) as "startTime", a.status, c.phone as "clientPhone"
+            left(a.start_time::text, 5) as "startTime", a.status, c.phone as "clientPhone",
+            exists (select 1 from appointment_clients others where others.appointment_id = a.id) as "withOthers"
        from appointments a
        cross join lateral (select a.client_id union all select ac.client_id from appointment_clients ac where ac.appointment_id = a.id) p(client_id)
        join clients c on c.id = p.client_id
@@ -65,9 +72,13 @@ async function todayAppointments(
         and ($3::uuid is null or a.professional_id = $3::uuid)
         and ($4::uuid is null or p.client_id = $4::uuid)
       order by a.start_time, c.name`,
-    [businessId, await todayOf(db, businessId), scope.professionalId, clientId],
+    [businessId, now.date, scope.professionalId, clientId],
   );
-  return rows.map(({ clientPhone, ...row }) => ({ ...row, phoneMatches: normalizePhone(clientPhone ?? "") === account.phone }));
+  return rows.map(({ clientPhone, ...row }) => ({
+    ...row,
+    phoneMatches: normalizePhone(clientPhone ?? "") === account.phone,
+    completesOnScan: isOpen(row.status) && !row.withOthers && startsSoon(row.startTime, now.minutes),
+  }));
 }
 
 /**
@@ -78,7 +89,7 @@ async function phoneClients(db: Db, businessId: string, scope: AgendaScope, acco
   const own = scope.ownClients;
   const rows = await many<ScanClient & { phone: string }>(
     db,
-    `select c.id as "clientId", c.name as "clientName", c.phone, nullif(right(coalesce(c.document_id, ''), 4), '') as "documentEnd",
+    `select c.id as "clientId", c.name as "clientName", c.phone, nullif(right(coalesce(c.document_id, ''), 4), '') as "documentEnd", c.is_active as "isActive",
             exists (select 1 from loyalty_cards k where k.client_id = c.id and k.patient_account_id is not null and k.patient_account_id <> $3)
               as "linkedToOther"
        from clients c
@@ -135,7 +146,7 @@ async function completeToday(
   return { ...appointment, status: "completed" };
 }
 
-/** Al escanear o al unir: si el paciente tiene una sola cita de hoy por atender, queda atendida. Con varias, se elige. */
+/** Al escanear o al unir: si el paciente tiene una sola cita de hoy que se marca sola (`completesOnScan`), queda atendida. */
 async function completeOnlyOpen(
   db: Db,
   actor: Actor,
@@ -144,8 +155,8 @@ async function completeOnlyOpen(
   linked: { clientId: string; clientName: string },
   account: ScannedAccount,
 ): Promise<ScanAppointment | null> {
-  const open = (await todayAppointments(db, businessId, scope, linked.clientId, account)).filter((item) => isOpen(item.status));
-  return open.length === 1 ? completeToday(db, actor, businessId, scope, linked, open[0]!) : null;
+  const ready = (await todayAppointments(db, businessId, scope, linked.clientId, account)).filter((item) => item.completesOnScan);
+  return ready.length === 1 ? completeToday(db, actor, businessId, scope, linked, ready[0]!) : null;
 }
 
 async function result(
@@ -157,10 +168,9 @@ async function result(
 ): Promise<ScanResult> {
   const linked = await linkedClient(db, businessId, account.id);
   if (!linked) {
-    const [clients, appointments] = await Promise.all([
-      phoneClients(db, businessId, scope, account),
-      todayAppointments(db, businessId, scope, null, account),
-    ]);
+    // Una tras otra: `db` puede ser la conexión de una transacción, que no admite dos consultas a la vez.
+    const clients = await phoneClients(db, businessId, scope, account);
+    const appointments = await todayAppointments(db, businessId, scope, null, account);
     return { status: "unlinked", accountName: account.name, accountPhoneEnd: account.phone.slice(-4), phoneClients: clients, appointments };
   }
   await touchLink(db, businessId, account.id);
@@ -172,8 +182,17 @@ async function result(
   };
 }
 
-/** Unir la cuenta a la ficha (dentro de la transacción): sin repetir cuenta ni ficha, con la actividad. */
+/**
+ * Unir la cuenta a la ficha (dentro de la transacción): sin repetir cuenta ni ficha, sólo a una ficha activa, con la
+ * actividad y el aviso al email de la ficha.
+ */
 async function linkAccount(db: Db, actor: Actor, businessId: string, account: ScannedAccount, client: { id: string; name: string }, how: string) {
+  const ficha = await one<{ isActive: boolean }>(db, "select is_active as \"isActive\" from clients where id = $1 and business_id = $2", [
+    client.id,
+    businessId,
+  ]);
+  if (!ficha) throw new AppError("not_found", "Cliente no encontrado.");
+  if (!ficha.isActive) throw new AppError("conflict", "Esta ficha está inactiva: actívala en Clientes para unirla (una ficha inactiva no suma sellos).");
   const already = await linkedClient(db, businessId, account.id);
   if (already && already.clientId !== client.id) {
     throw new AppError("conflict", `Esta cuenta ya está unida a la ficha de ${already.clientName}.`);
@@ -197,6 +216,45 @@ async function linkAccount(db: Db, actor: Actor, businessId: string, account: Sc
     entityType: "loyalty",
     entityId: client.id,
     summary: `Escaneó el QR de ${account.name} y unió su cuenta a la ficha de ${client.name}${how}`,
+  });
+  await notifyAccountLinked(db, businessId, client.id);
+}
+
+/**
+ * «Tu cuenta quedó unida» al email de la ficha (el que tiene el consultorio, no el de quien creó la cuenta): si alguien
+ * unió una cuenta que no es del paciente, el paciente se entera y avisa. Sin email en la ficha, no sale.
+ */
+async function notifyAccountLinked(db: Db, businessId: string, clientId: string) {
+  const row = await one<{
+    clientName: string;
+    email: string;
+    businessName: string;
+    businessAddress: string;
+    businessPhone: string;
+    programName: string | null;
+    timezone: string;
+  }>(
+    db,
+    `select c.name as "clientName", coalesce(c.email, '') as email, b.name as "businessName", coalesce(b.address, '') as "businessAddress",
+            coalesce(b.phone, '') as "businessPhone", case when p.enabled_at is not null then p.name end as "programName", b.timezone
+       from clients c join businesses b on b.id = c.business_id left join loyalty_programs p on p.business_id = b.id
+      where c.id = $1 and c.business_id = $2`,
+    [clientId, businessId],
+  );
+  if (!row?.email) return;
+  await queueEmail(db, {
+    businessId,
+    type: "loyalty_linked",
+    to: row.email,
+    ...emailTemplates.loyaltyLinked({
+      clientName: row.clientName,
+      businessName: row.businessName,
+      businessAddress: row.businessAddress,
+      businessPhone: row.businessPhone,
+      programName: row.programName,
+      date: getZonedNow(row.timezone).date,
+      cardUrl: patientCardUrl(),
+    }),
   });
 }
 
@@ -244,8 +302,9 @@ export const loyaltyScanService = {
       }
       await linkAccount(db, actor, businessId, account, client, appointmentId ? "" : " (mismo teléfono)");
       const linked = { clientId: client.id, clientName: client.name };
+      // La cita elegida queda atendida si se marca sola (pendiente o confirmada, de un solo paciente y desde una hora antes).
       const completedNow = chosen
-        ? isOpen(chosen.status)
+        ? chosen.completesOnScan
           ? await completeToday(db, actor, businessId, scope, linked, chosen)
           : null
         : await completeOnlyOpen(db, actor, businessId, scope, linked, account);

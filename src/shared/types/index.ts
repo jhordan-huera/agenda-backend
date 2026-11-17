@@ -787,7 +787,12 @@ export type EmailType =
   /** Al paciente: «Te toca tu control», el día que le toca volver (spec 051). Sin copia al profesional. */
   | "control_reminder"
   /** Al paciente: «Ganaste un premio», al desbloquear una recompensa de la tarjeta (spec 052). Con copia al profesional. */
-  | "loyalty_reward";
+  | "loyalty_reward"
+  /**
+   * Al email de la ficha: «Tu cuenta quedó unida», cuando el consultorio une una cuenta de paciente a su ficha (spec
+   * 052): si no fue él, se entera y avisa. Sin copia al profesional: no es de una cita.
+   */
+  | "loyalty_linked";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -2614,6 +2619,13 @@ export interface ScanAppointment {
    * sirve: lo escribe el dueño de la cuenta (revisión de seguridad de la spec 052).
    */
   phoneMatches: boolean;
+  /** Es una sesión con varios pacientes: escanear a uno no la marca sola (se marca para todos con el botón). */
+  withOthers: boolean;
+  /**
+   * Al escanear, queda Atendida sola si es la única así: pendiente o confirmada, de un solo paciente y desde una hora
+   * antes de su inicio (decisión del dueño, 2026-11-16). Las demás, con «Marcar como atendida».
+   */
+  completesOnScan: boolean;
 }
 
 /**
@@ -2635,6 +2647,8 @@ export interface ScanClient {
   documentEnd: string | null;
   /** La ficha ya está unida a otra cuenta: no se puede elegir. */
   linkedToOther: boolean;
+  /** Una ficha inactiva no suma sellos: hay que activarla antes de unirla. */
+  isActive: boolean;
 }
 
 /**

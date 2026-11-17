@@ -112,6 +112,8 @@ console.log("Cada tipo de email tiene su nivel");
       "survey_request",
       // El recordatorio de control (spec 051).
       "control_reminder",
+      // La tarjeta de fidelización (spec 052).
+      "loyalty_reward", "loyalty_linked",
     ],
     business: [
       "appointment_copy", "booking_received", "professional_new_appointment", "professional_daily_agenda", "payment_receipt_received", "patient_cancelled",

@@ -1,5 +1,6 @@
 // Copia de agenda-front/src/lib/constants/loyalty.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
-import type { LoyaltyBenefitKind, LoyaltyLevel, SocialLinks, StampIcon } from "../../types/index.ts";
+import { timeToMinutes } from "../time.ts";
+import type { LoyaltyBenefitKind, LoyaltyLevel, SocialLinks, StampIcon, TimeString } from "../../types/index.ts";
 
 /*
  * Tarjeta de fidelización (spec 052): los sellos, los tipos de beneficio, los niveles, el QR y las redes. Lo comparten
@@ -80,6 +81,15 @@ export const PATIENT_RESET_HOURS = 24;
 const QR_TOKEN = /^[0-9a-f]{32}$/;
 
 export const patientQrUrl = (origin: string, token: string) => `${origin.replace(/\/+$/, "")}/q/${token}`;
+
+/**
+ * Al escanear, una cita queda atendida sola desde una hora antes de su inicio (decisión del dueño, 2026-11-16): así
+ * no se marca una de las 16:00 si el paciente pasa a las 10:00. `nowMinutes`: los minutos desde la medianoche, en la
+ * zona del consultorio.
+ */
+export const COMPLETE_ON_SCAN_BEFORE_MINUTES = 60;
+export const startsSoon = (startTime: TimeString, nowMinutes: number) =>
+  timeToMinutes(startTime) - nowMinutes <= COMPLETE_ON_SCAN_BEFORE_MINUTES;
 
 /** El QR del consultorio para sus pacientes: «Mi tarjeta» con su nombre y su logo, para crear la cuenta. */
 export const PATIENT_INVITE_PARAM = "consultorio";

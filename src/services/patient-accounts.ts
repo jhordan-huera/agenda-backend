@@ -33,7 +33,9 @@ const WRONG_LOGIN = "El teléfono o la contraseña no coinciden.";
  * teléfono se cuentan en rate_limits (`paciente-fallos:<teléfono>`, la cuenta se olvida 30 días después del último
  * fallo). Desde el 5.º, hay que esperar 15 minutos, y cada fallo más duplica la espera hasta 24 horas. Entrar bien o
  * cambiar la contraseña con el enlace del consultorio la pone en cero. Cuenta también los teléfonos sin cuenta: el
- * aviso no revela si existe. Con un fallo al día como mucho, adivinar un PIN que no sea de los fáciles tomaría años.
+ * aviso no revela si existe. Con un fallo al día como mucho (checkPassword los pone en fila), adivinar un PIN que no
+ * sea de los fáciles tomaría años. Quien sepa el teléfono puede dejar la cuenta esperando: el enlace del consultorio
+ * la desbloquea (riesgo aceptado, en el reporte).
  */
 const LOCK_AFTER_FAILURES = 5;
 const LOCK_FIRST_MS = 15 * 60_000;
@@ -55,35 +57,51 @@ function waitText(ms: number): string {
   return hours === 1 ? "1 hora" : `${hours} horas`;
 }
 
-/** Los fallos seguidos y hasta cuándo hay que esperar (null: puede intentarlo). */
-async function lockOf(db: Db, phone: string): Promise<{ failures: number; until: Date | null }> {
-  const row = await one<{ hits: number; resetAt: string }>(
-    db,
-    `select hits, reset_at as "resetAt" from rate_limits where key = $1 and reset_at > now()`,
-    [failuresKey(phone)],
-  );
-  if (!row) return { failures: 0, until: null };
-  const lastFailure = new Date(row.resetAt).getTime() - FAILURES_MEMORY_MS;
-  const until = lastFailure + lockDurationMs(row.hits);
-  return { failures: row.hits, until: until > Date.now() ? new Date(until) : null };
-}
-
-async function recordFailure(db: Db, phone: string): Promise<number> {
-  const row = (await one<{ hits: number }>(
-    db,
-    `insert into rate_limits (key, hits, reset_at) values ($1, 1, now() + make_interval(secs => $2::double precision / 1000))
-     on conflict (key) do update
-       set hits = case when rate_limits.reset_at <= now() then 1 else rate_limits.hits + 1 end, reset_at = excluded.reset_at
-     returning hits`,
-    [failuresKey(phone), FAILURES_MEMORY_MS],
-  ))!;
-  return row.hits;
-}
-
 const clearFailures = (db: Db, phone: string) => db.query("delete from rate_limits where key = $1", [failuresKey(phone)]);
 
 const lockedMessage = (until: Date) =>
   `Por seguridad, espera ${waitText(until.getTime() - Date.now())} antes de volver a intentarlo. Si olvidaste tu contraseña, pide en tu consultorio un enlace para cambiarla.`;
+
+/**
+ * Comprueba una contraseña con el bloqueo creciente del teléfono, en una transacción que bloquea su fila de fallos:
+ * varios intentos a la vez esperan su turno y no se saltan la espera (revisión de seguridad). Entrar, cambiar la
+ * contraseña y eliminar la cuenta pasan por aquí: con una sesión abierta tampoco se puede probar PIN tras PIN.
+ * Devuelve los fallos seguidos (0: acertó, y la cuenta de fallos vuelve a cero); con la espera vigente, falla.
+ */
+async function checkPassword(phone: string, password: string, passwordHash: string | null): Promise<number> {
+  const key = failuresKey(phone);
+  return transaction(async (db) => {
+    await db.query("insert into rate_limits (key, hits, reset_at) values ($1, 0, now()) on conflict (key) do nothing", [key]);
+    const row = (await one<{ hits: number; resetAt: string; live: boolean }>(
+      db,
+      `select hits, reset_at as "resetAt", reset_at > now() as live from rate_limits where key = $1 for update`,
+      [key],
+    ))!;
+    const failures = row.live ? row.hits : 0;
+    // El último fallo fue `FAILURES_MEMORY_MS` antes de que se olvide la cuenta.
+    const until = new Date(row.resetAt).getTime() - FAILURES_MEMORY_MS + lockDurationMs(failures);
+    if (failures >= LOCK_AFTER_FAILURES && until > Date.now()) throw new AppError("rate_limited", lockedMessage(new Date(until)));
+    const valid = await verifyPassword(password, passwordHash ?? (await dummy()));
+    if (valid && passwordHash) {
+      await db.query("delete from rate_limits where key = $1", [key]);
+      return 0;
+    }
+    await db.query("update rate_limits set hits = $2, reset_at = now() + make_interval(secs => $3::double precision / 1000) where key = $1", [
+      key,
+      failures + 1,
+      FAILURES_MEMORY_MS,
+    ]);
+    return failures + 1;
+  });
+}
+
+/** Después de un fallo: la espera si llegó al 5.º, o cuántos intentos le quedan si son pocos. */
+function wrongPassword(message: string, failures: number, code: "unauthorized" | "validation"): AppError {
+  const left = LOCK_AFTER_FAILURES - failures;
+  if (left <= 0) return new AppError("rate_limited", lockedMessage(new Date(Date.now() + lockDurationMs(failures))));
+  if (left <= 2) return new AppError(code, `${message} ${left === 1 ? "Te queda 1 intento" : `Te quedan ${left} intentos`} antes de tener que esperar.`);
+  return new AppError(code, message);
+}
 
 export const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
@@ -274,8 +292,6 @@ export const patientAccountService = {
    */
   async login(input: unknown): Promise<string> {
     const data = parseInput(patientLoginSchema, input);
-    const lock = await lockOf(pool, data.phone);
-    if (lock.until) throw new AppError("rate_limited", lockedMessage(lock.until));
     const { hits } = await incrementCounter(pool, `paciente-login:${data.phone}`, LOGIN_WINDOW_MS);
     if (hits > LOGIN_MAX_PER_PHONE) {
       throw new AppError("rate_limited", "Demasiados intentos con este teléfono. Espera 15 minutos e inténtalo de nuevo.");
@@ -285,17 +301,8 @@ export const patientAccountService = {
       `select id, password_hash as "passwordHash" from patient_accounts where phone = $1`,
       [data.phone],
     );
-    const valid = await verifyPassword(data.password, row?.passwordHash ?? (await dummy()));
-    if (!row || !valid) {
-      const failures = await recordFailure(pool, data.phone);
-      const left = LOCK_AFTER_FAILURES - failures;
-      if (left <= 0) throw new AppError("rate_limited", lockedMessage(new Date(Date.now() + lockDurationMs(failures))));
-      if (left <= 2) {
-        throw new AppError("unauthorized", `${WRONG_LOGIN} ${left === 1 ? "Te queda 1 intento" : `Te quedan ${left} intentos`} antes de tener que esperar.`);
-      }
-      throw new AppError("unauthorized", WRONG_LOGIN);
-    }
-    if (lock.failures > 0) await clearFailures(pool, data.phone);
+    const failures = await checkPassword(data.phone, data.password, row?.passwordHash ?? null);
+    if (!row || failures > 0) throw wrongPassword(WRONG_LOGIN, failures, "unauthorized");
     return row.id;
   },
 
@@ -313,10 +320,14 @@ export const patientAccountService = {
 
   async changePassword(accountId: string, input: unknown, keepSessionToken: string): Promise<void> {
     const data = parseInput(patientPasswordSchema, input);
-    const row = await one<{ passwordHash: string }>(pool, `select password_hash as "passwordHash" from patient_accounts where id = $1`, [accountId]);
-    if (!row || !(await verifyPassword(data.currentPassword, row.passwordHash))) {
-      throw new AppError("validation", "Tu contraseña actual no coincide.");
-    }
+    const row = await one<{ phone: string; passwordHash: string }>(
+      pool,
+      `select phone, password_hash as "passwordHash" from patient_accounts where id = $1`,
+      [accountId],
+    );
+    if (!row) throw new AppError("unauthorized", "Inicia sesión con tu teléfono.");
+    const failures = await checkPassword(row.phone, data.currentPassword, row.passwordHash);
+    if (failures > 0) throw wrongPassword("Tu contraseña actual no coincide.", failures, "validation");
     await pool.query("update patient_accounts set password_hash = $2, updated_at = now() where id = $1", [
       accountId,
       await hashPassword(data.newPassword),
@@ -329,8 +340,14 @@ export const patientAccountService = {
   /** Eliminar la cuenta: los negocios conservan la ficha, los sellos y los premios; la cuenta y su QR desaparecen. */
   async deleteAccount(accountId: string, input: unknown): Promise<void> {
     const { password } = parseInput(patientDeleteSchema, input ?? {});
-    const row = await one<{ passwordHash: string }>(pool, `select password_hash as "passwordHash" from patient_accounts where id = $1`, [accountId]);
-    if (!row || !(await verifyPassword(password, row.passwordHash))) throw new AppError("validation", "Tu contraseña no coincide.");
+    const row = await one<{ phone: string; passwordHash: string }>(
+      pool,
+      `select phone, password_hash as "passwordHash" from patient_accounts where id = $1`,
+      [accountId],
+    );
+    if (!row) throw new AppError("unauthorized", "Inicia sesión con tu teléfono.");
+    const failures = await checkPassword(row.phone, password, row.passwordHash);
+    if (failures > 0) throw wrongPassword("Tu contraseña no coincide.", failures, "validation");
     await pool.query("delete from patient_accounts where id = $1", [accountId]);
   },
 

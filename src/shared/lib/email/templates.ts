@@ -99,6 +99,18 @@ export interface LoyaltyRewardEmailData extends AppointmentEmailData {
   cardUrl: string;
 }
 
+/** «Tu cuenta quedó unida» (spec 052): el consultorio unió la cuenta del paciente a su ficha. */
+export interface LoyaltyLinkedEmailData {
+  clientName: string;
+  businessName: string;
+  businessAddress: string;
+  businessPhone: string;
+  /** El programa de la tarjeta, si está encendido. */
+  programName: string | null;
+  date: ISODate;
+  cardUrl: string;
+}
+
 /**
  * Una cita de una serie en los emails (spec 011): su fecha, su franja y el enlace a la página «Tu cita»
  * de quien recibe el email (spec 010). Sin enlace en la copia al profesional: es del paciente.
@@ -1108,6 +1120,35 @@ export const emailTemplates = {
       ],
     });
   },
+
+  /**
+   * Tarjeta de fidelización (spec 052): el consultorio unió la cuenta del paciente a su ficha. Va al email de la ficha
+   * (el que tiene el consultorio, no el de quien creó la cuenta): si no fue el paciente, se entera y avisa.
+   */
+  loyaltyLinked: (data: LoyaltyLinkedEmailData): EmailContent =>
+    composeEmail({
+      subject: `Tu tarjeta de ${data.businessName} ya está en tu cuenta`,
+      preheader: "Desde ahora ves tus sellos y tus premios en «Mi tarjeta».",
+      title: "Tu cuenta quedó unida a tu ficha",
+      greeting: `Hola ${data.clientName}:`,
+      blocks: [
+        {
+          kind: "text",
+          text: `El ${formatLongDate(data.date)}, ${data.businessName} escaneó el QR de tu cuenta y la unió a tu ficha. Desde ahora ves ${
+            data.programName ? `tu tarjeta «${data.programName}»` : "tu tarjeta"
+          }, tus sellos y tus premios en «Mi tarjeta».`,
+        },
+        { kind: "button", label: "Ver mi tarjeta", url: data.cardUrl },
+        {
+          kind: "callout",
+          tone: "warning",
+          text: `¿No fuiste tú? Avisa a ${data.businessName}${data.businessPhone ? ` (${data.businessPhone})` : ""} para que quite esa cuenta de tu ficha.`,
+        },
+      ],
+      brand: { name: data.businessName },
+      signature: [data.businessName, data.businessAddress, data.businessPhone].filter(Boolean),
+      footer: `Aviso enviado con ${APP_NAME}.`,
+    }),
 
   /** El paciente no asistió: invitación a elegir otra hora (spec 008). */
   appointmentNoShow: (data: AppointmentEmailData): EmailContent =>

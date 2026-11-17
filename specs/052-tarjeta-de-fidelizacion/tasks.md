@@ -92,3 +92,6 @@ Rutas: back/ = agenda-backend, front/ = agenda-front
 - [X] T031 back/tests/patient-accounts.test.ts y front/scripts/check-loyalty.ts: las pruebas de todo lo anterior.
 - [X] T032 back: `GET /api/patient/invite/:slug` con su prueba; front: `PatientInviteDialog` (Fidelización y Escanear),
   `src/lib/qr-sheet.ts`, «Mi tarjeta» con `?consultorio=` y su comprobación en check-loyalty.ts.
+- [X] T033 Segunda revisión: el toque para los QR por enlace, la ventana de una hora y las sesiones con varios
+  pacientes, el email `loyalty_linked`, `checkPassword` atómico (también al cambiar la contraseña y al eliminar la
+  cuenta), `normalizePhone`, fichas inactivas, la dirección pública de los QR y sus pruebas.
