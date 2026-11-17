@@ -79,3 +79,14 @@ Rutas: back/ = agenda-backend, front/ = agenda-front
 - [X] T024 .specify/memory/constitution.md de los dos repos: 1.50.0.
 - [X] T025 back: `typecheck` y `npm test`; front: build, lint y todas las `check:*`; el recorrido con Playwright.
 - [X] T026 back/specs/052-tarjeta-de-fidelizacion/reporte.md.
+
+## Cambios después de probar (2026-11-16)
+
+- [X] T027 back/src/services/loyalty-scan.ts: las fichas con el mismo teléfono al escanear, unir sin cita por teléfono,
+  `newClient` («Paciente nuevo») y la cita de hoy atendida sola al escanear o al unir; la ruta `/scan/new-client`.
+- [X] T028 back/src/services/loyalty.ts: `account` en el bloque de la ficha.
+- [X] T029 back/src/services/patient-accounts.ts: el bloqueo creciente; front/src/lib/validations/loyalty.ts: el PIN de
+  4 y `isEasyPassword`.
+- [X] T030 front: el panel de Escanear, «Paciente nuevo» con `ClientFormDialog` (`custom`), el aviso de la ficha, los
+  textos del PIN, `dev:https` y el aviso de página segura.
+- [X] T031 back/tests/patient-accounts.test.ts y front/scripts/check-loyalty.ts: las pruebas de todo lo anterior.

@@ -12,6 +12,7 @@ import {
   STAMP_ICONS,
 } from "../shared/lib/constants/loyalty.ts";
 import { formatCurrency } from "../shared/lib/format.ts";
+import { normalizePhone } from "../shared/lib/validations/fields.ts";
 import { loyaltyBenefitSchema, loyaltyProgramSchema, loyaltyRedeemSchema } from "../shared/lib/validations/loyalty.ts";
 import type {
   Appointment,
@@ -602,11 +603,13 @@ export const loyaltyService = {
   /** El bloque de la ficha: el programa, la tarjeta del paciente y todas sus recompensas. */
   async clientLoyalty(ctx: RequestContext, businessId: string, clientId: string): Promise<ClientLoyalty> {
     const actor = await authorize(pool, ctx, businessId);
-    if (!isUuid(clientId) || !(await one(pool, "select 1 from clients where id = $1 and business_id = $2", [clientId, businessId]))) {
-      throw new AppError("not_found", "Cliente no encontrado.");
-    }
+    const client = isUuid(clientId)
+      ? await one<{ phone: string }>(pool, "select coalesce(phone, '') as phone from clients where id = $1 and business_id = $2", [clientId, businessId])
+      : null;
+    if (!client) throw new AppError("not_found", "Cliente no encontrado.");
     await assertClientInScope(pool, await agendaScope(pool, actor, businessId), clientId);
-    const [program, [card = null], rewards] = await Promise.all([
+    const phone = normalizePhone(client.phone);
+    const [program, [card = null], rewards, byPhone] = await Promise.all([
       programOf(pool, businessId),
       membersOf(pool, businessId, [clientId]),
       many<LoyaltyReward>(
@@ -615,8 +618,18 @@ export const loyaltyService = {
           where r.business_id = $1 and r.client_id = $2 order by r.unlocked_at desc`,
         [businessId, clientId],
       ),
+      // La cuenta con el teléfono de la ficha (índice único): si existe y si ya está unida a otra ficha de aquí.
+      phone
+        ? one<{ linkedHere: boolean }>(
+            pool,
+            `select exists (select 1 from loyalty_cards k where k.business_id = $2 and k.patient_account_id = a.id) as "linkedHere"
+               from patient_accounts a where a.phone = $1`,
+            [phone, businessId],
+          )
+        : null,
     ]);
-    return { program, card, rewards: rewards.map(withCode) };
+    const account: ClientLoyalty["account"] = card?.hasAccount ? "linked" : !byPhone ? "none" : byPhone.linkedHere ? "elsewhere" : "pending";
+    return { program, card, rewards: rewards.map(withCode), account };
   },
 
   /** «Pacientes» de Fidelización: los de menos citas por faltar primero. */

@@ -28,6 +28,63 @@ const LOGIN_WINDOW_MS = 15 * 60_000;
 const LOGIN_MAX_PER_PHONE = 10;
 const WRONG_LOGIN = "El teléfono o la contraseña no coinciden.";
 
+/*
+ * Bloqueo creciente (la contraseña puede ser un PIN de 4 números, pedido del dueño): los fallos seguidos de un
+ * teléfono se cuentan en rate_limits (`paciente-fallos:<teléfono>`, la cuenta se olvida 30 días después del último
+ * fallo). Desde el 5.º, hay que esperar 15 minutos, y cada fallo más duplica la espera hasta 24 horas. Entrar bien o
+ * cambiar la contraseña con el enlace del consultorio la pone en cero. Cuenta también los teléfonos sin cuenta: el
+ * aviso no revela si existe. Con un fallo al día como mucho, adivinar un PIN que no sea de los fáciles tomaría años.
+ */
+const LOCK_AFTER_FAILURES = 5;
+const LOCK_FIRST_MS = 15 * 60_000;
+const LOCK_MAX_MS = 24 * 60 * 60_000;
+const FAILURES_MEMORY_MS = 30 * 24 * 60 * 60_000;
+const failuresKey = (phone: string) => `paciente-fallos:${phone}`;
+
+/** La espera después de `failures` fallos seguidos (0 antes del 5.º). */
+export function lockDurationMs(failures: number): number {
+  if (failures < LOCK_AFTER_FAILURES) return 0;
+  return Math.min(LOCK_FIRST_MS * 2 ** (failures - LOCK_AFTER_FAILURES), LOCK_MAX_MS);
+}
+
+/** «15 minutos», «1 hora», «24 horas». */
+function waitText(ms: number): string {
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes < 60) return minutes === 1 ? "1 minuto" : `${minutes} minutos`;
+  const hours = Math.ceil(minutes / 60);
+  return hours === 1 ? "1 hora" : `${hours} horas`;
+}
+
+/** Los fallos seguidos y hasta cuándo hay que esperar (null: puede intentarlo). */
+async function lockOf(db: Db, phone: string): Promise<{ failures: number; until: Date | null }> {
+  const row = await one<{ hits: number; resetAt: string }>(
+    db,
+    `select hits, reset_at as "resetAt" from rate_limits where key = $1 and reset_at > now()`,
+    [failuresKey(phone)],
+  );
+  if (!row) return { failures: 0, until: null };
+  const lastFailure = new Date(row.resetAt).getTime() - FAILURES_MEMORY_MS;
+  const until = lastFailure + lockDurationMs(row.hits);
+  return { failures: row.hits, until: until > Date.now() ? new Date(until) : null };
+}
+
+async function recordFailure(db: Db, phone: string): Promise<number> {
+  const row = (await one<{ hits: number }>(
+    db,
+    `insert into rate_limits (key, hits, reset_at) values ($1, 1, now() + make_interval(secs => $2::double precision / 1000))
+     on conflict (key) do update
+       set hits = case when rate_limits.reset_at <= now() then 1 else rate_limits.hits + 1 end, reset_at = excluded.reset_at
+     returning hits`,
+    [failuresKey(phone), FAILURES_MEMORY_MS],
+  ))!;
+  return row.hits;
+}
+
+const clearFailures = (db: Db, phone: string) => db.query("delete from rate_limits where key = $1", [failuresKey(phone)]);
+
+const lockedMessage = (until: Date) =>
+  `Por seguridad, espera ${waitText(until.getTime() - Date.now())} antes de volver a intentarlo. Si olvidaste tu contraseña, pide en tu consultorio un enlace para cambiarla.`;
+
 export const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 /** Un hash de bcrypt para comparar cuando el teléfono no existe: tarda lo mismo (no revela si hay cuenta). */
@@ -195,9 +252,14 @@ export const patientAccountService = {
     return row.id;
   },
 
-  /** Entrar: con un límite de intentos por teléfono (además del de la IP en la ruta). */
+  /**
+   * Entrar: con el bloqueo creciente por fallos seguidos (arriba) y un límite de intentos por teléfono (además del de
+   * la IP en la ruta).
+   */
   async login(input: unknown): Promise<string> {
     const data = parseInput(patientLoginSchema, input);
+    const lock = await lockOf(pool, data.phone);
+    if (lock.until) throw new AppError("rate_limited", lockedMessage(lock.until));
     const { hits } = await incrementCounter(pool, `paciente-login:${data.phone}`, LOGIN_WINDOW_MS);
     if (hits > LOGIN_MAX_PER_PHONE) {
       throw new AppError("rate_limited", "Demasiados intentos con este teléfono. Espera 15 minutos e inténtalo de nuevo.");
@@ -208,7 +270,16 @@ export const patientAccountService = {
       [data.phone],
     );
     const valid = await verifyPassword(data.password, row?.passwordHash ?? (await dummy()));
-    if (!row || !valid) throw new AppError("unauthorized", WRONG_LOGIN);
+    if (!row || !valid) {
+      const failures = await recordFailure(pool, data.phone);
+      const left = LOCK_AFTER_FAILURES - failures;
+      if (left <= 0) throw new AppError("rate_limited", lockedMessage(new Date(Date.now() + lockDurationMs(failures))));
+      if (left <= 2) {
+        throw new AppError("unauthorized", `${WRONG_LOGIN} ${left === 1 ? "Te queda 1 intento" : `Te quedan ${left} intentos`} antes de tener que esperar.`);
+      }
+      throw new AppError("unauthorized", WRONG_LOGIN);
+    }
+    if (lock.failures > 0) await clearFailures(pool, data.phone);
     return row.id;
   },
 
@@ -275,10 +346,14 @@ export const patientAccountService = {
           )
         : null;
       if (!link) throw new AppError("not_found", "Este enlace ya se usó o venció. Pide otro en tu consultorio.");
-      await db.query(
-        "update patient_accounts set password_hash = $2, reset_by_business_id = $3, reset_at = now(), updated_at = now() where id = $1",
+      const { phone } = (await one<{ phone: string }>(
+        db,
+        `update patient_accounts set password_hash = $2, reset_by_business_id = $3, reset_at = now(), updated_at = now() where id = $1
+         returning phone`,
         [link.accountId, hash, link.businessId],
-      );
+      ))!;
+      // Con la contraseña nueva, la espera por los intentos fallidos se termina.
+      await clearFailures(db, phone);
       await db.query("delete from patient_sessions where account_id = $1", [link.accountId]);
       // Los otros enlaces que quedaban (de cualquier consultorio) dejan de servir.
       await db.query("update patient_password_links set used_at = now() where account_id = $1 and used_at is null", [link.accountId]);

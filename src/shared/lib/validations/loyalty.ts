@@ -1,7 +1,7 @@
 // Copia de agenda-front/src/lib/validations/loyalty.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
 import { BENEFIT_KIND_KEYS, LOYALTY_MAX_VALID_DAYS, LOYALTY_MAX_VISITS, STAMP_ICON_KEYS } from "../constants/loyalty.ts";
-import { optionalText, passwordField, patientPhoneField, personNameField, requiredText } from "./fields.ts";
+import { optionalText, patientPhoneField, personNameField, requiredText } from "./fields.ts";
 
 /*
  * Tarjeta de fidelización (spec 052): el programa y los beneficios del negocio, la cuenta del paciente y el escaneo
@@ -67,12 +67,40 @@ const captchaToken = z.string().max(4096).optional();
 const COMMON_PASSWORDS = new Set([
   "12345678", "123456789", "1234567890", "87654321", "11111111", "00000000", "12341234", "11223344",
   "password", "password1", "contraseña", "contrasena", "qwertyui", "qwerty123", "abcd1234", "asdfghjk",
-  "iloveyou", "teamo123", "ecuador1", "agenda360",
+  "iloveyou", "teamo123", "ecuador1", "agenda360", "abcd", "qwerty", "hola", "clave", "pass", "1q2w",
 ]);
-const patientPasswordField = passwordField.refine(
-  (value) => !COMMON_PASSWORDS.has(value.trim().toLowerCase()),
-  "Esa contraseña es muy fácil de adivinar: elige otra",
-);
+
+/** Los PIN que se prueban primero: con 4 números hay sólo 10.000 y éstos caen en los primeros intentos. */
+const COMMON_PINS = new Set(["2580", "0852", "1470", "7410", "3690", "0963", "1357", "2468", "1004", "6969", "5683", "1379", "1397"]);
+
+/**
+ * Una contraseña o un PIN demasiado fácil de adivinar: los más usados, un mismo número repetido (0000), una escalera
+ * (1234, 9876, 0123), un par repetido (1212, 1122) o un año (1990, 2024).
+ */
+export function isEasyPassword(value: string): boolean {
+  const text = value.trim().toLowerCase();
+  if (COMMON_PASSWORDS.has(text) || COMMON_PINS.has(text)) return true;
+  if (!/^\d+$/.test(text)) return false;
+  if (/^(\d)\1+$/.test(text) || /^(\d\d)\1+$/.test(text) || /^(\d)\1(\d)\2$/.test(text)) return true;
+  if (/^(19[3-9]\d|20[0-4]\d)$/.test(text)) return true;
+  const steps = [...text].slice(1).map((digit, index) => (Number(digit) - Number(text[index]) + 10) % 10);
+  return steps.every((step) => step === 1) || steps.every((step) => step === 9);
+}
+
+/**
+ * La contraseña de la cuenta del paciente: desde 4 caracteres, así sirve un PIN de 4 números (pedido del dueño). Lo
+ * que la protege es el bloqueo creciente al entrar (patient-accounts.ts en la API) y que no se aceptan las fáciles.
+ */
+export const PATIENT_PASSWORD_MIN = 4;
+const patientPasswordField = z
+  .string({ error: "Escribe una contraseña o un PIN" })
+  .min(PATIENT_PASSWORD_MIN, `Mínimo ${PATIENT_PASSWORD_MIN} caracteres: puede ser un PIN de 4 números`)
+  .max(72, "La contraseña es demasiado larga")
+  .superRefine((value, ctx) => {
+    if (!isEasyPassword(value)) return;
+    const pin = /^\d+$/.test(value.trim());
+    ctx.addIssue({ code: "custom", message: pin ? "Ese PIN es muy fácil de adivinar: elige otro" : "Esa contraseña es muy fácil de adivinar: elige otra" });
+  });
 
 export const patientSignupSchema = z.object({
   // Hasta 80 caracteres, como la cuenta en la base (059).
@@ -103,5 +131,15 @@ export const patientDeleteSchema = z.object({ password: z.string().min(1, "Escri
 const qrTokenField = z.string().regex(/^[0-9a-f]{32}$/, "Este QR no es de una tarjeta de paciente");
 
 export const scanSchema = z.object({ token: qrTokenField });
-export const scanLinkSchema = z.object({ token: qrTokenField, appointmentId: z.string().min(1), clientId: z.string().min(1) });
+/**
+ * Unir la cuenta a una ficha: con su cita de hoy (`appointmentId`) o, sin cita, a una ficha con el mismo teléfono
+ * que la cuenta (la API lo comprueba).
+ */
+export const scanLinkSchema = z.object({
+  token: qrTokenField,
+  appointmentId: z.string().min(1).nullable().default(null),
+  clientId: z.string().min(1),
+});
+/** «Paciente nuevo»: crear su ficha con el teléfono de la cuenta (lo pone la API) y unirla. */
+export const scanNewClientSchema = z.object({ token: qrTokenField, client: z.record(z.string(), z.unknown()) });
 export const scanCompleteSchema = z.object({ token: qrTokenField, appointmentId: z.string().min(1) });

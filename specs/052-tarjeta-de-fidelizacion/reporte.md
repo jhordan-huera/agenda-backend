@@ -86,6 +86,16 @@ navegador y con el de respaldo.
   - la CSP suma `'wasm-unsafe-eval'` para el lector de respaldo de Safari y Firefox (sólo permite compilar WebAssembly).
 - **La analítica:** el token del enlace de contraseña (base64url) se tapa por su ruta en `anonymize-url.ts`.
 - **«Escanear» en la Agenda y en Inicio:** entre 640 y 1536 px muestra sólo el ícono, para no empujar «Nueva cita».
+- **Cambios pedidos por el dueño después de probar (2026-11-16):**
+  - al escanear salen primero las fichas con el mismo teléfono que la cuenta y se unen sin cita; «Paciente nuevo» crea
+    la ficha con el teléfono de la cuenta (`/scan/new-client`, que reutiliza `insertClient`);
+  - la ficha dice si la cuenta está unida, creada con su teléfono y sin unir, unida a otra ficha o no existe
+    (`ClientLoyalty.account`);
+  - al escanear o al unir, la única cita de hoy por atender queda Atendida sola (`completedNow`);
+  - la contraseña del paciente desde 4 caracteres (un PIN), sin los fáciles, con el bloqueo creciente en
+    `rate_limits` (sin migración);
+  - `npm run dev:https` en el front (`@vitejs/plugin-basic-ssl` 2.3.0, sólo en desarrollo) para probar la cámara desde
+    el celular, y el aviso de «página segura» cuando la cámara no se puede usar por `http`.
 
 ## Revisión de seguridad (2026-11-16)
 
@@ -123,7 +133,14 @@ Lo que la revisión encontró bien resuelto:
   - Ya no ve nada de sus consultorios.
   - Sí puede dejarlo fuera de su cuenta hasta que su consultorio le mande otro enlace.
   - El paciente puede pedir un QR nuevo.
-- **Riesgo aceptado de la spec:** una foto del QR sólo sirve para unir con una cita de hoy, y el QR se puede cambiar.
+- **Riesgo aceptado de la spec:** una foto del QR sólo sirve para unir con una cita de hoy o con la ficha de su mismo
+  teléfono, y el QR se puede cambiar.
+- **Unir por teléfono sin cita (2026-11-16):** quien escanea debe comprobar que la persona es la de la ficha (sale el
+  final de su cédula). Si une a otra persona con el teléfono del paciente, la ficha lo dice y se puede desunir.
+- **El PIN de 4 números (2026-11-16):** 10.000 combinaciones. Lo cuidan el bloqueo creciente (con un fallo al día como
+  mucho, adivinar uno que no sea de los fáciles tomaría años), el CAPTCHA y que se rechazan los fáciles.
+- **Escanear marca la cita (2026-11-16):** si se escanea antes de la sesión, igual queda Atendida y sale el email de
+  seguimiento. Si no correspondía, se cambia desde la Agenda (el sello se quita solo).
 - **Las preguntas frecuentes de la portada que dicen que el paciente no crea cuenta siguen siendo ciertas** (hablan de reservar). Se pueden matizar si el dueño quiere.
 
 ## Commits

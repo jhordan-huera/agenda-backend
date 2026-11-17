@@ -545,6 +545,10 @@ businessRoutes.post(
   handle((req) => loyaltyScanService.link(req.ctx, req.params.businessId, req.body)),
 );
 businessRoutes.post(
+  "/:businessId/scan/new-client",
+  handle((req) => loyaltyScanService.newClient(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.post(
   "/:businessId/scan/complete",
   handle((req) => loyaltyScanService.complete(req.ctx, req.params.businessId, req.body)),
 );

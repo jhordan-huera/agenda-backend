@@ -60,7 +60,7 @@ ok(/agenda360_patient=/.test(maria.cookie()) && !/agendo_session/.test(maria.coo
 r = await browser()("POST", "/patient/signup", { name: "Otra", phone: `+593 ${phoneDigits.slice(0, 2)} ${phoneDigits.slice(2)}`, password: "otra12345" });
 ok(r.status === 409, "el mismo teléfono escrito de otra forma: ya hay cuenta", r.status);
 ok((await browser()("POST", "/patient/signup", { name: "Corto", phone: "123", password: "secreta123" })).status === 400, "un teléfono que no es, rechazado");
-ok((await browser()("POST", "/patient/signup", { name: "Corta", phone: "0987654321", password: "123" })).status === 400, "una contraseña corta, también");
+ok((await browser()("POST", "/patient/signup", { name: "Corta", phone: "0987654321", password: "123" })).status === 400, "una contraseña de menos de 4, también");
 ok((await browser()("POST", "/patient/signup", { name: "Común", phone: "0987654322", password: "12345678" })).status === 400, "y una de las más comunes (revisión de seguridad)");
 ok(((await maria("GET", "/patient/cards")).body as PatientCard[]).length === 0, "sin escanear, no ve ninguna tarjeta");
 ok((await maria("POST", "/patient/logout")).status === 204 && (await maria("GET", "/patient/me")).status === 401, "sale, y ya no entra sin sesión");
@@ -73,12 +73,37 @@ ok((await maria("GET", `${B}/clients`)).status === 401, "una sesión de paciente
 ok((await maria("GET", "/auth/session")).body?.user == null, "ni es una sesión del equipo");
 ok((await ricardo("GET", "/patient/me")).status === 401, "y la del equipo no sirve en /patient");
 
-console.log("\nEl límite por teléfono");
+console.log("\nUn PIN de 4 números (pedido del dueño)");
+const pinPhone = `09${String(Date.now() + 3).slice(-8)}`;
+for (const easy of ["1234", "0000", "1212", "1122", "9876", "1990", "2580"]) {
+  ok((await browser()("POST", "/patient/signup", { name: "Pin Fácil", phone: pinPhone, password: easy })).status === 400, `un PIN fácil (${easy}), rechazado`);
+}
+r = await browser()("POST", "/patient/signup", { name: "Pin Bueno", phone: pinPhone, password: "4827" });
+ok(r.status === 200, "un PIN de 4 números que no es de los fáciles, aceptado", r.body);
+ok((await browser()("POST", "/patient/login", { phone: pinPhone, password: "4827" })).status === 200, "y entra con él");
+
+console.log("\nEl bloqueo creciente");
 const target = `09${String(Date.now()).slice(-8)}`;
-await browser()("POST", "/patient/signup", { name: "Lucía Intentos", phone: target, password: "secreta123" });
-let last = 0;
-for (let i = 0; i < 11; i++) last = (await browser()("POST", "/patient/login", { phone: target, password: `mala-${i}` })).status;
-ok(last === 429, "después de 10 intentos con un teléfono, espera (aunque cambie de conexión)", last);
+await browser()("POST", "/patient/signup", { name: "Lucía Intentos", phone: target, password: "7351" });
+const failKey = `paciente-fallos:+593${target.slice(1)}`;
+let fail = await browser()("POST", "/patient/login", { phone: target, password: "1111" });
+await browser()("POST", "/patient/login", { phone: target, password: "2222" });
+fail = await browser()("POST", "/patient/login", { phone: target, password: "3333" });
+ok(fail.status === 401 && /Te quedan 2 intentos/.test(fail.body?.error?.message ?? JSON.stringify(fail.body)), "al 3.er fallo avisa cuántos intentos le quedan", fail.body);
+await browser()("POST", "/patient/login", { phone: target, password: "4444" });
+fail = await browser()("POST", "/patient/login", { phone: target, password: "5555" });
+ok(fail.status === 429 && /15 minutos/.test(JSON.stringify(fail.body)), "al 5.º fallo, 15 minutos de espera (aunque cambie de conexión)", fail.body);
+ok((await browser()("POST", "/patient/login", { phone: target, password: "7351" })).status === 429, "mientras espera, ni con el PIN bueno entra");
+sql(`update rate_limits set reset_at = reset_at - interval '16 minutes' where key = '${failKey}'`);
+fail = await browser()("POST", "/patient/login", { phone: target, password: "6666" });
+ok(fail.status === 429 && /30 minutos/.test(JSON.stringify(fail.body)), "pasados los 15 minutos, otro fallo duplica la espera", fail.body);
+sql(`update rate_limits set reset_at = reset_at - interval '31 minutes' where key = '${failKey}'`);
+ok((await browser()("POST", "/patient/login", { phone: target, password: "7351" })).status === 200, "después, con el PIN bueno entra");
+ok(count(`select count(*) from rate_limits where key = '${failKey}'`) === 0, "y la cuenta de fallos vuelve a cero");
+const ghost = `09${String(Date.now() + 11).slice(-8)}`;
+let ghostLast = 0;
+for (let i = 0; i < 5; i++) ghostLast = (await browser()("POST", "/patient/login", { phone: ghost, password: `mala-${i}` })).status;
+ok(ghostLast === 429, "un teléfono sin cuenta se bloquea igual (el aviso no dice si existe)", ghostLast);
 
 /* ======================================================================================== */
 console.log("\nCon el teléfono de otro no se ve nada");
@@ -95,7 +120,8 @@ r = await ricardo("PUT", `${B}/loyalty`, { enabled: true, name: "Club Sonrisa", 
 ok(r.status === 200, "con la tarjeta encendida");
 const mariaClient = patient("María Paciente", `0${phoneDigits}`);
 const mariaToday = today(mariaClient);
-const otherToday = today(patient("Otro Hoy", "0990000000"), valeriaAgenda);
+const otherClient = patient("Otro Hoy", "0990000000");
+const otherToday = today(otherClient, valeriaAgenda);
 r = await ricardo("POST", `${B}/scan`, { token: account.qrToken });
 let scan = r.body as ScanResult;
 ok(
@@ -115,20 +141,22 @@ ok((await valeria("POST", `${B}/scan/link`, { token: account.qrToken, appointmen
 ok((await ricardo("POST", `${B}/scan/link`, { token: account.qrToken, appointmentId: otherToday, clientId: mariaClient })).status === 400, "ni con una cita que no es de ese paciente");
 const lauraScan = (await laura("POST", `/businesses/${laura.session.businessId}/scan`, { token: account.qrToken })).body as ScanResult;
 ok(lauraScan.status === "unlinked" && lauraScan.appointments.every((a) => a.clientId !== mariaClient), "otro negocio no ve nada de este (prueba 15)");
+ok((await ricardo("POST", `${B}/scan/link`, { token: account.qrToken, appointmentId: null, clientId: otherClient })).status === 400, "sin cita, no la une a una ficha con otro teléfono");
 r = await elena("POST", `${B}/scan/link`, { token: account.qrToken, appointmentId: mariaToday, clientId: mariaClient });
 scan = r.body as ScanResult;
 ok(r.status === 200 && scan.status === "linked" && scan.clientId === mariaClient, "Recepción la une a la ficha de la cita elegida", r.body);
 ok(auditCount("loyalty.account_linked") === 1, "con la actividad");
+
+console.log("\nAl unir, la cita de hoy queda atendida sola (pedido del dueño)");
+ok(scan.status === "linked" && scan.completedNow?.id === mariaToday, "lo dice la respuesta", scan);
+ok(sql(`select status from appointments where id = '${mariaToday}'`) === "completed", "la cita pasa a Atendida");
 const second = patient("María Duplicada", "0991111111");
 ok(
   (await ricardo("POST", `${B}/scan/link`, { token: account.qrToken, appointmentId: today(second), clientId: second })).status === 409,
   "una cuenta, una sola ficha por negocio",
 );
 
-console.log("\n«Marcar como atendida» con el QR");
-ok((await ricardo("POST", `${B}/scan/complete`, { token: account.qrToken, appointmentId: otherToday })).status === 400, "sólo una cita de hoy de ese paciente");
-r = await ricardo("POST", `${B}/scan/complete`, { token: account.qrToken, appointmentId: mariaToday });
-ok(r.status === 200 && sql(`select status from appointments where id = '${mariaToday}'`) === "completed", "la cita pasa a Atendida", r.body);
+ok((await ricardo("POST", `${B}/scan/complete`, { token: account.qrToken, appointmentId: otherToday })).status === 400, "«Marcar como atendida» sólo con una cita de hoy de ese paciente");
 ok(count(`select count(*) from loyalty_stamps where client_id = '${mariaClient}' and voided_at is null`) === 1, "y suma su sello");
 ok(auditCount("loyalty.qr_completed") === 1 && count(`select count(*) from audit_logs where action = 'appointment.completed' and entity_id = '${mariaToday}'`) === 1, "en la actividad, como la ficha y con el QR");
 ok((await ricardo("POST", `${B}/scan/complete`, { token: account.qrToken, appointmentId: mariaToday })).status === 409, "otra vez: ya está Atendida");
@@ -145,8 +173,104 @@ const fresh = (r.body as PatientAccount).qrToken;
 ok(((await ricardo("POST", `${B}/scan`, { token: fresh })).body as ScanResult).status === "linked", "el nuevo sigue unido a su ficha");
 
 /* ======================================================================================== */
+console.log("\nUnir por teléfono, sin cita de hoy");
+const pedroDigits = `98${String(Date.now() + 5).slice(-7)}`;
+const pedro = browser();
+const pedroAccount = (await pedro("POST", "/patient/signup", { name: "Pedro Cuenta", phone: `0${pedroDigits}`, password: "8264" })).body as PatientAccount;
+const pedroClient = patient("Pedro Ficha", `+593 ${pedroDigits.slice(0, 2)} ${pedroDigits.slice(2, 5)} ${pedroDigits.slice(5)}`);
+const pedroDocument = sql(`select document_id from clients where id = '${pedroClient}'`);
+r = await ricardo("POST", `${B}/scan`, { token: pedroAccount.qrToken });
+scan = r.body as ScanResult;
+ok(
+  scan.status === "unlinked" && scan.phoneClients.length === 1 && scan.phoneClients[0].clientId === pedroClient &&
+    scan.phoneClients[0].documentEnd === pedroDocument.slice(-4) && !scan.phoneClients[0].linkedToOther,
+  "sale la ficha con su mismo teléfono (escrito de otra forma), con el final de su cédula",
+  scan,
+);
+let pedroLoyalty = (await ricardo("GET", `${B}/clients/${pedroClient}/loyalty`)).body as { account: string };
+ok(pedroLoyalty.account === "pending", "la ficha dice que creó su cuenta y falta escanear su QR", pedroLoyalty);
+ok(
+  ((await ricardo("GET", `${B}/clients/${otherClient}/loyalty`)).body as { account: string }).account === "none",
+  "sin cuenta con su teléfono, «none»",
+);
+r = await valeria("POST", `${B}/scan`, { token: pedroAccount.qrToken });
+ok(r.status === 200, "el Profesional también escanea", r.status);
+r = await ricardo("POST", `${B}/scan/link`, { token: pedroAccount.qrToken, appointmentId: null, clientId: pedroClient });
+scan = r.body as ScanResult;
+ok(r.status === 200 && scan.status === "linked" && scan.clientId === pedroClient && scan.completedNow === null, "la une sin cita (no hay nada que marcar)", r.body);
+ok(count(`select count(*) from audit_logs where business_id = '${businessId}' and action = 'loyalty.account_linked' and summary like '%mismo teléfono%'`) === 1, "con la actividad");
+pedroLoyalty = (await ricardo("GET", `${B}/clients/${pedroClient}/loyalty`)).body as { account: string };
+ok(pedroLoyalty.account === "linked", "y la ficha la muestra unida", pedroLoyalty);
+const pedroShared = patient("Hijo de Pedro", `0${pedroDigits}`);
+ok(((await ricardo("GET", `${B}/clients/${pedroShared}/loyalty`)).body as { account: string }).account === "elsewhere", "otra ficha con el mismo teléfono: su cuenta está unida a otra ficha");
+ok(
+  (await ricardo("POST", `${B}/scan/link`, { token: pedroAccount.qrToken, appointmentId: null, clientId: pedroShared })).status === 409,
+  "y no se une a las dos",
+);
+
+console.log("\nAl escanear, la única cita de hoy queda atendida");
+const pedroToday = today(pedroClient);
+r = await valeria("POST", `${B}/scan`, { token: pedroAccount.qrToken });
+ok(
+  r.status === 200 && (r.body as ScanResult).status === "linked" && (r.body as Extract<ScanResult, { status: "linked" }>).completedNow === null &&
+    sql(`select status from appointments where id = '${pedroToday}'`) === "confirmed",
+  "el Profesional no marca una cita de otra agenda",
+  r.body,
+);
+r = await elena("POST", `${B}/scan`, { token: pedroAccount.qrToken });
+scan = r.body as ScanResult;
+ok(r.status === 200 && scan.status === "linked" && scan.completedNow?.id === pedroToday, "Recepción escanea y la marca", r.body);
+ok(
+  sql(`select status from appointments where id = '${pedroToday}'`) === "completed" &&
+    count(`select count(*) from loyalty_stamps where client_id = '${pedroClient}' and voided_at is null`) === 1,
+  "Atendida y con su sello",
+);
+scan = (await elena("POST", `${B}/scan`, { token: pedroAccount.qrToken })).body as ScanResult;
+ok(scan.status === "linked" && scan.completedNow === null, "escanear otra vez no hace nada más", scan);
+const pedroA = today(pedroClient);
+const pedroB = today(pedroClient);
+scan = (await elena("POST", `${B}/scan`, { token: pedroAccount.qrToken })).body as ScanResult;
+ok(
+  scan.status === "linked" && scan.completedNow === null &&
+    sql(`select string_agg(status::text, ',' order by id) from appointments where id in ('${pedroA}', '${pedroB}')`) === "confirmed,confirmed",
+  "con dos citas de hoy por atender no marca ninguna: se elige",
+  scan,
+);
+r = await elena("POST", `${B}/scan/complete`, { token: pedroAccount.qrToken, appointmentId: pedroB });
+ok(r.status === 200 && (r.body as Extract<ScanResult, { status: "linked" }>).completedNow?.id === pedroB, "y se marca la elegida", r.body);
+
+console.log("\nPaciente nuevo");
+const nuevaDigits = `97${String(Date.now() + 9).slice(-7)}`;
+const nueva = (await browser()("POST", "/patient/signup", { name: "Nueva Cuenta", phone: `0${nuevaDigits}`, password: "5173" })).body as PatientAccount;
+scan = (await elena("POST", `${B}/scan`, { token: nueva.qrToken })).body as ScanResult;
+ok(scan.status === "unlinked" && scan.phoneClients.length === 0, "sin ficha con su teléfono", scan);
+ok(
+  (await elena("POST", `${B}/scan/new-client`, { token: nueva.qrToken, client: { name: "Nueva Paciente", documentId: "", email: "" } })).status === 400,
+  "pide los datos obligatorios del negocio",
+);
+r = await elena("POST", `${B}/scan/new-client`, {
+  token: nueva.qrToken,
+  client: { name: "Nueva Paciente", documentId: cedulaFor(`cta-n-${tag}`), email: `cta.n.${tag}@correo.ec`, phone: "0999999999" },
+});
+scan = r.body as ScanResult;
+ok(r.status === 200 && scan.status === "linked" && scan.clientName === "Nueva Paciente", "crea su ficha y une la cuenta", r.body);
+const nuevaClient = scan.status === "linked" ? scan.clientId : "";
+ok(sql(`select phone from clients where id = '${nuevaClient}'`) === `+593${nuevaDigits}`, "con el teléfono de la cuenta (no el que mande el panel)");
+ok(
+  count(`select count(*) from audit_logs where business_id = '${businessId}' and entity_id = '${nuevaClient}' and action in ('client.created', 'loyalty.account_linked')`) === 2,
+  "con la actividad de la ficha y de la unión",
+);
+ok(
+  (await elena("POST", `${B}/scan/new-client`, { token: nueva.qrToken, client: { name: "Otra", documentId: cedulaFor(`cta-o-${tag}`), email: `cta.o.${tag}@correo.ec` } })).status === 409,
+  "una cuenta ya unida no crea otra ficha",
+);
+
+/* ======================================================================================== */
 console.log("\nEl enlace de contraseña del consultorio");
+ok(((await ricardo("GET", `${B}/clients/${realClient}/loyalty`)).body as { account: string }).account === "pending", "una cuenta con el teléfono de la ficha, sin unir: «pending»");
 ok((await elena("POST", `${B}/clients/${realClient}/patient-reset-link`)).status === 409, "sin cuenta unida, no hay enlace");
+for (let i = 0; i < 5; i++) await browser()("POST", "/patient/login", { phone: `0${phoneDigits}`, password: `${5000 + i}x` });
+ok((await browser()("POST", "/patient/login", { phone: `0${phoneDigits}`, password: "secreta123" })).status === 429, "después de 5 fallos, la cuenta espera");
 r = await elena("POST", `${B}/clients/${mariaClient}/patient-reset-link`);
 const link = r.body as PatientResetLink;
 ok(r.status === 200 && link.phone === `+593${phoneDigits}` && link.url.includes("/mi-tarjeta/clave/"), "Recepción lo genera, con el teléfono de la cuenta", r.body);

@@ -292,12 +292,19 @@ canjeadas de un beneficio y encuentra a los pacientes a los que les falta una ci
   iniciar sesión con teléfono y contraseña. La cuenta es opcional y reservar no la pide.
 - **RF-014:** Las cuentas de pacientes y sus sesiones DEBEN ir aparte de las del equipo: una sesión de paciente nunca
   da acceso al panel ni a la API del negocio.
-- **RF-015:** La contraseña DEBE guardarse cifrada como las del equipo, con límite de intentos y CAPTCHA.
+- **RF-015:** La contraseña DEBE guardarse cifrada como las del equipo, con límite de intentos y CAPTCHA. Puede ser un
+  PIN de 4 números (cambio del 2026-11-16): se rechazan los fáciles (0000, 1234, 1212, años…) y, desde el 5.º fallo
+  seguido, hay que esperar 15 minutos, el doble con cada fallo más, hasta 24 horas; entrar bien o el enlace del
+  consultorio lo ponen en cero.
 - **RF-016:** Cada cuenta DEBE tener un QR propio que el paciente puede cambiar; el anterior deja de servir.
 - **RF-017:** Una cuenta DEBE unirse a la ficha de un negocio sólo cuando alguien del equipo escanea su QR y elige la
-  ficha entre las citas de hoy que puede ver. Antes de eso, la cuenta no ve nada de ese negocio.
-- **RF-018:** Un QR unido DEBE permitir marcar como Atendida la cita de hoy de ese paciente por el mismo camino que la
-  ficha (permisos, alcance del profesional, actividad y emails).
+  ficha: la que tiene el mismo teléfono que la cuenta (sin cita, con el final de su cédula para comprobar), la de una
+  de las citas de hoy que puede ver o una ficha nueva que crea ahí con el teléfono de la cuenta («Paciente nuevo»).
+  Antes de eso, la cuenta no ve nada de ese negocio. La ficha DEBE decir si el paciente tiene su cuenta unida, si
+  creó una con su teléfono y falta escanearla, o si no tiene (cambio del 2026-11-16).
+- **RF-018:** Al escanear un QR unido (o al unirlo), su única cita de hoy pendiente o confirmada DEBE quedar Atendida
+  sola, por el mismo camino que la ficha (permisos, alcance del profesional, actividad y emails); con varias, se elige
+  cuál (cambio del 2026-11-16).
 - **RF-019:** El paciente DEBE ver sólo sus propias tarjetas, de los negocios donde está unido y con la tarjeta
   encendida, y nunca datos de otros pacientes.
 - **RF-020:** El equipo DEBE poder generar, para una ficha con cuenta unida, un enlace de un solo uso que vence en 24
@@ -433,3 +440,7 @@ canjeadas de un beneficio y encuentra a los pacientes a los que les falta una ci
 11. **Lo que ve el paciente** es como la imagen de referencia.
 12. **«Clásica» es el nivel,** y sube con cada tarjeta completa (Plata y Oro).
 13. **Las redes del negocio** salen en la tarjeta y en la página de reservas, sólo las que tenga.
+14. **Saber quién es (2026-11-16):** al escanear sale primero la ficha con el mismo teléfono, aunque no tenga cita hoy;
+    si no hay, «Paciente nuevo». La ficha avisa «Creó su cuenta, falta escanear su QR». Unir sigue siendo en persona.
+15. **Al escanear, la cita pasa a Atendida** sin otro toque (2026-11-16).
+16. **La contraseña puede ser un PIN de 4 números,** con el bloqueo creciente (2026-11-16).

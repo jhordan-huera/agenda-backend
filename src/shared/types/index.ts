@@ -2529,6 +2529,12 @@ export interface ClientLoyalty {
   /** null: todavía no tiene sellos ni cuenta unida en este negocio. */
   card: LoyaltyMember | null;
   rewards: LoyaltyReward[];
+  /**
+   * La cuenta de paciente de esta ficha: «linked», unida; «pending», hay una cuenta con el teléfono de la ficha que
+   * todavía no se unió (falta escanear su QR); «elsewhere», la cuenta de ese teléfono está unida a otra ficha de este
+   * negocio (un teléfono compartido); «none», no hay cuenta con su teléfono.
+   */
+  account: "linked" | "pending" | "elsewhere" | "none";
 }
 
 /** Las cifras de «Fidelización». */
@@ -2610,9 +2616,20 @@ export interface ScanAppointment {
   phoneMatches: boolean;
 }
 
+/** Una ficha del negocio con el mismo teléfono que la cuenta escaneada: se une sin cita de hoy. */
+export interface ScanClient {
+  clientId: string;
+  clientName: string;
+  /** Los 4 últimos caracteres de su cédula, para comprobar que es la persona (null: sin cédula). */
+  documentEnd: string | null;
+  /** La ficha ya está unida a otra cuenta: no se puede elegir. */
+  linkedToOther: boolean;
+}
+
 /**
- * Lo que devuelve «Escanear»: si la cuenta todavía no está unida en el negocio, su nombre y las citas de hoy para
- * elegir quién es; si ya está unida, el paciente y sus citas de hoy.
+ * Lo que devuelve «Escanear»: si la cuenta todavía no está unida en el negocio, su nombre, las fichas con su mismo
+ * teléfono y las citas de hoy para elegir quién es; si ya está unida, el paciente y sus citas de hoy. Al escanear (o
+ * al unir), su única cita de hoy pendiente o confirmada queda atendida sola: `completedNow` (pedido del dueño).
  */
 export type ScanResult =
   | {
@@ -2620,9 +2637,17 @@ export type ScanResult =
       accountName: string;
       /** Los 4 últimos dígitos del teléfono de la cuenta, para comparar con la ficha. */
       accountPhoneEnd: string;
+      phoneClients: ScanClient[];
       appointments: ScanAppointment[];
     }
-  | { status: "linked"; clientId: string; clientName: string; appointments: ScanAppointment[] };
+  | {
+      status: "linked";
+      clientId: string;
+      clientName: string;
+      appointments: ScanAppointment[];
+      /** La cita que este escaneo acaba de marcar como atendida (null: ninguna). */
+      completedNow: ScanAppointment | null;
+    };
 
 /** El enlace de un solo uso para que el paciente cree otra contraseña, con el teléfono para el WhatsApp. */
 export interface PatientResetLink {

@@ -127,6 +127,32 @@ async function clientInputSchema(db: Db, businessId: string) {
   return clientSchemaFor(clientRequiredFieldsOf(business));
 }
 
+/**
+ * Crear una ficha desde el panel, con los datos obligatorios del negocio, la cédula sin repetir, el límite del plan y
+ * la actividad. La usan «Nuevo cliente» y «Paciente nuevo» de Escanear (spec 052, con el teléfono de la cuenta).
+ */
+export async function insertClient(db: Db, actor: Actor, businessId: string, input: unknown): Promise<Client> {
+  const data = parseInput(await clientInputSchema(db, businessId), input);
+  await assertValidClientDocument(db, await agendaScope(db, actor, businessId), businessId, data.documentId);
+  await assertClientLimit(db, businessId);
+  const client = (await one<Client>(
+    db,
+    `insert into clients (business_id, name, document_id, email, phone, address, notes, is_active, created_by)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     returning ${clientColumns()}`,
+    [businessId, data.name, data.documentId, data.email, data.phone, data.address, data.notes, data.isActive, actor.userId],
+  ))!;
+  await logAudit(db, {
+    businessId,
+    actor,
+    action: "client.created",
+    entityType: "client",
+    entityId: client.id,
+    summary: `Creó el cliente ${client.name}`,
+  });
+  return client;
+}
+
 export const clientService = {
   /**
    * Con el rol Profesional y "sólo sus pacientes", únicamente los suyos y, sólo con el nombre
@@ -234,25 +260,7 @@ export const clientService = {
   async create(ctx: RequestContext, businessId: string, input: unknown): Promise<Client> {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "clients.manage", { lock: true });
-      const data = parseInput(await clientInputSchema(db, businessId), input);
-      await assertValidClientDocument(db, await agendaScope(db, actor, businessId), businessId, data.documentId);
-      await assertClientLimit(db, businessId);
-      const client = (await one<Client>(
-        db,
-        `insert into clients (business_id, name, document_id, email, phone, address, notes, is_active, created_by)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         returning ${clientColumns()}`,
-        [businessId, data.name, data.documentId, data.email, data.phone, data.address, data.notes, data.isActive, actor.userId],
-      ))!;
-      await logAudit(db, {
-        businessId,
-        actor,
-        action: "client.created",
-        entityType: "client",
-        entityId: client.id,
-        summary: `Creó el cliente ${client.name}`,
-      });
-      return client;
+      return insertClient(db, actor, businessId, input);
     });
   },
 
