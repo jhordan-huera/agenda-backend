@@ -63,6 +63,16 @@ patientRoutes.get(
   handle(async () => ({ captchaSiteKey: config.turnstile?.siteKey ?? null })),
 );
 
+/** La invitación del QR del consultorio para sus pacientes: su nombre y su logo en «Mi tarjeta». */
+patientRoutes.get(
+  "/invite/:slug",
+  handle(async (req) => {
+    const invite = await patientAccountService.invite(String(req.params.slug));
+    if (!invite) throw new AppError("not_found", "No encontramos ese consultorio.");
+    return invite;
+  }),
+);
+
 patientRoutes.post("/signup", signupLimit, requireCaptcha, async (req, res) => {
   const accountId = await patientAccountService.signup(req.body);
   await startSession(res, accountId);

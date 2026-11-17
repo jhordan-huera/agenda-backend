@@ -90,3 +90,5 @@ Rutas: back/ = agenda-backend, front/ = agenda-front
 - [X] T030 front: el panel de Escanear, «Paciente nuevo» con `ClientFormDialog` (`custom`), el aviso de la ficha, los
   textos del PIN, `dev:https` y el aviso de página segura.
 - [X] T031 back/tests/patient-accounts.test.ts y front/scripts/check-loyalty.ts: las pruebas de todo lo anterior.
+- [X] T032 back: `GET /api/patient/invite/:slug` con su prueba; front: `PatientInviteDialog` (Fidelización y Escanear),
+  `src/lib/qr-sheet.ts`, «Mi tarjeta» con `?consultorio=` y su comprobación en check-loyalty.ts.

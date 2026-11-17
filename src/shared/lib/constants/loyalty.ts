@@ -81,6 +81,11 @@ const QR_TOKEN = /^[0-9a-f]{32}$/;
 
 export const patientQrUrl = (origin: string, token: string) => `${origin.replace(/\/+$/, "")}/q/${token}`;
 
+/** El QR del consultorio para sus pacientes: «Mi tarjeta» con su nombre y su logo, para crear la cuenta. */
+export const PATIENT_INVITE_PARAM = "consultorio";
+export const patientInviteUrl = (origin: string, slug: string) =>
+  `${origin.replace(/\/+$/, "")}/mi-tarjeta?${PATIENT_INVITE_PARAM}=${encodeURIComponent(slug)}`;
+
 /** El token de lo que leyó la cámara: el enlace `…/q/<token>` o el token solo. null si no es un QR de paciente. */
 export function readQrToken(text: string): string | null {
   const value = text.trim();

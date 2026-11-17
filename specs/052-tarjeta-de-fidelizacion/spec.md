@@ -444,3 +444,5 @@ canjeadas de un beneficio y encuentra a los pacientes a los que les falta una ci
     si no hay, «Paciente nuevo». La ficha avisa «Creó su cuenta, falta escanear su QR». Unir sigue siendo en persona.
 15. **Al escanear, la cita pasa a Atendida** sin otro toque (2026-11-16).
 16. **La contraseña puede ser un PIN de 4 números,** con el bloqueo creciente (2026-11-16).
+17. **El QR para los pacientes (2026-11-16):** el consultorio descarga una lámina con un QR a «Mi tarjeta» con su
+    nombre, con su logo en el centro (o el de Agenda360 si no tiene), y la comparte por WhatsApp o la imprime.

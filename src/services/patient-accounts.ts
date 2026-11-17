@@ -10,7 +10,7 @@ import {
   patientResetSchema,
   patientSignupSchema,
 } from "../shared/lib/validations/loyalty.ts";
-import type { BrandColors, LoyaltyNext, PatientAccount, PatientCard, PatientResetLink, PatientReward, SocialLinks } from "../shared/types/index.ts";
+import type { BrandColors, LoyaltyNext, PatientAccount, PatientCard, PatientInvite, PatientResetLink, PatientReward, SocialLinks } from "../shared/types/index.ts";
 import { hashPassword, verifyPassword } from "./accounts.ts";
 import { agendaScope, assertClientInScope } from "./agenda-scope.ts";
 import { logAudit } from "./audit.ts";
@@ -238,6 +238,22 @@ async function cardsOf(db: Db, accountId: string): Promise<PatientCard[]> {
 /* ---------------------------------------------------------------- El servicio -- */
 
 export const patientAccountService = {
+  /**
+   * La invitación del QR del consultorio (/mi-tarjeta?consultorio=<slug>): su nombre, su logo, sus colores y el nombre
+   * del programa si está encendido. Pública y de una sola consulta; null si no hay un negocio activo con ese enlace.
+   */
+  async invite(slug: string): Promise<PatientInvite | null> {
+    if (!/^[a-z0-9-]{1,80}$/.test(slug)) return null;
+    return one<PatientInvite>(
+      pool,
+      `select b.name, b.logo_url as "logoUrl", b.brand_colors as "brandColors",
+              case when p.enabled_at is not null then p.name end as "programName"
+         from businesses b left join loyalty_programs p on p.business_id = b.id
+        where b.slug = $1 and b.status = 'active'`,
+      [slug],
+    );
+  },
+
   /** Crear la cuenta: un teléfono, una cuenta. Devuelve su id (la ruta abre la sesión). */
   async signup(input: unknown): Promise<string> {
     const data = parseInput(patientSignupSchema, input);

@@ -173,6 +173,14 @@ const fresh = (r.body as PatientAccount).qrToken;
 ok(((await ricardo("POST", `${B}/scan`, { token: fresh })).body as ScanResult).status === "linked", "el nuevo sigue unido a su ficha");
 
 /* ======================================================================================== */
+console.log("\nEl QR del consultorio para sus pacientes");
+r = await browser()("GET", `/patient/invite/${slug}`);
+ok(r.status === 200 && r.body?.programName === "Club Sonrisa" && typeof r.body?.name === "string" && "logoUrl" in r.body, "su nombre, su logo y el programa encendido", r.body);
+ok(!JSON.stringify(r.body).includes("@") && Object.keys(r.body).sort().join() === "brandColors,logoUrl,name,programName", "nada más que eso", r.body);
+ok((await browser()("GET", "/patient/invite/no-existe-este-consultorio")).status === 404, "un enlace que no es de nadie: 404");
+ok((await browser()("GET", "/patient/invite/..%2F..%2Fadmin")).status === 404, "ni nada raro");
+
+/* ======================================================================================== */
 console.log("\nUnir por teléfono, sin cita de hoy");
 const pedroDigits = `98${String(Date.now() + 5).slice(-7)}`;
 const pedro = browser();

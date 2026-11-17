@@ -2616,6 +2616,17 @@ export interface ScanAppointment {
   phoneMatches: boolean;
 }
 
+/**
+ * La invitación del consultorio a su tarjeta (el QR para sus pacientes, /mi-tarjeta?consultorio=<slug>): su nombre,
+ * su logo y sus colores para la página de entrar, y el nombre del programa si está encendido.
+ */
+export interface PatientInvite {
+  name: string;
+  logoUrl: string | null;
+  brandColors: BrandColors | null;
+  programName: string | null;
+}
+
 /** Una ficha del negocio con el mismo teléfono que la cuenta escaneada: se une sin cita de hoy. */
 export interface ScanClient {
   clientId: string;

@@ -94,6 +94,11 @@ navegador y con el de respaldo.
   - al escanear o al unir, la única cita de hoy por atender queda Atendida sola (`completedNow`);
   - la contraseña del paciente desde 4 caracteres (un PIN), sin los fáciles, con el bloqueo creciente en
     `rate_limits` (sin migración);
+  - «QR para tus pacientes» en Fidelización y en Escanear: la lámina PNG con el logo del negocio (o el de Agenda360)
+    en el centro del QR (corrección alta), copiar el enlace y compartir por WhatsApp; el QR abre
+    `/mi-tarjeta?consultorio=<slug>` con el logo, el nombre y los colores del consultorio y «Crear mi cuenta» primero
+    (`GET /api/patient/invite/:slug`, una consulta). La lámina de reservas usa ahora las mismas funciones
+    (`src/lib/qr-sheet.ts`);
   - `npm run dev:https` en el front (`@vitejs/plugin-basic-ssl` 2.3.0, sólo en desarrollo) para probar la cámara desde
     el celular, y el aviso de «página segura» cuando la cámara no se puede usar por `http`.
 
