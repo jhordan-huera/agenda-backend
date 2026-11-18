@@ -3,11 +3,23 @@
 // otro no ve nada, la unión sólo por escaneo y dentro de las citas que el usuario puede ver, el marcado con el QR (con
 // su sello), el QR nuevo invalida el anterior, el enlace de contraseña del consultorio (un uso, el aviso, la
 // actividad), eliminar la cuenta, y las redes del negocio en Configuración y en la página de reservas.
+import { randomBytes, randomInt } from "node:crypto";
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { agent, checks, count, login, sql } from "./helpers/harness.ts";
+import { isEasyPassword } from "../src/shared/lib/validations/loyalty.ts";
 import type { Business, PatientAccount, PatientCard, PatientResetLink, PublicBusinessProfile, ScanResult } from "../src/shared/types/index.ts";
 
 const { ok, done } = checks();
+
+// Contraseñas y PIN de prueba al azar en cada corrida, siempre en algo que se llama «…Password»: GitGuardian marca las
+// fijas y hasta los nombres que parecen claves (regla del dueño: ninguna fija salvo demo1234). Los PIN, sin los fáciles.
+const newPassword = () => `p-${randomBytes(6).toString("hex")}`;
+const newPinPassword = (not = ""): string => {
+  for (;;) {
+    const pin = String(randomInt(0, 10_000)).padStart(4, "0");
+    if (pin !== not && !isEasyPassword(pin)) return pin;
+  }
+};
 
 let ipSeq = 0;
 const nextIp = () => `198.53.0.${(ipSeq++ % 250) + 1}`;
@@ -75,21 +87,22 @@ const auditCount = (action: string) => count(`select count(*) from audit_logs wh
 /* ======================================================================================== */
 console.log("La cuenta");
 const maria = browser();
-let r = await maria("POST", "/patient/signup", { name: "María Paciente", phone: `0${phoneDigits}`, password: "secreta123" });
+const mariaPassword = newPassword();
+let r = await maria("POST", "/patient/signup", { name: "María Paciente", phone: `0${phoneDigits}`, password: mariaPassword });
 const account = r.body as PatientAccount;
 ok(r.status === 200 && account.phone === `+593${phoneDigits}` && /^[0-9a-f]{32}$/.test(account.qrToken), "crea la cuenta con su teléfono (guardado como +593…)", r.body);
 ok(/agenda360_patient=/.test(maria.cookie()) && !/agendo_session/.test(maria.cookie()), "con su propia cookie, no la del equipo");
-r = await browser()("POST", "/patient/signup", { name: "Otra", phone: `+593 ${phoneDigits.slice(0, 2)} ${phoneDigits.slice(2)}`, password: "otra12345" });
+r = await browser()("POST", "/patient/signup", { name: "Otra", phone: `+593 ${phoneDigits.slice(0, 2)} ${phoneDigits.slice(2)}`, password: newPassword() });
 ok(r.status === 409, "el mismo teléfono escrito de otra forma: ya hay cuenta", r.status);
-r = await browser()("POST", "/patient/signup", { name: "Otra", phone: `+593 0${phoneDigits}`, password: "otra12345" });
+r = await browser()("POST", "/patient/signup", { name: "Otra", phone: `+593 0${phoneDigits}`, password: newPassword() });
 ok(r.status === 409, "también con el 0 después del +593 (revisión)", r.status);
-ok((await browser()("POST", "/patient/signup", { name: "Corto", phone: "123", password: "secreta123" })).status === 400, "un teléfono que no es, rechazado");
-ok((await browser()("POST", "/patient/signup", { name: "Corta", phone: "0987654321", password: "123" })).status === 400, "una contraseña de menos de 4, también");
+ok((await browser()("POST", "/patient/signup", { name: "Corto", phone: "123", password: newPassword() })).status === 400, "un teléfono que no es, rechazado");
+ok((await browser()("POST", "/patient/signup", { name: "Corta", phone: "0987654321", password: newPinPassword().slice(0, 3) })).status === 400, "una contraseña de menos de 4, también");
 ok((await browser()("POST", "/patient/signup", { name: "Común", phone: "0987654322", password: "12345678" })).status === 400, "y una de las más comunes (revisión de seguridad)");
 ok(((await maria("GET", "/patient/cards")).body as PatientCard[]).length === 0, "sin escanear, no ve ninguna tarjeta");
 ok((await maria("POST", "/patient/logout")).status === 204 && (await maria("GET", "/patient/me")).status === 401, "sale, y ya no entra sin sesión");
-ok((await maria("POST", "/patient/login", { phone: `0${phoneDigits}`, password: "mala-clave" })).status === 401, "con otra contraseña, no entra");
-r = await maria("POST", "/patient/login", { phone: `+593${phoneDigits}`, password: "secreta123" });
+ok((await maria("POST", "/patient/login", { phone: `0${phoneDigits}`, password: newPassword() })).status === 401, "con otra contraseña, no entra");
+r = await maria("POST", "/patient/login", { phone: `+593${phoneDigits}`, password: mariaPassword });
 ok(r.status === 200 && (r.body as PatientAccount).id === account.id, "entra con su teléfono y su contraseña", r.body);
 
 console.log("\nLa sesión del paciente va aparte (prueba 16)");
@@ -102,33 +115,36 @@ const pinPhone = `09${String(Date.now() + 3).slice(-8)}`;
 for (const easy of ["1234", "0000", "1212", "1122", "9876", "1990", "2580"]) {
   ok((await browser()("POST", "/patient/signup", { name: "Pin Fácil", phone: pinPhone, password: easy })).status === 400, `un PIN fácil (${easy}), rechazado`);
 }
-r = await browser()("POST", "/patient/signup", { name: "Pin Bueno", phone: pinPhone, password: "4827" });
+const goodPassword = newPinPassword();
+r = await browser()("POST", "/patient/signup", { name: "Pin Bueno", phone: pinPhone, password: goodPassword });
 ok(r.status === 200, "un PIN de 4 números que no es de los fáciles, aceptado", r.body);
-ok((await browser()("POST", "/patient/login", { phone: pinPhone, password: "4827" })).status === 200, "y entra con él");
+ok((await browser()("POST", "/patient/login", { phone: pinPhone, password: goodPassword })).status === 200, "y entra con él");
 
 console.log("\nEl bloqueo creciente");
 const target = `09${String(Date.now()).slice(-8)}`;
-await browser()("POST", "/patient/signup", { name: "Lucía Intentos", phone: target, password: "7351" });
+const luciaPassword = newPinPassword();
+await browser()("POST", "/patient/signup", { name: "Lucía Intentos", phone: target, password: luciaPassword });
 const failKey = `paciente-fallos:+593${target.slice(1)}`;
-let fail = await browser()("POST", "/patient/login", { phone: target, password: "1111" });
-await browser()("POST", "/patient/login", { phone: target, password: "2222" });
-fail = await browser()("POST", "/patient/login", { phone: target, password: "3333" });
+let fail = await browser()("POST", "/patient/login", { phone: target, password: newPinPassword(luciaPassword) });
+await browser()("POST", "/patient/login", { phone: target, password: newPinPassword(luciaPassword) });
+fail = await browser()("POST", "/patient/login", { phone: target, password: newPinPassword(luciaPassword) });
 ok(fail.status === 401 && /Te quedan 2 intentos/.test(fail.body?.error?.message ?? JSON.stringify(fail.body)), "al 3.er fallo avisa cuántos intentos le quedan", fail.body);
-await browser()("POST", "/patient/login", { phone: target, password: "4444" });
-fail = await browser()("POST", "/patient/login", { phone: target, password: "5555" });
+await browser()("POST", "/patient/login", { phone: target, password: newPinPassword(luciaPassword) });
+fail = await browser()("POST", "/patient/login", { phone: target, password: newPinPassword(luciaPassword) });
 ok(fail.status === 429 && /15 minutos/.test(JSON.stringify(fail.body)), "al 5.º fallo, 15 minutos de espera (aunque cambie de conexión)", fail.body);
-ok((await browser()("POST", "/patient/login", { phone: target, password: "7351" })).status === 429, "mientras espera, ni con el PIN bueno entra");
+ok((await browser()("POST", "/patient/login", { phone: target, password: luciaPassword })).status === 429, "mientras espera, ni con el PIN bueno entra");
 sql(`update rate_limits set reset_at = reset_at - interval '16 minutes' where key = '${failKey}'`);
-fail = await browser()("POST", "/patient/login", { phone: target, password: "6666" });
+fail = await browser()("POST", "/patient/login", { phone: target, password: newPinPassword(luciaPassword) });
 ok(fail.status === 429 && /30 minutos/.test(JSON.stringify(fail.body)), "pasados los 15 minutos, otro fallo duplica la espera", fail.body);
 sql(`update rate_limits set reset_at = reset_at - interval '31 minutes' where key = '${failKey}'`);
-ok((await browser()("POST", "/patient/login", { phone: target, password: "7351" })).status === 200, "después, con el PIN bueno entra");
+ok((await browser()("POST", "/patient/login", { phone: target, password: luciaPassword })).status === 200, "después, con el PIN bueno entra");
 ok(count(`select count(*) from rate_limits where key = '${failKey}'`) === 0, "y la cuenta de fallos vuelve a cero");
 console.log("\nEl bloqueo no se salta con intentos a la vez (revisión de seguridad)");
 const raceDigits = `9${String(Date.now() + 13).slice(-8)}`;
-await browser()("POST", "/patient/signup", { name: "Rita Carrera", phone: `0${raceDigits}`, password: "7351" });
+const ritaPassword = newPinPassword();
+await browser()("POST", "/patient/signup", { name: "Rita Carrera", phone: `0${raceDigits}`, password: ritaPassword });
 const raceKey = `paciente-fallos:+593${raceDigits}`;
-const raced = await Promise.all(Array.from({ length: 8 }, (_, i) => browser()("POST", "/patient/login", { phone: `0${raceDigits}`, password: `${2000 + i * 7}x` })));
+const raced = await Promise.all(Array.from({ length: 8 }, (_, i) => browser()("POST", "/patient/login", { phone: `0${raceDigits}`, password: `${newPinPassword(ritaPassword)}x` })));
 ok(
   count(`select hits from rate_limits where key = '${raceKey}'`) === 5 && raced.filter((item) => item.status === 401).length === 4,
   "8 a la vez: cuentan 5 fallos y los demás ya esperan",
@@ -138,17 +154,18 @@ ok(
 console.log("\nCon la sesión abierta tampoco se prueba PIN tras PIN");
 const lockedPhone = `9${String(Date.now() + 17).slice(-8)}`;
 const session = browser();
-await session("POST", "/patient/signup", { name: "Sara Sesión", phone: `0${lockedPhone}`, password: "7351" });
+const saraPassword = newPinPassword();
+await session("POST", "/patient/signup", { name: "Sara Sesión", phone: `0${lockedPhone}`, password: saraPassword });
 const tries: number[] = [];
-for (let i = 0; i < 5; i++) tries.push((await session("PUT", "/patient/password", { currentPassword: `${3000 + i * 11}`, newPassword: "8264" })).status);
+for (let i = 0; i < 5; i++) tries.push((await session("PUT", "/patient/password", { currentPassword: newPinPassword(saraPassword), newPassword: newPinPassword(saraPassword) })).status);
 ok(tries.join() === "400,400,400,400,429", "cambiar la contraseña: al 5.º fallo, a esperar", tries);
-ok((await session("PUT", "/patient/password", { currentPassword: "7351", newPassword: "8264" })).status === 429, "mientras espera, ni con la buena");
-ok((await session("DELETE", "/patient/account", { password: "7351" })).status === 429, "ni para eliminar la cuenta");
-ok((await browser()("POST", "/patient/login", { phone: `0${lockedPhone}`, password: "7351" })).status === 429, "y el mismo bloqueo vale para entrar");
+ok((await session("PUT", "/patient/password", { currentPassword: saraPassword, newPassword: newPinPassword(saraPassword) })).status === 429, "mientras espera, ni con la buena");
+ok((await session("DELETE", "/patient/account", { password: saraPassword })).status === 429, "ni para eliminar la cuenta");
+ok((await browser()("POST", "/patient/login", { phone: `0${lockedPhone}`, password: saraPassword })).status === 429, "y el mismo bloqueo vale para entrar");
 
 const ghost = `09${String(Date.now() + 11).slice(-8)}`;
 let ghostLast = 0;
-for (let i = 0; i < 5; i++) ghostLast = (await browser()("POST", "/patient/login", { phone: ghost, password: `mala-${i}` })).status;
+for (let i = 0; i < 5; i++) ghostLast = (await browser()("POST", "/patient/login", { phone: ghost, password: newPassword() + i })).status;
 ok(ghostLast === 429, "un teléfono sin cuenta se bloquea igual (el aviso no dice si existe)", ghostLast);
 
 /* ======================================================================================== */
@@ -156,7 +173,7 @@ console.log("\nCon el teléfono de otro no se ve nada");
 const realPhone = `0${String(Date.now() + 7).slice(-9)}`;
 const realClient = patient("Paciente Real", realPhone);
 const impostor = browser();
-await impostor("POST", "/patient/signup", { name: "Impostor", phone: realPhone, password: "secreta123" });
+await impostor("POST", "/patient/signup", { name: "Impostor", phone: realPhone, password: newPassword() });
 ok(((await impostor("GET", "/patient/cards")).body as PatientCard[]).length === 0, "una cuenta con el teléfono de un paciente no ve su ficha ni sus sellos");
 ok(count(`select count(*) from loyalty_cards where client_id = '${realClient}' and patient_account_id is not null`) === 0, "ni queda unida a ella");
 
@@ -233,7 +250,7 @@ ok((await browser()("GET", "/patient/invite/..%2F..%2Fadmin")).status === 404, "
 console.log("\nUnir por teléfono, sin cita de hoy");
 const pedroDigits = `98${String(Date.now() + 5).slice(-7)}`;
 const pedro = browser();
-const pedroAccount = (await pedro("POST", "/patient/signup", { name: "Pedro Cuenta", phone: `0${pedroDigits}`, password: "8264" })).body as PatientAccount;
+const pedroAccount = (await pedro("POST", "/patient/signup", { name: "Pedro Cuenta", phone: `0${pedroDigits}`, password: newPinPassword() })).body as PatientAccount;
 const pedroClient = patient("Pedro Ficha", `+593 ${pedroDigits.slice(0, 2)} ${pedroDigits.slice(2, 5)} ${pedroDigits.slice(5)}`);
 const pedroDocument = sql(`select document_id from clients where id = '${pedroClient}'`);
 r = await ricardo("POST", `${B}/scan`, { token: pedroAccount.qrToken });
@@ -323,7 +340,7 @@ if (pedroLate) {
 
 console.log("\nUna ficha inactiva no se une");
 const inaDigits = `96${String(Date.now() + 21).slice(-7)}`;
-const ina = (await browser()("POST", "/patient/signup", { name: "Ina Activa", phone: `0${inaDigits}`, password: "8264" })).body as PatientAccount;
+const ina = (await browser()("POST", "/patient/signup", { name: "Ina Activa", phone: `0${inaDigits}`, password: newPinPassword() })).body as PatientAccount;
 const inaClient = patient("Ina Inactiva", `0${inaDigits}`);
 sql(`update clients set is_active = false where id = '${inaClient}'`);
 scan = (await ricardo("POST", `${B}/scan`, { token: ina.qrToken })).body as ScanResult;
@@ -332,7 +349,7 @@ ok((await ricardo("POST", `${B}/scan/link`, { token: ina.qrToken, appointmentId:
 
 console.log("\nPaciente nuevo");
 const nuevaDigits = `97${String(Date.now() + 9).slice(-7)}`;
-const nueva = (await browser()("POST", "/patient/signup", { name: "Nueva Cuenta", phone: `0${nuevaDigits}`, password: "5173" })).body as PatientAccount;
+const nueva = (await browser()("POST", "/patient/signup", { name: "Nueva Cuenta", phone: `0${nuevaDigits}`, password: newPinPassword() })).body as PatientAccount;
 scan = (await elena("POST", `${B}/scan`, { token: nueva.qrToken })).body as ScanResult;
 ok(scan.status === "unlinked" && scan.phoneClients.length === 0, "sin ficha con su teléfono", scan);
 ok(
@@ -361,8 +378,8 @@ ok(
 console.log("\nEl enlace de contraseña del consultorio");
 ok(((await ricardo("GET", `${B}/clients/${realClient}/loyalty`)).body as { account: string }).account === "pending", "una cuenta con el teléfono de la ficha, sin unir: «pending»");
 ok((await elena("POST", `${B}/clients/${realClient}/patient-reset-link`)).status === 409, "sin cuenta unida, no hay enlace");
-for (let i = 0; i < 5; i++) await browser()("POST", "/patient/login", { phone: `0${phoneDigits}`, password: `${5000 + i}x` });
-ok((await browser()("POST", "/patient/login", { phone: `0${phoneDigits}`, password: "secreta123" })).status === 429, "después de 5 fallos, la cuenta espera");
+for (let i = 0; i < 5; i++) await browser()("POST", "/patient/login", { phone: `0${phoneDigits}`, password: newPassword() + i });
+ok((await browser()("POST", "/patient/login", { phone: `0${phoneDigits}`, password: mariaPassword })).status === 429, "después de 5 fallos, la cuenta espera");
 r = await elena("POST", `${B}/clients/${mariaClient}/patient-reset-link`);
 const link = r.body as PatientResetLink;
 ok(r.status === 200 && link.phone === `+593${phoneDigits}` && link.url.includes("/mi-tarjeta/clave/"), "Recepción lo genera, con el teléfono de la cuenta", r.body);
@@ -371,11 +388,12 @@ ok((await laura("POST", `${B}/clients/${mariaClient}/patient-reset-link`)).statu
 const token = link.url.split("/").pop()!;
 const reset = browser();
 ok(((await reset("GET", `/patient/reset/${token}`)).body as { valid: boolean; firstName: string }).firstName === "María", "el enlace saluda por el nombre de pila");
-r = await reset("POST", `/patient/reset/${token}`, { password: "nueva-clave-1" });
+const resetPassword = newPassword();
+r = await reset("POST", `/patient/reset/${token}`, { password: resetPassword });
 ok(r.status === 200 && (r.body as PatientAccount).passwordReset !== null, "crea la contraseña nueva y entra, con el aviso", r.body);
 ok((await maria("GET", "/patient/me")).status === 401, "las sesiones de antes se cerraron");
-ok((await reset("POST", `/patient/reset/${token}`, { password: "otra-clave-2" })).status === 404, "el enlace sirve una sola vez");
-ok((await browser()("POST", "/patient/login", { phone: `0${phoneDigits}`, password: "nueva-clave-1" })).status === 200, "y entra con la nueva");
+ok((await reset("POST", `/patient/reset/${token}`, { password: newPassword() })).status === 404, "el enlace sirve una sola vez");
+ok((await browser()("POST", "/patient/login", { phone: `0${phoneDigits}`, password: resetPassword })).status === 200, "y entra con la nueva");
 
 console.log("\nDespués de un enlace de contraseña, sólo la tarjeta de ese consultorio (revisión de seguridad)");
 const lauraBusiness: string = laura.session.businessId;
@@ -391,14 +409,15 @@ const lauraToday = sql(
   `insert into appointments (business_id, client_id, service_id, professional_id, date, start_time, end_time, status, price, source)
    values ('${lauraBusiness}', '${lauraClient}', '${lauraService}', '${lauraAgenda}', (now() at time zone '${lauraZone}')::date, '23:58', '23:59', 'confirmed', 20, 'dashboard') returning id`,
 ).split("\n")[0];
-r = await reset("POST", "/patient/login", { phone: `0${phoneDigits}`, password: "nueva-clave-1" });
+r = await reset("POST", "/patient/login", { phone: `0${phoneDigits}`, password: resetPassword });
 const relogged = (r.body as PatientAccount).qrToken;
 ok(((await laura("POST", `/businesses/${lauraBusiness}/scan/link`, { token: relogged, appointmentId: lauraToday, clientId: lauraClient })).body as ScanResult).status === "linked", "otro consultorio también la une");
 ok(((await reset("GET", "/patient/cards")).body as PatientCard[]).length === 2, "y ve las dos tarjetas");
 const second1 = (await elena("POST", `${B}/clients/${mariaClient}/patient-reset-link`)).body as PatientResetLink;
 const second2 = (await elena("POST", `${B}/clients/${mariaClient}/patient-reset-link`)).body as PatientResetLink;
 ok((await browser()("GET", `/patient/reset/${second1.url.split("/").pop()}`)).body?.valid === false, "un enlace nuevo anula el anterior");
-r = await reset("POST", `/patient/reset/${second2.url.split("/").pop()}`, { password: "otra-clave-3" });
+const lastPassword = newPassword();
+r = await reset("POST", `/patient/reset/${second2.url.split("/").pop()}`, { password: lastPassword });
 let after = (await reset("GET", "/patient/cards")).body as PatientCard[];
 ok(r.status === 200 && after.length === 1 && after[0].business.id === businessId, "con el enlace de un consultorio, la cuenta ve sólo su tarjeta (no las visitas a otros)", after.map((c) => c.business.name));
 await laura("POST", `/businesses/${lauraBusiness}/scan`, { token: relogged });
@@ -415,8 +434,8 @@ ok(count(`select count(*) from audit_logs where business_id = '${lauraBusiness}'
 ok((await laura("POST", `/businesses/${lauraBusiness}/clients/${lauraClient}/patient-unlink`)).status === 409, "sin cuenta unida, no hay nada que desunir");
 
 console.log("\nEliminar la cuenta");
-ok((await reset("DELETE", "/patient/account", { password: "mala" })).status === 400, "pide la contraseña");
-r = await reset("DELETE", "/patient/account", { password: "otra-clave-3" });
+ok((await reset("DELETE", "/patient/account", { password: newPassword() })).status === 400, "pide la contraseña");
+r = await reset("DELETE", "/patient/account", { password: lastPassword });
 ok(r.status === 204 && count(`select count(*) from patient_accounts where id = '${account.id}'`) === 0, "la elimina", r.status);
 ok(
   count(`select count(*) from loyalty_cards where client_id = '${mariaClient}' and patient_account_id is null`) === 1 &&
