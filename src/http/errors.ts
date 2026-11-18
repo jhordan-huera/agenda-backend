@@ -14,9 +14,12 @@ export type AppErrorCode =
   | "unavailable"
   /** Aviso de prueba en el celular: el servicio de avisos lo rechazó o no respondió (spec 013). */
   | "push_failed"
+  /** Inicio de sesión con varios intentos fallidos desde una conexión nueva: hace falta el CAPTCHA (revisión 2026-11-18). */
+  | "captcha_required"
   | "server";
 
 const STATUS_BY_CODE: Record<AppErrorCode, number> = {
+  captcha_required: 403,
   validation: 400,
   unauthorized: 401,
   plan_limit: 402,

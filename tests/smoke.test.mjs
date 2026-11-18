@@ -142,7 +142,7 @@ ok(r.status === 404, "los recordatorios ya no se piden desde el panel (los enví
 console.log("Aislamiento entre negocios y roles");
 const laura = agent();
 r = await laura("POST", "/auth/login", { email: "laura@demo.com", password: "demo1234", remember: false });
-ok(r.status === 200 && !r.setCookie.some((c) => /Expires=/i.test(c)), "login sin recordarme → cookie de sesión", r.setCookie);
+ok(r.status === 200 && !r.setCookie.filter((c) => c.startsWith("agendo_session=")).some((c) => /Expires=/i.test(c)), "login sin recordarme → cookie de sesión", r.setCookie);
 r = await laura("GET", `${B}/clients`);
 ok(r.status === 403, "otro negocio no ve mis clientes → 403", r.body);
 const staff = agent();

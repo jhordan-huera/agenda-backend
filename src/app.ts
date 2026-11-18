@@ -68,11 +68,16 @@ app.use(cors({ origin: config.frontendUrls, credentials: true }));
 // públicas, el acceso y los avisos del celular) reciben datos pequeños: 100 kB (2026-11-15).
 const jsonBody = express.json({ limit: "2mb" });
 const smallJsonBody = express.json({ limit: "100kb" });
-const CLIENT_IMPORT_PATH = /^\/api\/businesses\/[^/]+\/clients\/import$/;
-const SMALL_BODY_PATH = /^\/api\/(public|auth|push|patient)(\/|$)/;
+// Sin distinguir mayúsculas, como Express: con «/api/PUBLIC/…» el tope de 100 kB se saltaba (revisión 2026-11-18).
+const CLIENT_IMPORT_PATH = /^\/api\/businesses\/[^/]+\/clients\/import$/i;
+const SMALL_BODY_PATH = /^\/api\/(public|auth|push|patient)(\/|$)/i;
+// Sin la cookie de sesión del equipo, 100 kB en cualquier ruta: sin sesión no se lee un cuerpo de 2 MB para
+// responder 401 (la cookie se mira en la cabecera: cookie-parser va después).
+const hasTeamSession = (cookie: string | undefined) => /(?:^|;\s*)agendo_session=/.test(cookie ?? "");
 app.use((req, res, next) => {
   if (req.method === "POST" && CLIENT_IMPORT_PATH.test(req.path)) return next();
-  return (SMALL_BODY_PATH.test(req.path) ? smallJsonBody : jsonBody)(req, res, next);
+  const small = SMALL_BODY_PATH.test(req.path) || !hasTeamSession(req.headers.cookie);
+  return (small ? smallJsonBody : jsonBody)(req, res, next);
 });
 app.use(cookieParser());
 // En AWS Lambda la ejecución se congela al responder: los emails que la petición puso en cola (y

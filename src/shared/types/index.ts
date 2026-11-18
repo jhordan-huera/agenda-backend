@@ -845,7 +845,9 @@ export type AuditEntityType =
   /** La tarjeta de fidelización: el programa, los beneficios, las recompensas y la unión de la cuenta (spec 052). */
   | "loyalty"
   /** Inicios y cierres de sesión e intentos fallidos: sólo los ve el super admin. */
-  | "session";
+  | "session"
+  /** Las cuentas de pacientes (spec 052): intentos fallidos, esperas y contraseñas; sólo los ve el super admin. */
+  | "patient_account";
 
 /** Un campo que cambió en una edición. `before`/`after` null: valor que no se muestra (p. ej. notas). */
 export interface AuditChange {
@@ -2495,6 +2497,8 @@ export interface LoyaltyReward {
   kind: LoyaltyBenefitKind;
   value: number | null;
   serviceName: string;
+  /** El servicio de «Servicio gratis» (null en los demás tipos o si se borró): el canje sólo vale en una cita de ese servicio. */
+  serviceId: string | null;
   conditions: string;
   visitsRequired: number;
   code: string;

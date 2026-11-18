@@ -381,7 +381,7 @@ export async function mergeLoyalty(db: Db, businessId: string, fromClientId: str
 const REWARD_STATUS_SQL = `case when r.status = 'available' and r.expires_at is not null and r.expires_at <= now() then 'expired' else r.status end`;
 
 const REWARD_COLUMNS = `r.id, r.client_id as "clientId", c.name as "clientName", r.benefit_id as "benefitId", r.card_number as "cardNumber",
-  r.name, r.description, r.kind, r.value::float8 as value, r.service_name as "serviceName", r.conditions,
+  r.name, r.description, r.kind, r.value::float8 as value, r.service_id as "serviceId", r.service_name as "serviceName", r.conditions,
   r.visits_required as "visitsRequired", r.code, r.unlocked_at as "unlockedAt", r.expires_at as "expiresAt",
   ${REWARD_STATUS_SQL} as status, r.redeemed_at as "redeemedAt",
   case when u.id is null then null else u.first_name || ' ' || u.last_name end as "redeemedByName",
@@ -726,12 +726,15 @@ export const loyaltyService = {
       if (reward.status === "voided") throw new AppError("conflict", "Esta recompensa se anuló: no se puede canjear.");
       if (reward.status === "expired") throw new AppError("conflict", "Esta recompensa venció: no se puede canjear.");
 
-      let appointment: { id: string; price: number; paidAt: string | null; date: string } | null = null;
+      let appointment: { id: string; price: number; paidAt: string | null; date: string; serviceId: string; withOthers: boolean } | null =
+        null;
       if (appointmentId) {
         appointment = isUuid(appointmentId)
           ? await one(
               db,
-              `select a.id, a.price::float8 as price, a.paid_at as "paidAt", to_char(a.date, 'YYYY-MM-DD') as date
+              `select a.id, a.price::float8 as price, a.paid_at as "paidAt", to_char(a.date, 'YYYY-MM-DD') as date,
+                      a.service_id as "serviceId",
+                      exists (select 1 from appointment_clients others where others.appointment_id = a.id) as "withOthers"
                  from appointments a
                 where a.id = $1 and a.business_id = $2 and a.status <> 'cancelled'
                   and (a.client_id = $3 or exists (select 1 from appointment_clients ac where ac.appointment_id = a.id and ac.client_id = $3))
@@ -740,6 +743,27 @@ export const loyaltyService = {
             )
           : null;
         if (!appointment) throw new AppError("validation", "Elige una cita de este paciente.");
+        // El descuento sólo donde corresponde (revisión 2026-11-18): «Servicio gratis» en una cita de ese servicio, y
+        // nunca la sesión entera de varios pacientes por el premio de uno.
+        if (appointment.paidAt === null && reward.kind !== "custom") {
+          if (appointment.withOthers) {
+            throw new AppError(
+              "validation",
+              "Es una sesión con varios pacientes: canjéalo sin cita y ajusta el precio de la sesión a mano.",
+            );
+          }
+          if (reward.kind === "free_service") {
+            const target = await one<{ serviceId: string | null }>(db, 'select service_id as "serviceId" from loyalty_rewards where id = $1', [
+              reward.id,
+            ]);
+            if (!target?.serviceId || target.serviceId !== appointment.serviceId) {
+              throw new AppError(
+                "validation",
+                `Este premio es ${reward.serviceName ? `«${reward.serviceName}» gratis` : "un servicio gratis"}: elígelo en una cita de ese servicio o canjéalo sin cita.`,
+              );
+            }
+          }
+        }
       }
       const done = await one(
         db,

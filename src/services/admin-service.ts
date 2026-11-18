@@ -1332,7 +1332,8 @@ export const adminService = {
     const values: unknown[] = [];
     const selected = parseInput(z.enum(["admin", "security", "all"]), scope);
     if (selected === "admin") where.push("l.action like 'platform.%'");
-    if (selected === "security") where.push("l.entity_type = 'session'");
+    // También las cuentas de pacientes (revisión de seguridad 2026-11-18): intentos fallidos, esperas, contraseñas.
+    if (selected === "security") where.push("l.entity_type in ('session', 'patient_account')");
     if (typeof businessId === "string" && businessId) {
       if (!isUuid(businessId)) throw new AppError("validation", "Negocio no válido.");
       values.push(businessId);

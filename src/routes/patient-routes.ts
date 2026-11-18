@@ -1,9 +1,15 @@
 import { Router, type CookieOptions, type Request, type Response } from "express";
 import { config } from "../config.ts";
 import { requireCaptcha } from "../http/captcha.ts";
+import { clientIp } from "../http/client-ip.ts";
 import { AppError } from "../http/errors.ts";
 import { handle, limitRequests } from "../http/handlers.ts";
-import { createPatientSession, endPatientSession, findPatientSession, patientAccountService } from "../services/patient-accounts.ts";
+import {
+  createPatientSession,
+  endPatientSession,
+  findPatientSession,
+  patientAccountService,
+} from "../services/patient-accounts.ts";
 
 /**
  * /api/patient: la cuenta del paciente (spec 052), aparte de la del equipo. Su propia cookie (`agenda360_patient`):
@@ -22,6 +28,8 @@ function cookieOptions(): CookieOptions {
   };
 }
 
+const connectionOf = (req: Request) => ({ ip: clientIp(req), userAgent: req.get("user-agent") ?? null });
+
 const tokenOf = (req: Request): string => {
   const token: unknown = req.cookies?.[COOKIE_NAME];
   return typeof token === "string" ? token : "";
@@ -33,9 +41,11 @@ async function startSession(res: Response, accountId: string): Promise<void> {
 }
 
 async function requireAccount(req: Request): Promise<string> {
-  const accountId = await findPatientSession(tokenOf(req));
-  if (!accountId) throw new AppError("unauthorized", "Inicia sesión con tu teléfono.");
-  return accountId;
+  const session = await findPatientSession(tokenOf(req));
+  if (!session) throw new AppError("unauthorized", "Inicia sesión con tu teléfono.");
+  // Renovada (30 días más sin pasar de 180): la cookie también.
+  if (session.renewedUntil) req.res?.cookie(COOKIE_NAME, tokenOf(req), { ...cookieOptions(), expires: session.renewedUntil });
+  return session.accountId;
 }
 
 const loginLimit = limitRequests({
@@ -81,13 +91,20 @@ patientRoutes.post("/signup", signupLimit, requireCaptcha, async (req, res) => {
 
 // Con el CAPTCHA (revisión de seguridad): sin él, un programa prueba contraseñas comunes contra muchos teléfonos.
 patientRoutes.post("/login", loginLimit, requireCaptcha, async (req, res) => {
-  const accountId = await patientAccountService.login(req.body);
+  const accountId = await patientAccountService.login(req.body, connectionOf(req));
   await startSession(res, accountId);
   res.json(await patientAccountService.me(accountId));
 });
 
 patientRoutes.post("/logout", async (req, res) => {
   await endPatientSession(tokenOf(req));
+  res.clearCookie(COOKIE_NAME, cookieOptions());
+  res.status(204).end();
+});
+
+/** «Cerrar sesión en todos los dispositivos» (revisión de seguridad 2026-11-18): un celular perdido deja de ver la tarjeta. */
+patientRoutes.post("/logout-all", async (req, res) => {
+  await patientAccountService.logoutEverywhere(await requireAccount(req), connectionOf(req));
   res.clearCookie(COOKIE_NAME, cookieOptions());
   res.status(204).end();
 });
@@ -114,10 +131,10 @@ const passwordLimit = limitRequests({
 patientRoutes.put(
   "/password",
   passwordLimit,
-  handle(async (req) => patientAccountService.changePassword(await requireAccount(req), req.body, tokenOf(req))),
+  handle(async (req) => patientAccountService.changePassword(await requireAccount(req), req.body, tokenOf(req), connectionOf(req))),
 );
 patientRoutes.delete("/account", passwordLimit, async (req, res) => {
-  await patientAccountService.deleteAccount(await requireAccount(req), req.body);
+  await patientAccountService.deleteAccount(await requireAccount(req), req.body, connectionOf(req));
   res.clearCookie(COOKIE_NAME, cookieOptions());
   res.status(204).end();
 });
@@ -129,7 +146,7 @@ patientRoutes.get(
   handle((req) => patientAccountService.resetInfo(String(req.params.token))),
 );
 patientRoutes.post("/reset/:token", resetLimit, async (req, res) => {
-  const accountId = await patientAccountService.resetPassword(String(req.params.token), req.body);
+  const accountId = await patientAccountService.resetPassword(String(req.params.token), req.body, connectionOf(req));
   await startSession(res, accountId);
   res.json(await patientAccountService.me(accountId));
 });

@@ -2,6 +2,7 @@ import type { CookieOptions, RequestHandler, Response } from "express";
 import { config } from "../config.ts";
 import { findSessionByToken, type IssuedSession } from "../services/auth-service.ts";
 import { requireUser, superAdminNeedsTwoFactor, TWO_FACTOR_REQUIRED_CODE, TWO_FACTOR_REQUIRED_MESSAGE } from "../services/context.ts";
+import { DEVICE_COOKIE } from "../services/trusted-device.ts";
 import { AppError } from "./errors.ts";
 
 const COOKIE_NAME = "agendo_session";
@@ -22,6 +23,12 @@ export function setSessionCookie(res: Response, issued: IssuedSession): void {
     ...cookieOptions(),
     ...(issued.persistent ? { expires: issued.expiresAt } : {}),
   });
+}
+
+/** El dispositivo de confianza (trusted-device.ts): sólo viaja a /api/auth, donde se inicia sesión. */
+export function setDeviceCookie(res: Response, device: { token: string; expiresAt: Date } | null): void {
+  if (!device) return;
+  res.cookie(DEVICE_COOKIE, device.token, { ...cookieOptions(), path: "/api/auth", expires: device.expiresAt });
 }
 
 export function clearSessionCookie(res: Response): void {

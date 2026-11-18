@@ -247,6 +247,41 @@ sql(`update loyalty_rewards set expires_at = now() - interval '1 day' where clie
 const expired = ((await ricardo("GET", `${B}/clients/${dani.id}/loyalty`)).body as ClientLoyalty).rewards.find((reward) => reward.status === "expired");
 ok(expired !== undefined && (await ricardo("POST", `${B}/loyalty/rewards/${expired.id}/redeem`, {})).status === 409, "ni una vencida");
 
+console.log("\nEl descuento sólo donde corresponde (revisión de seguridad 2026-11-18)");
+const CODE_CHARS = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+const rewardCode = () => Array.from({ length: 6 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join("");
+/** Una recompensa disponible de Caro, copiada de la del 50 % con otro tipo (otra tarjeta: no choca con la de verdad). */
+const extraReward = (card: number, kind: string, value: string, service: string | null) =>
+  sql(
+    `insert into loyalty_rewards (business_id, client_id, benefit_id, card_number, name, kind, value, service_id, service_name, visits_required, code)
+     select business_id, client_id, benefit_id, ${card}, 'Premio ${card}', '${kind}', ${value}, ${service ? `'${service}'` : "null"},
+            ${service ? `'Limpieza ${tag}'` : "''"}, visits_required, '${rewardCode()}'
+       from loyalty_rewards where id = '${fifty.id}' returning id`,
+  ).split("\n")[0];
+const freeCleaning = extraReward(90, "free_service", "null", serviceId);
+const orthodontics = sql(`insert into services (business_id, name, duration_minutes, price) values ('${businessId}', 'Ortodoncia ${tag}', 30, 800) returning id`).split("\n")[0];
+const expensive = appointment(caro.id);
+sql(`update appointments set service_id = '${orthodontics}', price = 800 where id = '${expensive}'`);
+r = await elena("POST", `${B}/loyalty/rewards/${freeCleaning}/redeem`, { appointmentId: expensive });
+ok(
+  r.status === 400 && sql(`select price from appointments where id = '${expensive}'`) === "800.00" && sql(`select status from loyalty_rewards where id = '${freeCleaning}'`) === "available",
+  "«Servicio gratis» no deja en $0 una cita de otro servicio (ni se gasta el premio)",
+  r.body,
+);
+const cleaning = appointment(caro.id);
+r = await elena("POST", `${B}/loyalty/rewards/${freeCleaning}/redeem`, { appointmentId: cleaning });
+ok(r.status === 200 && sql(`select price from appointments where id = '${cleaning}'`) === "0.00", "en una cita de ese servicio, sí", r.body);
+const halfOff = extraReward(91, "percent", "50", null);
+const sharedSession = appointment(caro.id);
+sql(`insert into appointment_clients (appointment_id, client_id, business_id) values ('${sharedSession}', '${patient("Pareja de Caro").id}', '${businessId}')`);
+r = await elena("POST", `${B}/loyalty/rewards/${halfOff}/redeem`, { appointmentId: sharedSession });
+ok(
+  r.status === 400 && sql(`select price from appointments where id = '${sharedSession}'`) === "40.00",
+  "el premio de un paciente no rebaja la sesión entera de varios",
+  r.body,
+);
+ok((await elena("POST", `${B}/loyalty/rewards/${halfOff}/redeem`, {})).status === 200, "sin cita, se canjea igual");
+
 /* ======================================================================================== */
 console.log("\nLa ficha, «Pacientes», «Recompensas» y las cifras");
 const ficha = (await valeria("GET", `${B}/clients/${caro.id}/loyalty`));

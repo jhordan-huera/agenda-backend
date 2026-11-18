@@ -15,6 +15,7 @@ import { hashPassword, verifyPassword } from "./accounts.ts";
 import { agendaScope, assertClientInScope } from "./agenda-scope.ts";
 import { logAudit } from "./audit.ts";
 import { authorize, parseInput, type RequestContext } from "./context.ts";
+import type { ClientConnection } from "./session-security.ts";
 import { appOrigin } from "./notifications.ts";
 
 /*
@@ -23,7 +24,12 @@ import { appOrigin } from "./notifications.ts";
  * QR en persona y lo unió a su ficha (loyalty-scan.ts). Una sesión de paciente nunca pasa por authorize().
  */
 
+/**
+ * La sesión del paciente: 30 días sin usarla y se cierra; con uso se renueva (una vez al día como mucho), hasta 180 días
+ * desde que entró (revisión de seguridad 2026-11-18: antes duraba 180 días fijos, también en un celular perdido).
+ */
 export const PATIENT_SESSION_DAYS = 180;
+export const PATIENT_IDLE_DAYS = 30;
 const LOGIN_WINDOW_MS = 15 * 60_000;
 const LOGIN_MAX_PER_PHONE = 10;
 const WRONG_LOGIN = "El teléfono o la contraseña no coinciden.";
@@ -41,7 +47,9 @@ const LOCK_AFTER_FAILURES = 5;
 const LOCK_FIRST_MS = 15 * 60_000;
 const LOCK_MAX_MS = 24 * 60 * 60_000;
 const FAILURES_MEMORY_MS = 30 * 24 * 60 * 60_000;
-const failuresKey = (phone: string) => `paciente-fallos:${phone}`;
+/** Huella del teléfono para las claves de los contadores: no se guardan teléfonos en rate_limits (revisión 2026-11-18). */
+const phoneKey = (phone: string) => createHash("sha256").update(phone).digest("hex").slice(0, 32);
+const failuresKey = (phone: string) => `paciente-fallos:${phoneKey(phone)}`;
 
 /** La espera después de `failures` fallos seguidos (0 antes del 5.º). */
 export function lockDurationMs(failures: number): number {
@@ -95,6 +103,23 @@ async function checkPassword(phone: string, password: string, passwordHash: stri
   });
 }
 
+/**
+ * Lo que pasa con las cuentas de pacientes, en la auditoría de la plataforma (revisión de seguridad 2026-11-18): sin el
+ * teléfono, con la cuenta por su id. Salen en Actividad → Seguridad del super admin y en la alerta por hora del cron.
+ */
+async function logPatientEvent(db: Db, accountId: string | null, action: string, summary: string, connection?: ClientConnection) {
+  await logAudit(db, {
+    businessId: null,
+    actor: null,
+    actorName: "Cuenta de paciente",
+    action: `patient_account.${action}`,
+    entityType: "patient_account",
+    entityId: accountId,
+    summary,
+    connection: connection ? { ip: connection.ip, userAgent: connection.userAgent } : undefined,
+  });
+}
+
 /** Después de un fallo: la espera si llegó al 5.º, o cuántos intentos le quedan si son pocos. */
 function wrongPassword(message: string, failures: number, code: "unauthorized" | "validation"): AppError {
   const left = LOCK_AFTER_FAILURES - failures;
@@ -130,20 +155,39 @@ export async function createPatientSession(accountId: string): Promise<{ token: 
     pool,
     `insert into patient_sessions (account_id, token_hash, expires_at) values ($1, $2, now() + make_interval(days => $3))
      returning expires_at as "expiresAt"`,
-    [accountId, sha256(token), PATIENT_SESSION_DAYS],
+    [accountId, sha256(token), PATIENT_IDLE_DAYS],
   ))!;
   return { token, expiresAt: new Date(row.expiresAt) };
 }
 
-/** La cuenta de una cookie (null si no existe o venció). */
-export async function findPatientSession(token: string): Promise<string | null> {
+/**
+ * La cuenta de una cookie (null si no existe o venció). Si pasó al menos un día desde la última renovación, la sesión se
+ * renueva otros PATIENT_IDLE_DAYS (sin pasar de PATIENT_SESSION_DAYS desde que entró): `renewedUntil` es la nueva fecha
+ * para la cookie.
+ */
+export async function findPatientSession(token: string): Promise<{ accountId: string; renewedUntil: Date | null } | null> {
   if (!token || token.length > 200) return null;
-  const row = await one<{ accountId: string }>(
+  const row = await one<{ accountId: string; renewedUntil: string | null }>(
     pool,
-    `select account_id as "accountId" from patient_sessions where token_hash = $1 and expires_at > now()`,
-    [sha256(token)],
+    `with found as (
+       select id, account_id, created_at, expires_at from patient_sessions where token_hash = $1 and expires_at > now()
+     ), renewed as (
+       update patient_sessions s
+          set expires_at = least(found.created_at + make_interval(days => $2), now() + make_interval(days => $3))
+         from found
+        where s.id = found.id and found.expires_at < now() + make_interval(days => $3 - 1)
+          and found.expires_at < found.created_at + make_interval(days => $2)
+        returning s.expires_at
+     )
+     select found.account_id as "accountId", (select expires_at from renewed) as "renewedUntil" from found`,
+    [sha256(token), PATIENT_SESSION_DAYS, PATIENT_IDLE_DAYS],
   );
-  return row?.accountId ?? null;
+  return row ? { accountId: row.accountId, renewedUntil: row.renewedUntil ? new Date(row.renewedUntil) : null } : null;
+}
+
+/** «Cerrar sesión en todos los dispositivos»: todas las sesiones de la cuenta, también la de este navegador. */
+export async function endAllPatientSessions(accountId: string): Promise<void> {
+  await pool.query("delete from patient_sessions where account_id = $1", [accountId]);
 }
 
 export async function endPatientSession(token: string): Promise<void> {
@@ -290,9 +334,9 @@ export const patientAccountService = {
    * Entrar: con el bloqueo creciente por fallos seguidos (arriba) y un límite de intentos por teléfono (además del de
    * la IP en la ruta).
    */
-  async login(input: unknown): Promise<string> {
+  async login(input: unknown, connection?: ClientConnection): Promise<string> {
     const data = parseInput(patientLoginSchema, input);
-    const { hits } = await incrementCounter(pool, `paciente-login:${data.phone}`, LOGIN_WINDOW_MS);
+    const { hits } = await incrementCounter(pool, `paciente-login:${phoneKey(data.phone)}`, LOGIN_WINDOW_MS);
     if (hits > LOGIN_MAX_PER_PHONE) {
       throw new AppError("rate_limited", "Demasiados intentos con este teléfono. Espera 15 minutos e inténtalo de nuevo.");
     }
@@ -302,7 +346,20 @@ export const patientAccountService = {
       [data.phone],
     );
     const failures = await checkPassword(data.phone, data.password, row?.passwordHash ?? null);
-    if (!row || failures > 0) throw wrongPassword(WRONG_LOGIN, failures, "unauthorized");
+    if (!row || failures > 0) {
+      await logPatientEvent(
+        pool,
+        row?.id ?? null,
+        failures >= LOCK_AFTER_FAILURES ? "locked" : "login_failed",
+        failures >= LOCK_AFTER_FAILURES
+          ? `Cuenta de paciente en espera tras ${failures} intentos fallidos seguidos`
+          : row
+            ? "Intento fallido de entrar a una cuenta de paciente"
+            : "Intento de entrar con un teléfono sin cuenta",
+        connection,
+      );
+      throw wrongPassword(WRONG_LOGIN, failures, "unauthorized");
+    }
     return row.id;
   },
 
@@ -318,7 +375,7 @@ export const patientAccountService = {
     return accountOf(pool, accountId);
   },
 
-  async changePassword(accountId: string, input: unknown, keepSessionToken: string): Promise<void> {
+  async changePassword(accountId: string, input: unknown, keepSessionToken: string, connection?: ClientConnection): Promise<void> {
     const data = parseInput(patientPasswordSchema, input);
     const row = await one<{ phone: string; passwordHash: string }>(
       pool,
@@ -335,10 +392,11 @@ export const patientAccountService = {
     // Las demás sesiones se cierran y los enlaces del consultorio que quedaban dejan de servir.
     await pool.query("delete from patient_sessions where account_id = $1 and token_hash <> $2", [accountId, sha256(keepSessionToken)]);
     await pool.query("update patient_password_links set used_at = now() where account_id = $1 and used_at is null", [accountId]);
+    await logPatientEvent(pool, accountId, "password_changed", "El paciente cambió la contraseña de su cuenta", connection);
   },
 
   /** Eliminar la cuenta: los negocios conservan la ficha, los sellos y los premios; la cuenta y su QR desaparecen. */
-  async deleteAccount(accountId: string, input: unknown): Promise<void> {
+  async deleteAccount(accountId: string, input: unknown, connection?: ClientConnection): Promise<void> {
     const { password } = parseInput(patientDeleteSchema, input ?? {});
     const row = await one<{ phone: string; passwordHash: string }>(
       pool,
@@ -349,6 +407,13 @@ export const patientAccountService = {
     const failures = await checkPassword(row.phone, password, row.passwordHash);
     if (failures > 0) throw wrongPassword("Tu contraseña no coincide.", failures, "validation");
     await pool.query("delete from patient_accounts where id = $1", [accountId]);
+    await logPatientEvent(pool, accountId, "deleted", "El paciente eliminó su cuenta", connection);
+  },
+
+  /** «Cerrar sesión en todos los dispositivos», con su registro. */
+  async logoutEverywhere(accountId: string, connection?: ClientConnection): Promise<void> {
+    await endAllPatientSessions(accountId);
+    await logPatientEvent(pool, accountId, "logged_out_everywhere", "El paciente cerró la sesión en todos sus dispositivos", connection);
   },
 
   /** El enlace del consultorio para cambiar la contraseña: si sirve todavía, el nombre de pila para saludar. */
@@ -365,8 +430,13 @@ export const patientAccountService = {
   },
 
   /** Usar el enlace: una sola vez; cierra todas las sesiones y deja el aviso con el negocio y la fecha. */
-  async resetPassword(token: string, input: unknown): Promise<string> {
+  async resetPassword(token: string, input: unknown, connection?: ClientConnection): Promise<string> {
     const data = parseInput(patientResetSchema, input);
+    // Primero el enlace y después el hash (bcrypt gasta CPU): con un enlace que no sirve no se calcula nada.
+    const usable = token.length <= 200
+      ? await one(pool, "select 1 from patient_password_links where token_hash = $1 and used_at is null and expires_at > now()", [sha256(token)])
+      : null;
+    if (!usable) throw new AppError("not_found", "Este enlace ya se usó o venció. Pide otro en tu consultorio.");
     const hash = await hashPassword(data.password);
     return transaction(async (db) => {
       const link = token.length <= 200
@@ -387,6 +457,7 @@ export const patientAccountService = {
       ))!;
       // Con la contraseña nueva, la espera por los intentos fallidos se termina.
       await clearFailures(db, phone);
+      await logPatientEvent(db, link.accountId, "password_reset", "El paciente creó una contraseña nueva con el enlace de su consultorio", connection);
       await db.query("delete from patient_sessions where account_id = $1", [link.accountId]);
       // Los otros enlaces que quedaban (de cualquier consultorio) dejan de servir.
       await db.query("update patient_password_links set used_at = now() where account_id = $1 and used_at is null", [link.accountId]);

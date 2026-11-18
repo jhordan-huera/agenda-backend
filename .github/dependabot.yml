@@ -18,6 +18,10 @@ updates:
       interval: weekly
     target-branch: dev
     open-pull-requests-limit: 5
+    # Sólo versiones con 7 días publicadas: una versión comprometida suele detectarse y retirarse antes
+    # (revisión de seguridad 2026-11-18; también la regla de usar versiones con dos semanas).
+    cooldown:
+      default-days: 7
     groups:
       menores:
         update-types: ["minor", "patch"]

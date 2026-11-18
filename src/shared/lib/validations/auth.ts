@@ -6,6 +6,8 @@ export const loginSchema = z.object({
   email: emailField,
   password: z.string().min(1, "Ingresa tu contraseña"),
   remember: z.boolean(),
+  /** Sólo después de varios intentos desde una conexión nueva (la API responde «captcha_required»). */
+  captchaToken: z.string().max(4096).optional(),
 });
 
 export const registerSchema = z

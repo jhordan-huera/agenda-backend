@@ -14,8 +14,14 @@ import { parseInput, requireUser, type RequestContext } from "./context.ts";
 import { queueEmail } from "./notifications.ts";
 import { getPlatformSettings } from "./platform-settings.ts";
 import { pausePushDevices } from "./push-device-service.ts";
+import { checkCaptchaToken } from "../http/captcha.ts";
+import { incrementCounter } from "../http/rate-limit-store.ts";
+import { issueDeviceToken, isTrustedDevice } from "./trusted-device.ts";
 import { queueAccountSecurityEmail } from "./account-alerts.ts";
 import {
+  accountAttemptsToday,
+  CAPTCHA_AFTER_ATTEMPTS,
+  isKnownConnection,
   isLockedOut,
   lockedOutError,
   logSessionEvent,
@@ -100,7 +106,15 @@ const withoutSecrets = ({
 }: LoginRow): User => user;
 
 /** Resultado del inicio de sesión: la sesión, o el paso del código si tiene la verificación en dos pasos. */
-export type SignInResult = { session: Session; issued: IssuedSession } | { twoFactor: TwoFactorChallenge };
+/** Códigos de verificación incorrectos de una cuenta en 24 horas que ponen la verificación en pausa (revisión 2026-11-18). */
+const TWO_FACTOR_FAILURES_PER_DAY = 20;
+const DAY_MS = 24 * 60 * 60_000;
+const twoFactorDayKey = (userId: string) => `acceso:codigos-dia:${userId}`;
+
+/** La cookie del dispositivo de confianza para el navegador que entró (trusted-device.ts); null sin clave. */
+type DeviceCookie = { token: string; expiresAt: Date } | null;
+
+export type SignInResult = { session: Session; issued: IssuedSession; device: DeviceCookie } | { twoFactor: TwoFactorChallenge };
 
 /** Cuenta desactivada: no entra, ni con la contraseña ni con el código. */
 async function blockInactive(user: User, connection: ClientConnection): Promise<never> {
@@ -225,7 +239,7 @@ export const authService = {
   },
 
   async signIn(input: unknown, connection: ClientConnection): Promise<SignInResult> {
-    const { email, password, remember } = parseInput(loginSchema, input);
+    const { email, password, remember, captchaToken } = parseInput(loginSchema, input);
     const row = await one<LoginRow>(
       pool,
       `select ${userColumns()}, password_hash as "passwordHash", two_factor_secret is not null as "twoFactor",
@@ -234,10 +248,14 @@ export const authService = {
       [email],
     );
     const user = row ? withoutSecrets(row) : null;
+    // Desde un navegador o una conexión donde la cuenta ya entró, sin los topes repartidos ni el CAPTCHA (2026-11-18).
+    const known =
+      Boolean(row && isTrustedDevice(connection.deviceToken, row.id, row.passwordHash)) || (await isKnownConnection(user?.id ?? null, connection.ip));
+    if (!known && (await accountAttemptsToday(email)) >= CAPTCHA_AFTER_ATTEMPTS) await checkCaptchaToken(captchaToken, connection.ip);
     // Bloqueada: ni se comprueba la contraseña (aunque sea la correcta) hasta que pase el tiempo. El
     // intento se aparta antes de comprobarla: con muchos a la vez, sólo pasan los del tope (spec 009).
     const locked = await isLockedOut(user?.id ?? null, email, connection.ip);
-    const attempt = locked ? null : await reserveAttempt(email, connection.ip, user?.id ?? null);
+    const attempt = locked ? null : await reserveAttempt(email, connection.ip, user?.id ?? null, known);
     if (!attempt || attempt.locked) {
       await logSessionEvent(
         user,
@@ -263,12 +281,11 @@ export const authService = {
     }
     if (!user.isActive) return blockInactive(user, connection);
     // Las contraseñas de antes del costo 12 se rehacen al entrar (sólo si nadie la cambió entretanto).
-    if (needsRehash(row!.passwordHash)) {
-      await pool.query("update users set password_hash = $2 where id = $1 and password_hash = $3", [
-        user.id,
-        await hashPassword(password),
-        row!.passwordHash,
-      ]);
+    let passwordHash = row!.passwordHash;
+    if (needsRehash(passwordHash)) {
+      const rehashed = await hashPassword(password);
+      await pool.query("update users set password_hash = $2 where id = $1 and password_hash = $3", [user.id, rehashed, passwordHash]);
+      passwordHash = rehashed;
     }
     // Con la verificación en dos pasos, la sesión se abre al escribir el código (verifyTwoFactor).
     if (row?.twoFactor) {
@@ -277,14 +294,17 @@ export const authService = {
     const issued = await createSession(pool, user.id, remember);
     await logSessionEvent(user, { action: "session.login", summary: "Inició sesión" }, connection);
     await attempt.succeeded();
-    return { session: (await resolveSession(pool, user, false, row!.themeMode))!, issued };
+    return { session: (await resolveSession(pool, user, false, row!.themeMode))!, issued, device: issueDeviceToken(user.id, passwordHash) };
   },
 
   /**
    * Segundo paso del inicio de sesión: el código de la app o uno de recuperación. Los códigos
    * incorrectos cuentan como intentos fallidos (y para el bloqueo de la cuenta).
    */
-  async verifyTwoFactor(input: unknown, connection: ClientConnection): Promise<{ session: Session; issued: IssuedSession }> {
+  async verifyTwoFactor(
+    input: unknown,
+    connection: ClientConnection,
+  ): Promise<{ session: Session; issued: IssuedSession; device: DeviceCookie }> {
     const { challenge: token, code } = parseInput(twoFactorLoginSchema, input);
     const challenge = await findLoginChallenge(pool, token);
     if (!challenge) throw new AppError("unauthorized", "Pasó demasiado tiempo. Vuelve a escribir tu contraseña.");
@@ -308,6 +328,23 @@ export const authService = {
       );
       throw lockedOutError();
     }
+    // Tope de códigos fallidos de la cuenta en 24 horas (revisión 2026-11-18): con la contraseña robada, el tope
+    // de 15 minutos dejaba probar unos 2.400 códigos al día.
+    const failedToday = await one<{ hits: number }>(pool, "select hits from rate_limits where key = $1 and reset_at > now()", [
+      twoFactorDayKey(user.id),
+    ]);
+    if ((failedToday?.hits ?? 0) >= TWO_FACTOR_FAILURES_PER_DAY) {
+      await pool.query("delete from login_challenges where id = $1", [challenge.id]);
+      await logSessionEvent(
+        user,
+        { action: "session.login_locked", summary: "Verificación en dos pasos en pausa por demasiados códigos incorrectos en 24 horas" },
+        connection,
+      );
+      throw new AppError(
+        "rate_limited",
+        "Demasiados códigos incorrectos en las últimas 24 horas: por seguridad, la verificación queda en pausa hasta mañana. Si no fuiste tú, cambia tu contraseña.",
+      );
+    }
     // El intento del paso intermedio se suma antes de comprobar el código, de forma atómica: con
     // muchos códigos a la vez sólo se comprueban MAX_CHALLENGE_ATTEMPTS (spec 009).
     const slot = await one<{ attempts: number }>(
@@ -324,6 +361,22 @@ export const authService = {
     const result = await verifySecondFactor(pool, user.id, code);
     if (!result) {
       const { attempts } = slot;
+      await incrementCounter(pool, twoFactorDayKey(user.id), DAY_MS);
+      // El primer código incorrecto después de una contraseña correcta: si no fue la persona, alguien ya la sabe. Se avisa
+      // por email (a la cuenta y al dueño de la plataforma) y por ntfy (account-alerts.ts).
+      if (attempts === 1) {
+        await logSessionEvent(
+          user,
+          { action: "session.second_factor_failed", summary: "Falló el código de verificación después de una contraseña correcta" },
+          connection,
+        );
+        await queueAccountSecurityEmail(
+          pool,
+          user,
+          "Alguien escribió bien tu contraseña, pero falló el código de verificación en dos pasos. Si no fuiste tú, cambia tu contraseña.",
+          connection,
+        );
+      }
       if (attempts >= MAX_CHALLENGE_ATTEMPTS) await pool.query("delete from login_challenges where id = $1", [challenge.id]);
       await logSessionEvent(
         user,
@@ -352,7 +405,8 @@ export const authService = {
       },
       connection,
     );
-    return { session: (await resolveSession(pool, user, true, themeMode))!, issued };
+    const { passwordHash } = (await one<{ passwordHash: string }>(pool, 'select password_hash as "passwordHash" from users where id = $1', [user.id]))!;
+    return { session: (await resolveSession(pool, user, true, themeMode))!, issued, device: issueDeviceToken(user.id, passwordHash) };
   },
 
   /**

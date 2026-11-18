@@ -2,15 +2,20 @@ import { Router, type Request } from "express";
 import { requireCaptcha } from "../http/captcha.ts";
 import { clientIp } from "../http/client-ip.ts";
 import { handle, limitRequests } from "../http/handlers.ts";
-import { clearSessionCookie, setSessionCookie } from "../http/session.ts";
+import { clearSessionCookie, setDeviceCookie, setSessionCookie } from "../http/session.ts";
 import { authService } from "../services/auth-service.ts";
+import { DEVICE_COOKIE } from "../services/trusted-device.ts";
 import { twoFactorService } from "../services/two-factor.ts";
 
 /** /api/auth: sesión con cookie httpOnly (ver src/http/session.ts). */
 export const authRoutes = Router();
 
 /** IP y navegador del visitante: quedan en la auditoría de las sesiones. */
-const connectionOf = (req: Request) => ({ ip: clientIp(req), userAgent: req.get("user-agent") ?? null });
+const connectionOf = (req: Request) => ({
+  ip: clientIp(req),
+  userAgent: req.get("user-agent") ?? null,
+  deviceToken: typeof req.cookies?.[DEVICE_COOKIE] === "string" ? (req.cookies[DEVICE_COOKIE] as string) : null,
+});
 
 const loginLimit = limitRequests({
   name: "login",
@@ -37,12 +42,15 @@ authRoutes.post("/login", loginLimit, async (req, res) => {
     res.json(result.twoFactor);
     return;
   }
+  // El dispositivo primero y la sesión al final (un cliente que guarda sólo la última cookie se queda con la sesión).
+  setDeviceCookie(res, result.device);
   setSessionCookie(res, result.issued);
   res.json(result.session);
 });
 
 authRoutes.post("/login/two-factor", loginLimit, async (req, res) => {
-  const { session, issued } = await authService.verifyTwoFactor(req.body, connectionOf(req));
+  const { session, issued, device } = await authService.verifyTwoFactor(req.body, connectionOf(req));
+  setDeviceCookie(res, device);
   setSessionCookie(res, issued);
   res.json(session);
 });
