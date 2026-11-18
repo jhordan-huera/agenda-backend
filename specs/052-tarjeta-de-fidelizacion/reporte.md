@@ -130,7 +130,7 @@ Lo que la revisión encontró bien resuelto:
 
 ## Segunda revisión (2026-11-16, después de los cambios del dueño)
 
-Dos revisores nuevos (seguridad y lógica) sobre los commits 4b54800 y 032cfc3 (backend) y 0cf110f y a73d1e6 (front).
+Dos revisores nuevos (seguridad y lógica) sobre los commits ca97c37 y e641f76 (backend) y 0cf110f y a73d1e6 (front).
 El dueño pidió corregir todo «según como sea mejor»; se aplicaron las tres recomendaciones:
 
 - **Un QR que llega como enlace no se escanea solo** (`/q/:token`, `?qr=`): pide «El paciente está aquí: escanear» y el
@@ -201,14 +201,27 @@ Pedido del dueño: la tarjeta sólo para los negocios que la soliciten, y sólo 
   - a067149 (parte 2);
   - 114259c (constitución 1.50.0);
   - 7fae5a2 (menos CPU);
-  - d124414 (revisión de seguridad).
+  - d124414 (revisión de seguridad);
+  - 2aafc8d (reporte);
+  - ca97c37 (cambios del dueño al probarla);
+  - e641f76 (la invitación del QR);
+  - fc1d841 (segunda revisión);
+  - 7087a98 (sólo en los negocios que habilite el super admin);
+  - 23fa487 (contraseñas de prueba al azar).
+
+  El 2026-11-18 se reescribieron los cuatro commits desde ca97c37 para cambiar un valor de prueba que marcó GitGuardian
+  (sólo esa línea de tests/patient-accounts.test.ts).
 - **agenda-front:**
   - 78213cf (lo compartido);
   - 186688b (base);
   - c73525a (constitución);
   - c9ddb23 (panel y app del paciente);
   - 4b63419 («Te falta 1 cita»);
-  - 9b66a70 (revisión de seguridad).
+  - 9b66a70 (revisión de seguridad);
+  - 0cf110f (cambios del dueño al probarla);
+  - a73d1e6 («QR para tus pacientes»);
+  - 59a4be0 (segunda revisión);
+  - 45f97ec (sólo en los negocios que habilite el super admin).
 
 ## Cómo publicarlo (cuando el dueño lo pida)
 
