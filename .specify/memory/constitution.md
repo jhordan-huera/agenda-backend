@@ -111,8 +111,8 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   modifican (2026-10-28).
 - Cada email al paciente sobre su cita, también los recordatorios, sale con copia al profesional
   (los recordatorios, desde el 2026-10-13), salvo los recordatorios del comprobante de pago (spec 039) y los
-  emails de la lista de espera (spec 047) y la encuesta después de la cita (spec 048), que no son avisos de
-  una cita.
+  emails de la lista de espera (spec 047), la encuesta después de la cita (spec 048) y el recordatorio de control
+  (spec 051), que no son avisos de una cita.
   La copia puede esperar en la cola si un día no hay cupo de Gmail, pero nunca se descarta (2026-10-15).
 - «Pedir el comprobante de pago» (spec 039, 2026-11-09) es un interruptor por negocio, apagado al
   principio, que sólo cambia el super admin desde la ficha del negocio en /admin; el negocio no lo cambia
@@ -160,6 +160,45 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   en la ficha del paciente, con su nombre. Con 1 o 2 estrellas, la campana avisa al propietario y a quien tiene esa
   agenda, sin el comentario; la actividad tampoco lo guarda. El informe mensual suma el promedio y cuántas
   respondieron, y la descarga de datos trae encuestas.xlsx. Se borran con el paciente.
+- El recordatorio de control (spec 051, 2026-11-15): cada servicio puede tener «Volver en» (1 o 2 semanas, 1, 2, 3 o
+  6 meses, o 1 año; «No» por defecto). El control sale de la última cita Atendida del paciente principal en ese
+  servicio y no se guarda: se calcula. La Agenda tiene la hoja «Controles» (los vencidos de los últimos 90 días y los
+  de los próximos 30, desde la revisión del EGM del 2026-11-16) con el WhatsApp ya escrito, «Agendar» y «Quitar», y la ficha del paciente dice su próximo control; quien tiene
+  una cita por delante (de cualquier servicio) no tiene. El email «Te toca tu control» lo enciende el propietario en
+  Configuración → Notificaciones (`notificationSettings.controlReminders`, apagado al principio): sale desde las 10:00
+  de la hora del negocio del día que vence y hasta 30 días después, una sola vez, un email por paciente aunque le
+  toquen varios, y nunca por lo que ya había vencido al encenderlo o al poner «Volver en» en el servicio. Lleva
+  «Reservar mi control» (la página de reservas con el servicio elegido) y «No quiero recibir estos recordatorios»
+  (por negocio, se confirma en /recordatorio/:token). Sin copia al profesional. Se borran con el paciente.
+- La tarjeta de fidelización (spec 052, 2026-11-16): sólo en los negocios que el super admin habilite con su
+  interruptor (2026-11-18, migración 060); el negocio no lo cambia. Al quitarla se apaga todo (sin «Fidelización»,
+  «Escanear» ni sellos; sus pacientes dejan de verla) y se guarda lo ganado, que se canjea desde la ficha. Cada negocio
+  habilitado tiene un programa (apagado al principio; lo configuran el propietario y los administradores en
+  «Fidelización»), con su nombre, el ícono del sello, qué pasa al
+  ganar el último beneficio («Seguir sumando» o «Empezar una tarjeta nueva», que sube de nivel: Clásica, Plata y Oro)
+  y tantos beneficios como quiera (citas necesarias, tipo, valor, condiciones y «vence a los N días»). Cada cita que
+  pasa a Atendida desde que se encendió, por cualquier camino, suma un sello a cada paciente activo de la cita, una
+  sola vez; al llegar a un beneficio activo se desbloquea su recompensa con un código, una vez por tarjeta, guardando
+  el beneficio como era ese día. Si el propietario corrige la cita, el sello se anula y las recompensas sin canjear que
+  ya no alcanza, también. Nadie suma ni quita sellos a mano. Un beneficio ya ganado no se borra: se archiva. Canjean el
+  propietario, los administradores y Recepción, una sola vez; en una cita sin pagar, el descuento baja su precio (con
+  la actividad). El email «Ganaste un premio» (sin el servicio en el asunto) lleva copia aparte al profesional.
+- La cuenta del paciente (spec 052, 2026-11-16): opcional y sólo para la tarjeta (reservar sigue sin cuenta). Entra
+  con su teléfono (+593…) y una contraseña o un PIN de 4 números (sin los fáciles y con bloqueo creciente: desde el
+  5.º fallo, 15 minutos que se duplican hasta 24 horas), en /mi-tarjeta, con su propia cookie y sus rutas
+  (/api/patient): una sesión de paciente nunca entra al panel. Su QR (un enlace /q/:token, que puede cambiar) lo
+  escanea el equipo en el panel; si llega como enlace, alguien confirma antes que el paciente está ahí. La primera vez
+  en un negocio se elige quién es (la ficha activa con su mismo teléfono, la de una cita de hoy que puede ver o una
+  ficha nueva con el teléfono de la cuenta) y la cuenta queda unida a esa ficha, con el aviso «Tu cuenta quedó unida» al
+  email de la ficha. Ese escaneo en persona es la verificación: con sólo registrarse con un teléfono, nadie ve nada de
+  un negocio (se mantiene la regla de la spec 050). Al escanear, su cita de hoy queda Atendida sola si es la única
+  pendiente o confirmada, de un solo paciente y desde una hora antes de su inicio; las demás, con un toque. El
+  consultorio comparte un QR a /mi-tarjeta con su nombre y su logo para que sus pacientes creen la cuenta. La
+  contraseña olvidada la resuelve el consultorio con un enlace de un solo uso por WhatsApp (24 horas, con la
+  actividad y un aviso al paciente). El paciente ve sólo sus tarjetas, nunca datos de otros ni nada clínico, y puede
+  eliminar su cuenta (el negocio conserva la ficha y los sellos).
+- Las redes del negocio (spec 052): Facebook, Instagram y TikTok, opcionales, guardadas como enlace de esa red; salen
+  en la página de reservas y en la tarjeta del paciente sólo las que tiene.
 - Una cita puede tener hasta 3 pacientes (sesiones de pareja), sólo en los negocios que el super
   admin habilite con su interruptor; el negocio no lo cambia. Cada paciente recibe sus avisos, la
   copia al profesional sale una vez y la hora se ocupa una sola vez (2026-10-13).
@@ -419,4 +458,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.48.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-15
+**Versión**: 1.51.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-18

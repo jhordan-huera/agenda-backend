@@ -550,6 +550,8 @@ function seedTenant(
     clientRequiredFields: { ...DEFAULT_CLIENT_REQUIRED_FIELDS },
     // Tampoco: apagado por defecto (migración 032); lo activa el super admin.
     multiClientAppointments: false,
+    // Tampoco: apagada por defecto (migración 060); la habilita el super admin.
+    loyaltyAllowed: false,
     // Tampoco: apagado por defecto (migración 055); lo activa el super admin.
     paymentReminders: { enabled: false, days: "before_three" },
     createdAt,
@@ -602,6 +604,7 @@ function seedTenant(
     modes,
     homeVisitFee,
     peoplePerSession: 1,
+    returnAfterDays: null,
     isActive,
     createdAt: daysAgoISO(age - 1),
   }),

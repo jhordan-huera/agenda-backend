@@ -46,6 +46,7 @@ const businessOwnColumns = columns({
   professionalScope: "professional_scope",
   clientRequiredFields: "client_required_fields",
   multiClientAppointments: "multi_client_appointments",
+  loyaltyAllowed: "loyalty_allowed",
   createdAt: "created_at",
 });
 
@@ -55,7 +56,8 @@ const businessOwnColumns = columns({
  */
 export const businessColumns = (alias?: string) => {
   const c = (column: string) => (alias ? `${alias}.${column}` : column);
-  return `${businessOwnColumns(alias)}, json_build_object('enabled', ${c("payment_reminders")}, 'days', ${c("payment_reminder_days")}) as "paymentReminders"`;
+  return `${businessOwnColumns(alias)}, json_build_object('enabled', ${c("payment_reminders")}, 'days', ${c("payment_reminder_days")}) as "paymentReminders",
+    json_build_object('facebook', ${c("facebook_url")}, 'instagram', ${c("instagram_url")}, 'tiktok', ${c("tiktok_url")}) as "socialLinks"`;
 };
 
 const professionalOwnColumns = columns({
@@ -137,6 +139,7 @@ export const serviceColumns = columns({
   modes: "modes",
   homeVisitFee: "home_visit_fee",
   peoplePerSession: "people_per_session",
+  returnAfterDays: "return_after_days",
   isActive: "is_active",
   createdAt: "created_at",
 });

@@ -59,7 +59,7 @@ const booking: OnlineBooking = {
 };
 let notice = onlineBookingNotice(booking);
 ok(
-  notice.title === "Agenda360: nueva reserva" && notice.priority === 3 && notice.click === "/admin/businesses/b1",
+  notice.title === "Agenda360: reserva online" && notice.tags[0] === "globe_with_meridians" && notice.message.includes("Hecha por el paciente en la página de reservas") && notice.priority === 3 && notice.click === "/admin/businesses/b1",
   "título sin el negocio (el registro de Actions es público) y enlace a la ficha del negocio",
   notice,
 );
@@ -67,6 +67,7 @@ ok(
   notice.message ===
     [
       "Mente Abierta · mié 14 oct 16:30",
+      "Hecha por el paciente en la página de reservas",
       "Paciente nuevo: Juan P. · ju***@gmail.com · ***5555",
       "Consulta inicial · 60 min · $15",
       "Con Dra. Ana Torres · en el local",
@@ -420,7 +421,7 @@ try {
   ok(received.length === 0, "la API no avisa: no necesita NTFY_TOPIC en Vercel ni en Lambda", received);
   let run = await runCron();
   const owner = sql("select u.email from users u join businesses b on b.owner_id = u.id where b.slug = 'jhordan'");
-  const mine = () => received.filter((n) => n.title === "Agenda360: nueva reserva" && n.message.includes("Paciente A."));
+  const mine = () => received.filter((n) => n.title === "Agenda360: reserva online" && n.message.includes("Paciente A."));
   const first = mine()[0];
   ok(run.code === 0 && mine().length === 1, "el cron manda un aviso por la reserva", { code: run.code, received });
   ok(new RegExp(`^${profile.business.name} · `).test(first?.message ?? ""), "empieza por el negocio y cuándo es", first?.message);

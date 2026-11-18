@@ -135,6 +135,11 @@ export interface NotificationSettings {
    * defecto; sólo la cambia el propietario. Los negocios guardados antes no lo traen (= apagada).
    */
   surveys?: boolean;
+  /**
+   * Recordatorio de control (spec 051): el día que le toca volver, «Te toca tu control». Apagado por defecto. Los
+   * negocios guardados antes no lo traen (= apagado).
+   */
+  controlReminders?: boolean;
 }
 
 /**
@@ -186,6 +191,11 @@ export interface Business {
   clinicalDefaultTemplateId: string | null;
   /** Colores del panel y de la página de reservas; null: los de Agenda360. */
   brandColors: BrandColors | null;
+  /**
+   * Las redes del negocio (spec 052): salen en la página de reservas y en la tarjeta del paciente, sólo las que tiene.
+   * Un backend anterior no las manda: se tratan como vacías.
+   */
+  socialLinks?: SocialLinks;
   /** Qué pacientes ve quien tiene el rol Profesional: todos los del negocio o sólo los suyos. */
   professionalScope: ProfessionalScope;
   /**
@@ -198,6 +208,11 @@ export interface Business {
    * para cada negocio; el negocio no lo cambia.
    */
   multiClientAppointments: boolean;
+  /**
+   * La tarjeta de fidelización (spec 052): sólo en los negocios que habilita el super admin (migración 060); el
+   * negocio no lo cambia. Sin ella no hay «Fidelización», «Escanear» ni «QR para tus pacientes».
+   */
+  loyaltyAllowed: boolean;
   /**
    * «Pedir el comprobante de pago» (spec 039): recordatorios diarios por email al paciente para que suba
    * el comprobante de su cita. Lo activa el super admin para cada negocio; el negocio no lo cambia. Un
@@ -491,6 +506,11 @@ export interface Service {
    * multiClientAppointments; en la página de reservas llega ya con el valor efectivo (1 sin él).
    */
   peoplePerSession: number;
+  /**
+   * «Volver en» (spec 051): los días después de una cita Atendida en que le toca volver al paciente (7, 14, 30, 60,
+   * 90, 180 o 365). null: No.
+   */
+  returnAfterDays: number | null;
   isActive: boolean;
   createdAt: ISODateTime;
 }
@@ -768,7 +788,16 @@ export type EmailType =
   /** Al paciente: «Se liberó una hora», con «Reservar esta hora» (spec 047). Sin copia, y se descarta a las 3 horas. */
   | "waitlist_offer"
   /** Al paciente: «¿Cómo te fue en tu cita?», con las estrellas (spec 048). Sin copia, y se descarta a los 2 días en la cola. */
-  | "survey_request";
+  | "survey_request"
+  /** Al paciente: «Te toca tu control», el día que le toca volver (spec 051). Sin copia al profesional. */
+  | "control_reminder"
+  /** Al paciente: «Ganaste un premio», al desbloquear una recompensa de la tarjeta (spec 052). Con copia al profesional. */
+  | "loyalty_reward"
+  /**
+   * Al email de la ficha: «Tu cuenta quedó unida», cuando el consultorio une una cuenta de paciente a su ficha (spec
+   * 052): si no fue él, se entera y avisa. Sin copia al profesional: no es de una cita.
+   */
+  | "loyalty_linked";
 
 /**
  * Email generado por el sistema (tabla notifications). La API lo guarda "en cola" y lo
@@ -813,6 +842,8 @@ export type AuditEntityType =
   | "clinical_record"
   /** Las personas de la lista de espera (spec 047). */
   | "waitlist"
+  /** La tarjeta de fidelización: el programa, los beneficios, las recompensas y la unión de la cuenta (spec 052). */
+  | "loyalty"
   /** Inicios y cierres de sesión e intentos fallidos: sólo los ve el super admin. */
   | "session";
 
@@ -2295,6 +2326,37 @@ export type PublicWaitlistEntry =
     }
   | { closed: true; businessName: string; businessSlug: string };
 
+/* ----------------------------------------------------------- Recordatorio de control (spec 051) -- */
+
+/**
+ * Un control: le toca volver al paciente a un servicio. Sale de su última cita Atendida de ese servicio (`appointmentId`)
+ * más el «Volver en» del servicio. La hoja «Controles» de la Agenda y la ficha del paciente.
+ */
+export interface ControlReminder {
+  /** La cita Atendida de la que sale: identifica el control. */
+  appointmentId: string;
+  clientId: string;
+  clientName: string;
+  clientPhone: string;
+  serviceId: string;
+  serviceName: string;
+  professionalId: string;
+  professionalName: string;
+  /** La fecha de esa cita. */
+  lastDate: ISODate;
+  /** Cuándo le toca volver. */
+  dueOn: ISODate;
+  /** Cuándo se le escribió el email (null: todavía no). */
+  emailedAt: ISODateTime | null;
+}
+
+/** Lo que ve el paciente en /recordatorio/:token, para no recibir más recordatorios de control de ese negocio. */
+export interface PublicControlReminder {
+  businessName: string;
+  /** Ya pidió no recibirlos. */
+  optedOut: boolean;
+}
+
 /* ------------------------------------------------------- Encuesta después de la cita (spec 048) -- */
 
 /**
@@ -2352,4 +2414,274 @@ export interface DataExportSurvey {
   rating: number;
   comment: string;
   answeredAt: ISODateTime;
+}
+
+/* ------------------------------------------------------- Tarjeta de fidelización (spec 052) -- */
+
+/** Las redes del negocio: el enlace de cada una ('' = no la tiene). */
+export interface SocialLinks {
+  facebook: string;
+  instagram: string;
+  tiktok: string;
+}
+
+/** El ícono del sello que elige el negocio (se dibuja en cada casilla ganada). */
+export type StampIcon =
+  | "tooth"
+  | "brain"
+  | "heart"
+  | "leaf"
+  | "scissors"
+  | "sparkles"
+  | "hand"
+  | "droplet"
+  | "smile"
+  | "star"
+  | "paw"
+  | "stethoscope"
+  | "dumbbell";
+
+/** Al ganar el último beneficio: seguir sumando sellos o empezar una tarjeta nueva (y subir de nivel). */
+export type LoyaltyAfterLast = "keep" | "restart";
+
+export type LoyaltyBenefitKind = "percent" | "fixed" | "free_appointment" | "free_service" | "custom";
+
+/** «Vencida» se calcula con `expiresAt`; «Bloqueada» no es una recompensa (es un beneficio que aún no alcanza). */
+export type LoyaltyRewardStatus = "available" | "redeemed" | "expired" | "voided";
+
+/** El nivel: la tarjeta 1 es Clásica, la 2 Plata y de la 3 en adelante Oro. */
+export type LoyaltyLevel = "classic" | "silver" | "gold";
+
+/** El programa del negocio (uno por negocio). Apagado (`enabled` false) no suma sellos. */
+export interface LoyaltyProgram {
+  enabled: boolean;
+  /** Desde cuándo suman las citas Atendidas (null: apagado). */
+  enabledAt: ISODateTime | null;
+  name: string;
+  description: string;
+  stampIcon: StampIcon;
+  afterLast: LoyaltyAfterLast;
+}
+
+/** Un beneficio: lo que gana el paciente al llegar a `visitsRequired` citas Atendidas. */
+export interface LoyaltyBenefit {
+  id: string;
+  name: string;
+  description: string;
+  visitsRequired: number;
+  kind: LoyaltyBenefitKind;
+  /** Porcentaje (1 a 100) o valor fijo; null en los demás tipos. */
+  value: number | null;
+  /** El servicio de «Servicio gratis» (null en los demás o si se borró el servicio). */
+  serviceId: string | null;
+  serviceName: string | null;
+  conditions: string;
+  /** Vence a los N días de desbloquearse (null: no vence). */
+  validDays: number | null;
+  isActive: boolean;
+  /** Cuántas recompensas salieron de él: con alguna, «Eliminar» lo archiva. */
+  timesWon: number;
+}
+
+/** Una recompensa ganada, con la copia del beneficio tal como era al desbloquearse. */
+export interface LoyaltyReward {
+  id: string;
+  clientId: string;
+  clientName: string;
+  benefitId: string;
+  cardNumber: number;
+  name: string;
+  description: string;
+  kind: LoyaltyBenefitKind;
+  value: number | null;
+  serviceName: string;
+  conditions: string;
+  visitsRequired: number;
+  code: string;
+  unlockedAt: ISODateTime;
+  expiresAt: ISODateTime | null;
+  status: LoyaltyRewardStatus;
+  redeemedAt: ISODateTime | null;
+  redeemedByName: string | null;
+  redeemedAppointmentId: string | null;
+  voidedAt: ISODateTime | null;
+  voidedReason: string | null;
+}
+
+/** El próximo premio de una tarjeta: el beneficio activo siguiente y cuántas citas faltan. */
+export interface LoyaltyNext {
+  benefitId: string;
+  name: string;
+  visitsRequired: number;
+  missing: number;
+}
+
+/** La tarjeta de un paciente en el negocio, como la ve el equipo («Pacientes» de Fidelización). */
+export interface LoyaltyMember {
+  clientId: string;
+  clientName: string;
+  clientPhone: string;
+  cardNumber: number;
+  level: LoyaltyLevel;
+  /** Sellos de la tarjeta actual. */
+  stamps: number;
+  /** Sellos de todas sus tarjetas. */
+  totalStamps: number;
+  next: LoyaltyNext | null;
+  availableRewards: number;
+  /** Tiene cuenta de paciente unida a esta ficha. */
+  hasAccount: boolean;
+}
+
+/** El bloque «Tarjeta de fidelización» de la ficha: el programa, la tarjeta del paciente y sus recompensas. */
+export interface ClientLoyalty {
+  program: LoyaltyProgram;
+  /** null: todavía no tiene sellos ni cuenta unida en este negocio. */
+  card: LoyaltyMember | null;
+  rewards: LoyaltyReward[];
+  /**
+   * La cuenta de paciente de esta ficha: «linked», unida; «pending», hay una cuenta con el teléfono de la ficha que
+   * todavía no se unió (falta escanear su QR); «elsewhere», la cuenta de ese teléfono está unida a otra ficha de este
+   * negocio (un teléfono compartido); «none», no hay cuenta con su teléfono.
+   */
+  account: "linked" | "pending" | "elsewhere" | "none";
+}
+
+/** Las cifras de «Fidelización». */
+export interface LoyaltySummary {
+  participants: number;
+  stamps: number;
+  available: number;
+  redeemed: number;
+  expired: number;
+}
+
+/* -- La cuenta del paciente (spec 052): aparte de la del equipo; ve sólo sus tarjetas. -- */
+
+export interface PatientAccount {
+  id: string;
+  name: string;
+  /** +593…: con él entra. */
+  phone: string;
+  /** El QR: `${origen}/q/${qrToken}`. */
+  qrToken: string;
+  /** El último cambio de contraseña con un enlace del consultorio (el aviso al entrar). */
+  passwordReset: { businessName: string; at: ISODateTime } | null;
+  createdAt: ISODateTime;
+}
+
+/** Una recompensa como la ve el paciente. */
+export interface PatientReward {
+  id: string;
+  name: string;
+  description: string;
+  conditions: string;
+  visitsRequired: number;
+  code: string;
+  status: LoyaltyRewardStatus;
+  unlockedAt: ISODateTime;
+  expiresAt: ISODateTime | null;
+  redeemedAt: ISODateTime | null;
+}
+
+/** La tarjeta de un negocio, como la ve el paciente en «Mi tarjeta». */
+export interface PatientCard {
+  business: {
+    id: string;
+    name: string;
+    slug: string;
+    logoUrl: string | null;
+    brandColors: BrandColors | null;
+    socialLinks: SocialLinks;
+    timezone: string;
+  };
+  program: Pick<LoyaltyProgram, "name" | "description" | "stampIcon" | "afterLast">;
+  level: LoyaltyLevel;
+  cardNumber: number;
+  /** Sellos de la tarjeta actual. */
+  stamps: number;
+  /** Las casillas: hasta el último beneficio activo (5 como mínimo). */
+  slots: number;
+  /** Los beneficios activos, de menos a más citas. */
+  benefits: Pick<LoyaltyBenefit, "visitsRequired" | "name" | "description" | "conditions" | "validDays">[];
+  next: LoyaltyNext | null;
+  rewards: PatientReward[];
+  /** Sus visitas que sumaron (las más recientes primero, hasta 50). */
+  visits: { date: ISODate; serviceName: string }[];
+}
+
+/** Una cita de hoy que se puede marcar con el QR. */
+export interface ScanAppointment {
+  id: string;
+  clientId: string;
+  clientName: string;
+  serviceName: string;
+  professionalName: string;
+  startTime: TimeString;
+  status: AppointmentStatus;
+  /**
+   * El teléfono de la ficha es el de la cuenta (normalizado): la señal para elegir quién es al unir. El nombre no
+   * sirve: lo escribe el dueño de la cuenta (revisión de seguridad de la spec 052).
+   */
+  phoneMatches: boolean;
+  /** Es una sesión con varios pacientes: escanear a uno no la marca sola (se marca para todos con el botón). */
+  withOthers: boolean;
+  /**
+   * Al escanear, queda Atendida sola si es la única así: pendiente o confirmada, de un solo paciente y desde una hora
+   * antes de su inicio (decisión del dueño, 2026-11-16). Las demás, con «Marcar como atendida».
+   */
+  completesOnScan: boolean;
+}
+
+/**
+ * La invitación del consultorio a su tarjeta (el QR para sus pacientes, /mi-tarjeta?consultorio=<slug>): su nombre,
+ * su logo y sus colores para la página de entrar, y el nombre del programa si está encendido.
+ */
+export interface PatientInvite {
+  name: string;
+  logoUrl: string | null;
+  brandColors: BrandColors | null;
+  programName: string | null;
+}
+
+/** Una ficha del negocio con el mismo teléfono que la cuenta escaneada: se une sin cita de hoy. */
+export interface ScanClient {
+  clientId: string;
+  clientName: string;
+  /** Los 4 últimos caracteres de su cédula, para comprobar que es la persona (null: sin cédula). */
+  documentEnd: string | null;
+  /** La ficha ya está unida a otra cuenta: no se puede elegir. */
+  linkedToOther: boolean;
+  /** Una ficha inactiva no suma sellos: hay que activarla antes de unirla. */
+  isActive: boolean;
+}
+
+/**
+ * Lo que devuelve «Escanear»: si la cuenta todavía no está unida en el negocio, su nombre, las fichas con su mismo
+ * teléfono y las citas de hoy para elegir quién es; si ya está unida, el paciente y sus citas de hoy. Al escanear (o
+ * al unir), su única cita de hoy pendiente o confirmada queda atendida sola: `completedNow` (pedido del dueño).
+ */
+export type ScanResult =
+  | {
+      status: "unlinked";
+      accountName: string;
+      /** Los 4 últimos dígitos del teléfono de la cuenta, para comparar con la ficha. */
+      accountPhoneEnd: string;
+      phoneClients: ScanClient[];
+      appointments: ScanAppointment[];
+    }
+  | {
+      status: "linked";
+      clientId: string;
+      clientName: string;
+      appointments: ScanAppointment[];
+      /** La cita que este escaneo acaba de marcar como atendida (null: ninguna). */
+      completedNow: ScanAppointment | null;
+    };
+
+/** El enlace de un solo uso para que el paciente cree otra contraseña, con el teléfono para el WhatsApp. */
+export interface PatientResetLink {
+  url: string;
+  phone: string;
+  expiresAt: ISODateTime;
 }

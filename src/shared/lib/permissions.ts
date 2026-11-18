@@ -19,7 +19,11 @@ export type Permission =
   | "business.manage"
   | "team.manage"
   | "billing.manage"
-  | "audit.view";
+  | "audit.view"
+  /** Tarjeta de fidelización (spec 052): el programa, los beneficios y «Fidelización». */
+  | "loyalty.manage"
+  /** Canjear una recompensa de la tarjeta (spec 052): también Recepción, que atiende en el mostrador. */
+  | "loyalty.redeem";
 
 const ALL_PERMISSIONS: Permission[] = [
   "appointments.manage",
@@ -34,6 +38,8 @@ const ALL_PERMISSIONS: Permission[] = [
   "team.manage",
   "billing.manage",
   "audit.view",
+  "loyalty.manage",
+  "loyalty.redeem",
 ];
 
 const ROLE_PERMISSIONS: Record<BusinessRole, ReadonlySet<Permission>> = {
@@ -48,8 +54,10 @@ const ROLE_PERMISSIONS: Record<BusinessRole, ReadonlySet<Permission>> = {
     "schedule.manage",
     "reports.view",
     "audit.view",
+    "loyalty.manage",
+    "loyalty.redeem",
   ]),
-  staff: new Set(["appointments.manage", "clients.manage"]),
+  staff: new Set(["appointments.manage", "clients.manage", "loyalty.redeem"]),
   // Sólo sobre su propia agenda: la API filtra citas, pacientes, horario y reportes (ver agenda-scope).
   professional: new Set(["appointments.manage", "clients.manage", "schedule.manage", "reports.view"]),
 };

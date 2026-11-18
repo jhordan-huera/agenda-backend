@@ -12,6 +12,10 @@ import { clinicalService } from "../services/clinical-service.ts";
 import { clinicalTemplateService } from "../services/clinical-template-service.ts";
 import { clientImportService } from "../services/client-import-service.ts";
 import { requireUser } from "../services/context.ts";
+import { controlReminderService } from "../services/control-reminders.ts";
+import { loyaltyScanService } from "../services/loyalty-scan.ts";
+import { loyaltyService } from "../services/loyalty.ts";
+import { patientAccountService } from "../services/patient-accounts.ts";
 import { dataExportService } from "../services/data-export-service.ts";
 import {
   appointmentService,
@@ -472,6 +476,93 @@ businessRoutes.post(
 businessRoutes.post(
   "/:businessId/waitlist/:entryId/close",
   handle((req) => waitlistService.close(req.ctx, req.params.businessId, req.params.entryId, req.body)),
+);
+// Recordatorio de control (spec 051): la hoja «Controles» de la Agenda (o, con ?clientId, la ficha) y «Quitar».
+businessRoutes.get(
+  "/:businessId/control-reminders",
+  handle((req) => controlReminderService.list(req.ctx, req.params.businessId, { clientId: queryParam(req, "clientId") })),
+);
+businessRoutes.post(
+  "/:businessId/control-reminders/:appointmentId/remove",
+  handle((req) => controlReminderService.remove(req.ctx, req.params.businessId, req.params.appointmentId)),
+);
+// Tarjeta de fidelización (spec 052): el programa, los beneficios, «Pacientes», «Recompensas», las cifras, la tarjeta
+// de la ficha y el canje.
+businessRoutes.get(
+  "/:businessId/loyalty",
+  handle((req) => loyaltyService.program(req.ctx, req.params.businessId)),
+);
+businessRoutes.put(
+  "/:businessId/loyalty",
+  handle((req) => loyaltyService.saveProgram(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.get(
+  "/:businessId/loyalty/benefits",
+  handle((req) => loyaltyService.benefits(req.ctx, req.params.businessId)),
+);
+businessRoutes.post(
+  "/:businessId/loyalty/benefits",
+  handle((req) => loyaltyService.createBenefit(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.put(
+  "/:businessId/loyalty/benefits/:benefitId",
+  handle((req) => loyaltyService.updateBenefit(req.ctx, req.params.businessId, req.params.benefitId, req.body)),
+);
+businessRoutes.delete(
+  "/:businessId/loyalty/benefits/:benefitId",
+  handle((req) => loyaltyService.deleteBenefit(req.ctx, req.params.businessId, req.params.benefitId)),
+);
+businessRoutes.get(
+  "/:businessId/loyalty/members",
+  handle((req) => loyaltyService.members(req.ctx, req.params.businessId)),
+);
+businessRoutes.get(
+  "/:businessId/loyalty/rewards",
+  handle((req) =>
+    loyaltyService.rewards(req.ctx, req.params.businessId, {
+      clientId: queryParam(req, "clientId"),
+      benefitId: queryParam(req, "benefitId"),
+      status: queryParam(req, "status"),
+      code: queryParam(req, "code"),
+    }),
+  ),
+);
+businessRoutes.get(
+  "/:businessId/loyalty/summary",
+  handle((req) => loyaltyService.summary(req.ctx, req.params.businessId)),
+);
+businessRoutes.post(
+  "/:businessId/loyalty/rewards/:rewardId/redeem",
+  handle((req) => loyaltyService.redeem(req.ctx, req.params.businessId, req.params.rewardId, req.body)),
+);
+// «Escanear» el QR de la cuenta del paciente (spec 052): identificarlo, unir la cuenta a su ficha y marcar la cita.
+businessRoutes.post(
+  "/:businessId/scan",
+  handle((req) => loyaltyScanService.scan(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.post(
+  "/:businessId/scan/link",
+  handle((req) => loyaltyScanService.link(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.post(
+  "/:businessId/scan/new-client",
+  handle((req) => loyaltyScanService.newClient(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.post(
+  "/:businessId/scan/complete",
+  handle((req) => loyaltyScanService.complete(req.ctx, req.params.businessId, req.body)),
+);
+businessRoutes.post(
+  "/:businessId/clients/:clientId/patient-unlink",
+  handle((req) => loyaltyScanService.unlink(req.ctx, req.params.businessId, req.params.clientId)),
+);
+businessRoutes.post(
+  "/:businessId/clients/:clientId/patient-reset-link",
+  handle((req) => patientAccountService.resetLink(req.ctx, req.params.businessId, req.params.clientId)),
+);
+businessRoutes.get(
+  "/:businessId/clients/:clientId/loyalty",
+  handle((req) => loyaltyService.clientLoyalty(req.ctx, req.params.businessId, req.params.clientId)),
 );
 // «Por cobrar» (spec 046): el total de Inicio y «Marcar todas como pagadas» desde la ficha del paciente.
 businessRoutes.get(

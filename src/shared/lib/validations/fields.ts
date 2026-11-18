@@ -133,6 +133,36 @@ export const requiredPhoneField = z
   .transform(cleanPhone)
   .pipe(z.string().trim().min(1, "El teléfono es obligatorio").regex(/^[+\d][\d\s()-]{6,19}$/, "Ingresa un teléfono válido"));
 
+/**
+ * El teléfono en un solo formato, +<código de país><número> (spec 052: con él entra el paciente). «0991234567»,
+ * «099 123 4567» y «+593 99 123 4567» son el mismo. Sin prefijo, el del país (Ecuador, 593). null si no es un teléfono.
+ */
+export function normalizePhone(phone: string, callingCode = "593"): string | null {
+  const trimmed = phone.trim();
+  const digits = trimmed.replace(/\D/g, "");
+  let full: string;
+  if (trimmed.startsWith("+")) full = digits;
+  else if (digits.startsWith("00")) full = digits.slice(2);
+  else if (digits.startsWith(callingCode) && digits.length > 10) full = digits;
+  else full = callingCode + digits.replace(/^0+/, "");
+  // «+593 099…»: el 0 del número local no va después del código del país (como en comparablePhone).
+  if (full.startsWith(callingCode)) full = callingCode + full.slice(callingCode.length).replace(/^0+/, "");
+  return /^[1-9]\d{7,14}$/.test(full) ? `+${full}` : null;
+}
+
+/** El teléfono con el que entra el paciente, ya normalizado (+593…). */
+export const patientPhoneField = z
+  .string({ error: "Escribe tu teléfono" })
+  .max(30, "Ingresa un teléfono válido")
+  .transform((value, ctx) => {
+    const phone = normalizePhone(value);
+    if (!phone) {
+      ctx.addIssue({ code: "custom", message: "Ingresa un teléfono válido, por ejemplo 0991234567" });
+      return z.NEVER;
+    }
+    return phone;
+  });
+
 /** Contraseña de una cuenta (bcrypt sólo usa los primeros 72 bytes). */
 export const passwordField = z
   .string({ error: "Escribe una contraseña" })

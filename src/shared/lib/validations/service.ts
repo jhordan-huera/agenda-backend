@@ -1,5 +1,6 @@
 // Copia de agenda-front/src/lib/validations/service.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
+import { RETURN_AFTER_DAYS } from "../constants/business.ts";
 import { moneyField, optionalText, requiredText } from "./fields.ts";
 
 export const SERVICE_MODE_VALUES = ["business", "home", "virtual"] as const;
@@ -32,6 +33,16 @@ export const serviceSchema = z
      * por defecto: si no llega (un panel anterior, o un negocio sin habilitar), se conserva el guardado.
      */
     peoplePerSession: z.number().int().min(1).max(3).optional(),
+    /**
+     * «Volver en» (spec 051), en días; null: No. Sin valor por defecto: si no llega (un panel anterior), se conserva
+     * el guardado.
+     */
+    returnAfterDays: z
+      .number()
+      .int()
+      .refine((days) => RETURN_AFTER_DAYS.includes(days), "Elige cuándo le toca volver")
+      .nullable()
+      .optional(),
     isActive: z.boolean(),
   })
   .transform(({ location, modes, ...service }) => ({

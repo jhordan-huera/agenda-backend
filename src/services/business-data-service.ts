@@ -65,7 +65,8 @@ import {
 import { WITHOUT_NOTICE } from "./booking-alerts.ts";
 import { syncCalendarInvites } from "./calendar-invites.ts";
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
-import { isRescheduled, notifyAppointmentChange } from "./notifications.ts";
+import { mergeLoyalty, onAppointmentStatus } from "./loyalty.ts";
+import { isRescheduled, notifyAppointmentChange, notifyLoyaltyRewards } from "./notifications.ts";
 import { receiptPaths, removeReceiptFiles } from "./payment-service.ts";
 import { pendingPaymentSql } from "./pending-payments.ts";
 import { assertAppointmentLimit, assertClientLimit } from "./plan-limits.ts";
@@ -124,6 +125,32 @@ async function clientInputSchema(db: Db, businessId: string) {
     [businessId],
   );
   return clientSchemaFor(clientRequiredFieldsOf(business));
+}
+
+/**
+ * Crear una ficha desde el panel, con los datos obligatorios del negocio, la cédula sin repetir, el límite del plan y
+ * la actividad. La usan «Nuevo cliente» y «Paciente nuevo» de Escanear (spec 052, con el teléfono de la cuenta).
+ */
+export async function insertClient(db: Db, actor: Actor, businessId: string, input: unknown): Promise<Client> {
+  const data = parseInput(await clientInputSchema(db, businessId), input);
+  await assertValidClientDocument(db, await agendaScope(db, actor, businessId), businessId, data.documentId);
+  await assertClientLimit(db, businessId);
+  const client = (await one<Client>(
+    db,
+    `insert into clients (business_id, name, document_id, email, phone, address, notes, is_active, created_by)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     returning ${clientColumns()}`,
+    [businessId, data.name, data.documentId, data.email, data.phone, data.address, data.notes, data.isActive, actor.userId],
+  ))!;
+  await logAudit(db, {
+    businessId,
+    actor,
+    action: "client.created",
+    entityType: "client",
+    entityId: client.id,
+    summary: `Creó el cliente ${client.name}`,
+  });
+  return client;
 }
 
 export const clientService = {
@@ -233,25 +260,7 @@ export const clientService = {
   async create(ctx: RequestContext, businessId: string, input: unknown): Promise<Client> {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "clients.manage", { lock: true });
-      const data = parseInput(await clientInputSchema(db, businessId), input);
-      await assertValidClientDocument(db, await agendaScope(db, actor, businessId), businessId, data.documentId);
-      await assertClientLimit(db, businessId);
-      const client = (await one<Client>(
-        db,
-        `insert into clients (business_id, name, document_id, email, phone, address, notes, is_active, created_by)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         returning ${clientColumns()}`,
-        [businessId, data.name, data.documentId, data.email, data.phone, data.address, data.notes, data.isActive, actor.userId],
-      ))!;
-      await logAudit(db, {
-        businessId,
-        actor,
-        action: "client.created",
-        entityType: "client",
-        entityId: client.id,
-        summary: `Creó el cliente ${client.name}`,
-      });
-      return client;
+      return insertClient(db, actor, businessId, input);
     });
   },
 
@@ -405,6 +414,8 @@ export const clientService = {
           returning ${clientColumns()}`,
         [claimed.id, updateEmail, provisional.email, updatePhone, provisional.phone],
       ))!;
+      // Su tarjeta de fidelización, sus sellos y sus recompensas pasan a la ficha (spec 052).
+      await mergeLoyalty(db, businessId, clientId, claimed.id);
       await db.query("delete from clients where id = $1", [clientId]);
       // El evento de calendario de esas citas lleva ahora el nombre de la ficha (spec 027).
       await syncCalendarInvites(db, [
@@ -443,12 +454,14 @@ export const serviceService = {
       const actor = await authorize(db, ctx, businessId, "services.manage", { lock: true });
       const data = parseInput(serviceSchema, input);
       const people = (await canSetPeoplePerSession(db, businessId)) ? (data.peoplePerSession ?? 1) : 1;
+      const returnAfter = data.returnAfterDays ?? null;
+      // «Volver en» (spec 051) y desde cuándo vale: el email nunca sale por controles que ya habían vencido antes.
       const service = (await one<Service>(
         db,
         `insert into services
            (business_id, name, description, duration_minutes, price, show_price, modes, home_visit_fee,
-            is_active, people_per_session)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            is_active, people_per_session, return_after_days, return_after_since)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, case when $11::smallint is null then null else now() end)
          returning ${serviceColumns()}`,
         [
           businessId,
@@ -461,6 +474,7 @@ export const serviceService = {
           data.homeVisitFee,
           data.isActive,
           people,
+          returnAfter,
         ],
       ))!;
       await logAudit(db, {
@@ -485,11 +499,18 @@ export const serviceService = {
         data.peoplePerSession !== undefined && (await canSetPeoplePerSession(db, businessId))
           ? data.peoplePerSession
           : before.peoplePerSession;
+      // «Volver en» (spec 051): sin el campo (un panel anterior), el que tenía. Al ponerlo o cambiarlo, vale desde ahora.
+      const returnAfter = data.returnAfterDays === undefined ? before.returnAfterDays : data.returnAfterDays;
       const service = (await one<Service>(
         db,
         `update services
             set name = $2, description = $3, duration_minutes = $4, price = $5,
-                show_price = $6, modes = $7, home_visit_fee = $8, is_active = $9, people_per_session = $10
+                show_price = $6, modes = $7, home_visit_fee = $8, is_active = $9, people_per_session = $10,
+                return_after_since = case
+                  when $11::smallint is null then null
+                  when return_after_days is not distinct from $11::smallint then return_after_since
+                  else now() end,
+                return_after_days = $11
           where id = $1
           returning ${serviceColumns()}`,
         [
@@ -503,6 +524,7 @@ export const serviceService = {
           data.homeVisitFee,
           data.isActive,
           people,
+          returnAfter,
         ],
       ))!;
       const summary =
@@ -785,7 +807,10 @@ async function saveStatusChange(
   const appointment = await saveAppointment(db, updated, resetsSchedule(before, updated));
   // Confirmada (o atendida) por recepción, un administrador o el propietario: el paciente pasa a ser del profesional.
   await releaseClientAccess(db, actor, appointment.id);
+  // Tarjeta de fidelización (spec 052): el sello (o su anulación) antes del email, que dice cuántos lleva.
+  const unlocked = await onAppointmentStatus(db, before, appointment, actor);
   if (notifyPatient) await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
+  await notifyLoyaltyRewards(db, appointment, unlocked);
   // El calendario del profesional se pone al día también sin avisar al paciente (spec 027).
   await syncCalendarInvites(db, [appointment.id]);
   await logAudit(db, {
@@ -949,7 +974,10 @@ export const appointmentService = {
         ],
       ))!;
       const appointment = await saveExtraClients(db, inserted, extraClientIds, []);
+      // Una cita que se registra ya Atendida suma su sello (spec 052).
+      const unlocked = await onAppointmentStatus(db, null, appointment, actor);
       await notifyAppointmentChange(db, null, appointment, "dashboard", actor.userId);
+      await notifyLoyaltyRewards(db, appointment, unlocked);
       await syncCalendarInvites(db, [appointment.id]);
       await logAudit(db, {
         businessId,
@@ -1011,7 +1039,9 @@ export const appointmentService = {
       const saved = await saveAppointment(db, updated, resetsSchedule(before, updated));
       const appointment = await saveExtraClients(db, saved, extraClientIds, before.extraClientIds);
       await releaseClientAccess(db, actor, appointment.id);
+      const unlocked = await onAppointmentStatus(db, before, appointment, actor);
       await notifyAppointmentChange(db, before, appointment, "dashboard", actor.userId);
+      await notifyLoyaltyRewards(db, appointment, unlocked);
       // Sólo sale algo si cambió lo que se ve en el calendario (la huella): no por el precio ni las notas.
       await syncCalendarInvites(db, [appointment.id]);
 

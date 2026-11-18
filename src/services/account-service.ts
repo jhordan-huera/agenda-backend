@@ -22,6 +22,7 @@ import {
   onboardingSchema,
   professionalScopeSchema,
   profileSchema,
+  socialLinksSchema,
 } from "../shared/lib/validations/business.ts";
 import { weeklyScheduleSchema } from "../shared/lib/validations/schedule.ts";
 import { serviceSchema } from "../shared/lib/validations/service.ts";
@@ -252,7 +253,9 @@ export const businessService = {
       professionalScope,
       clientRequiredFields: _clientRequiredFields,
       multiClientAppointments: _multiClientAppointments,
+      loyaltyAllowed: _loyaltyAllowed,
       paymentReminders: _paymentReminders,
+      socialLinks,
       ...profile
     } = (input ?? {}) as Record<string, unknown>;
     const profileData = Object.keys(profile).length ? parseInput(businessProfileSchema.partial(), profile) : {};
@@ -262,6 +265,8 @@ export const businessService = {
     // undefined: no se tocan; null: vuelven los colores de Agenda360.
     const brand = brandColors === undefined ? undefined : parseInput(brandColorsSchema, brandColors);
     const scope = professionalScope === undefined ? null : parseInput(professionalScopeSchema, professionalScope);
+    // Las redes del negocio (spec 052): undefined, no se tocan.
+    const social = socialLinks === undefined ? null : parseInput(socialLinksSchema, socialLinks);
 
     const updated = await transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "business.manage", { lock: true });
@@ -302,6 +307,11 @@ export const businessService = {
         if (previous?.ownerId !== actor.userId) notifications.monthlyReport = previous?.notificationSettings.monthlyReport ?? true;
         values.push(notifications);
         assignments.push(`notification_settings = $${values.length}`);
+        // Recordatorio de control (spec 051): al encenderlo, desde cuándo vale (no se escribe por lo que ya había
+        // vencido); al apagarlo, sin fecha.
+        if (notifications.controlReminders !== (previous?.notificationSettings.controlReminders === true)) {
+          assignments.push(`control_reminders_since = ${notifications.controlReminders ? "now()" : "null"}`);
+        }
       }
       if (clinical !== null) {
         values.push(clinical);
@@ -314,6 +324,14 @@ export const businessService = {
       if (scope !== null) {
         values.push(scope);
         assignments.push(`professional_scope = $${values.length}`);
+      }
+      if (social !== null) {
+        values.push(social.facebook, social.instagram, social.tiktok);
+        assignments.push(
+          `facebook_url = $${values.length - 2}`,
+          `instagram_url = $${values.length - 1}`,
+          `tiktok_url = $${values.length}`,
+        );
       }
       const business = assignments.length
         ? await one<Business>(
@@ -334,7 +352,9 @@ export const businessService = {
               ? "los colores de la marca"
               : scope !== null
                 ? "qué pacientes ve cada profesional"
-                : "los datos del negocio";
+                : social !== null
+                  ? "las redes del negocio"
+                  : "los datos del negocio";
       await logAudit(db, {
         businessId,
         actor,

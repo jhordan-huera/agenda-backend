@@ -81,10 +81,13 @@ export function onlineBookingNotice(booking: OnlineBooking): BookingNotice {
   const emails = booking.emails
     .filter((email) => EMAIL_ROLES[email.type])
     .map((email) => `• ${EMAIL_ROLES[email.type]} → ${maskEmail(email.to)}${describeEmailStatus(email)}`);
+  // «online» en el título y el 🌐 (las del panel llevan 📅), para distinguirlas de un vistazo (pedido del dueño,
+  // 2026-11-16).
   return {
-    title: "Agenda360: nueva reserva",
+    title: "Agenda360: reserva online",
     message: [
       `${booking.businessName} · ${formatShortDate(booking.date)} ${booking.startTime}`,
+      "Hecha por el paciente en la página de reservas",
       ...patients,
       `${booking.serviceName} · ${booking.durationMinutes} min · ${booking.price > 0 ? formatPrice(booking.price, booking.currency) : "gratis"}`,
       [booking.professionalName && `Con ${booking.professionalName}`, PLACE_LABELS[booking.place]].filter(Boolean).join(" · "),
@@ -93,7 +96,7 @@ export function onlineBookingNotice(booking: OnlineBooking): BookingNotice {
       ...(emails.length > 0 ? ["Emails:", ...emails] : ["Sin emails (el negocio tiene apagadas las confirmaciones)."]),
     ].join("\n"),
     priority: 3,
-    tags: ["calendar"],
+    tags: ["globe_with_meridians"],
     click: `/admin/businesses/${booking.businessId}`,
   };
 }

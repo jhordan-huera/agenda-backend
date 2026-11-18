@@ -7,6 +7,7 @@ import { joinNames } from "../shared/lib/format.ts";
 import { addDaysISO, getZonedNow, type ZonedNow } from "../shared/lib/time.ts";
 import type { Appointment, BankAccount, Business, EmailType } from "../shared/types/index.ts";
 import { appointmentClientIds } from "./appointment-clients.ts";
+import { loyaltyProgressFor, type UnlockedReward } from "./loyalty.ts";
 import { newPatientEmailHold, publicEmailHold } from "./email-limits.ts";
 import { PASSWORD_MASK, scheduleEmailDelivery } from "./mailer.ts";
 import { isPaymentReminderDue, isPaymentReminderTime, type PaymentReminderCandidate } from "./payment-reminder-rules.ts";
@@ -39,6 +40,22 @@ export const waitlistUrl = (token: string) => `${appOrigin()}/lista-de-espera/${
 
 /** La encuesta después de la cita (spec 048): cada estrella del email le suma ?estrellas=N. */
 export const surveyUrl = (token: string) => `${appOrigin()}/encuesta/${token}`;
+
+/** Recordatorio de control (spec 051): la página para confirmar «No quiero recibir estos recordatorios». */
+/** «Mi tarjeta» (spec 052): la cuenta del paciente, con su QR y sus tarjetas. */
+export const patientCardUrl = () => `${appOrigin()}/mi-tarjeta`;
+
+export const controlReminderUrl = (token: string) => `${appOrigin()}/recordatorio/${token}`;
+
+/**
+ * «Reservar mi control» (spec 051): la página de reservas con el servicio y el profesional elegidos (la página sólo
+ * usa el profesional si atiende ese servicio y el negocio deja elegirlo).
+ */
+export const controlBookUrl = (slug: string, choice: { serviceId: string; professionalId: string }) =>
+  `${appOrigin()}/book/${encodeURIComponent(slug)}?${new URLSearchParams({
+    servicio: choice.serviceId,
+    profesional: choice.professionalId,
+  }).toString()}`;
 
 /**
  * «Reservar esta hora» (spec 047): la página de reservas con el servicio, el profesional, la fecha y la hora
@@ -413,6 +430,9 @@ export async function notifyAppointmentChange(
   const data = buildEmailData(context, after);
   const beforeIds = before ? appointmentClientIds(before) : [];
   const afterIds = appointmentClientIds(after);
+  // Tarjeta de fidelización (spec 052): en el email de seguimiento, el progreso de cada persona (ya con su sello).
+  const progress =
+    after.status === "completed" && before?.status !== "completed" ? await loyaltyProgressFor(db, business.id, afterIds) : new Map();
   const written = new Set<string>();
   let sentToClient = false;
   let copied: { message: ClientMessage; data: AppointmentEmailData } | null = null;
@@ -436,7 +456,16 @@ export async function notifyAppointmentChange(
       to: recipient.email,
       appointmentId: after.id,
       hold,
-      ...message.template({ ...emailData, ...own, appointmentPage, clientName: recipient.name }),
+      ...message.template({
+        ...emailData,
+        ...own,
+        appointmentPage,
+        clientName: recipient.name,
+        loyalty:
+          message.type === "appointment_completed" && progress.has(recipient.clientId)
+            ? { ...progress.get(recipient.clientId)!, cardUrl: patientCardUrl() }
+            : null,
+      }),
     });
     if (queued) {
       sentToClient = true;
@@ -511,6 +540,57 @@ export async function notifyAppointmentChange(
   // El paciente nunca crea ni mueve citas: desde «Tu cita» no hay cita nueva que avisarle al profesional.
   if (origin !== "patient_link") await notifyProfessional(db, context, before, after, origin, actorUserId, copiedTo);
   return sentToClient;
+}
+
+/**
+ * Tarjeta de fidelización (spec 052): «Ganaste un premio» a cada paciente de la cita que desbloqueó alguno, con el
+ * código, y su copia aparte al profesional, como los demás emails al paciente. Sale aunque se haya desmarcado «Avisar
+ * al paciente» del cambio de estado: es otro aviso.
+ */
+export async function notifyLoyaltyRewards(db: Db, appointment: Appointment, unlocked: UnlockedReward[]): Promise<void> {
+  if (unlocked.length === 0) return;
+  const context = await loadAppointmentContext(db, appointment);
+  if (!context) return;
+  const program = await one<{ name: string }>(db, "select name from loyalty_programs where business_id = $1", [appointment.businessId]);
+  const data = buildEmailData(context, appointment);
+  const written = new Set<string>();
+  let copy: { clientName: string; rewards: UnlockedReward[] } | null = null;
+  for (const recipient of context.recipients) {
+    const rewards = unlocked.filter((reward) => reward.clientId === recipient.clientId);
+    if (rewards.length === 0 || !recipient.email || written.has(emailKey(recipient.email))) continue;
+    written.add(emailKey(recipient.email));
+    const queued = await queueEmail(db, {
+      businessId: appointment.businessId,
+      type: "loyalty_reward",
+      to: recipient.email,
+      appointmentId: appointment.id,
+      ...emailTemplates.loyaltyReward({
+        ...data,
+        clientName: recipient.name,
+        programName: program?.name ?? "la tarjeta",
+        rewards,
+        cardUrl: patientCardUrl(),
+      }),
+    });
+    if (queued) copy ??= { clientName: recipient.name, rewards };
+  }
+  const copyTo = context.professionalCopyEmail;
+  if (copy && copyTo && !written.has(emailKey(copyTo))) {
+    await queueEmail(db, {
+      businessId: appointment.businessId,
+      type: "appointment_copy",
+      to: copyTo,
+      appointmentId: appointment.id,
+      ...emailTemplates.loyaltyReward({
+        ...data,
+        clientName: copy.clientName,
+        programName: program?.name ?? "la tarjeta",
+        rewards: copy.rewards,
+        cardUrl: patientCardUrl(),
+        professionalCopy: { agendaUrl: agendaUrlOf(appointment), pending: false },
+      }),
+    });
+  }
 }
 
 /* ------------------------------------------------ Citas que se repiten (spec 011) -- */

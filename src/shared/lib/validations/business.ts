@@ -1,6 +1,7 @@
 // Copia de agenda-front/src/lib/validations/business.ts: mantener ambos archivos iguales (sólo cambian las rutas de import).
 import { z } from "zod";
 import { DEFAULT_MAX_CLIENT_BOOKINGS_PER_DAY, isValidTimezone } from "../constants/business.ts";
+import { normalizeSocialLink } from "../constants/loyalty.ts";
 import { emailField, optionalEmailField, optionalText, phoneField, requiredText } from "./fields.ts";
 import { imageUrlField } from "./images.ts";
 
@@ -90,6 +91,27 @@ const hexColorField = z
   .toLowerCase()
   .regex(/^#[0-9a-f]{6}$/, "Escribe el color como #RRGGBB");
 
+/** Una red del negocio (spec 052): el enlace o el @usuario, guardado como enlace de esa red; vacío = no la tiene. */
+const socialLinkField = (network: "facebook" | "instagram" | "tiktok", label: string) =>
+  z
+    .string()
+    .max(200, `${label}: máximo 200 caracteres`)
+    .transform((value, ctx) => {
+      const url = normalizeSocialLink(network, value);
+      if (url === null) {
+        ctx.addIssue({ code: "custom", message: `Escribe tu usuario de ${label} (@usuario) o el enlace de tu página` });
+        return z.NEVER;
+      }
+      return url;
+    });
+
+/** Las redes del negocio: salen en la página de reservas y en la tarjeta del paciente, sólo las que tiene. */
+export const socialLinksSchema = z.object({
+  facebook: socialLinkField("facebook", "Facebook"),
+  instagram: socialLinkField("instagram", "Instagram"),
+  tiktok: socialLinkField("tiktok", "TikTok"),
+});
+
 /** Colores de marca; null vuelve a los de Agenda360. */
 export const brandColorsSchema = z.object({ primary: hexColorField, highlight: hexColorField }).nullable();
 
@@ -107,6 +129,8 @@ export const notificationSettingsSchema = z.object({
   monthlyReport: z.boolean().default(true),
   // Encuesta después de la cita (spec 048): apagada en los negocios guardados antes.
   surveys: z.boolean().default(false),
+  // Recordatorio de control (spec 051): apagado en los negocios guardados antes.
+  controlReminders: z.boolean().default(false),
 });
 
 /** Datos del negocio pedidos en el onboarding (pasos 1–3). */

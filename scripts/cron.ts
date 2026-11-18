@@ -58,6 +58,9 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   waitlist_joined: ["Alta en la lista de espera", "Altas en la lista de espera"],
   waitlist_offer: ["Hora libre para la lista de espera", "Horas libres para la lista de espera"],
   survey_request: ["Encuesta después de la cita", "Encuestas después de la cita"],
+  control_reminder: ["Recordatorio de control", "Recordatorios de control"],
+  loyalty_reward: ["Premio de la tarjeta", "Premios de la tarjeta"],
+  loyalty_linked: ["Cuenta unida a la tarjeta", "Cuentas unidas a la tarjeta"],
   booking_received: ["Aviso de nueva reserva (al negocio)", "Avisos de nueva reserva (al negocio)"],
   professional_new_appointment: ["Aviso de cita nueva (al profesional)", "Avisos de cita nueva (al profesional)"],
   appointment_copy: ["Copia al profesional", "Copias al profesional"],
@@ -218,10 +221,10 @@ export function buildBookingNotices(report: ScheduledTasksReport): Notice[] {
   const rest = (report.onlineBookings ?? 0) - notices.length;
   if (rest > 0) {
     notices.push({
-      title: "Agenda360: más reservas",
+      title: "Agenda360: más reservas online",
       message: `…y ${plural(rest, "reserva más", "reservas más")} por la página (detalle en el panel de cada negocio).`,
       priority: 3,
-      tags: ["calendar"],
+      tags: ["globe_with_meridians"],
       click: "/admin/businesses",
     });
   }
@@ -503,6 +506,7 @@ async function main(): Promise<void> {
       `Recordatorios: ${report.reminders} · invitaciones de calendario: ${report.calendarInvites ?? 0} · ` +
         `recordatorios de pago: ${report.paymentReminders ?? 0} · informes mensuales: ${report.monthlyReports ?? 0} · ` +
         `lista de espera: ${report.waitlistOffers ?? 0} · encuestas: ${report.surveyRequests ?? 0} · ` +
+        `controles: ${report.controlReminders ?? 0} · ` +
         `reservas por la página: ${report.onlineBookings ?? 0} · ` +
         `pacientes nuevos del panel: ${report.panelClients ?? 0} · citas del panel: ${report.panelAppointments ?? 0} · ` +
         `series del panel: ${report.panelSeries ?? 0} · series canceladas: ${report.seriesCancellations ?? 0} · ` +
