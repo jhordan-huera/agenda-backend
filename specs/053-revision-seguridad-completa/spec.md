@@ -4,7 +4,7 @@
 
 **Creada**: 2026-11-18
 
-**Estado**: Front publicado (2026-11-18, PR #66); backend en el PR #82
+**Estado**: Publicada (2026-11-18, PR back #82 y front #66)
 
 **Repos**:
 - **agenda-backend** (principal): el inicio de sesión del equipo, la 2FA, el canje, los archivos, los topes de cuerpo,

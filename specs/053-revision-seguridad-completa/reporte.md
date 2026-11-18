@@ -1,6 +1,6 @@
 # Reporte: Revisión de seguridad completa
 
-**Estado**: Front publicado (2026-11-18, PR #66); backend en el PR #82 · **Fecha**: 2026-11-18
+**Estado**: Publicada (2026-11-18, PR back #82 y front #66) · **Fecha**: 2026-11-18
 
 **Repos**: los dos · **Migración**: No
 
