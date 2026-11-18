@@ -12,6 +12,7 @@ import { agendaScope, assertAppointmentInScope, assertClientInScope, ownClientCo
 import { logAudit } from "./audit.ts";
 import { changeAppointmentStatus, insertClient } from "./business-data-service.ts";
 import { authorize, parseInput, type Actor, type RequestContext } from "./context.ts";
+import { assertLoyaltyAllowed } from "./loyalty.ts";
 import { patientCardUrl, queueEmail } from "./notifications.ts";
 
 /*
@@ -264,6 +265,7 @@ export const loyaltyScanService = {
     const { token } = parseInput(scanSchema, input);
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "appointments.manage", { lock: true });
+      await assertLoyaltyAllowed(db, businessId);
       const scope = await agendaScope(db, actor, businessId);
       const account = await accountByToken(db, token);
       const linked = await linkedClient(db, businessId, account.id);
@@ -280,6 +282,7 @@ export const loyaltyScanService = {
     const { token, appointmentId, clientId } = parseInput(scanLinkSchema, input);
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "appointments.manage", { lock: true });
+      await assertLoyaltyAllowed(db, businessId);
       const scope = await agendaScope(db, actor, businessId);
       const account = await accountByToken(db, token);
       if (!isUuid(clientId) || (appointmentId !== null && !isUuid(appointmentId))) {
@@ -320,6 +323,7 @@ export const loyaltyScanService = {
     const { token, client: fields } = parseInput(scanNewClientSchema, input);
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "clients.manage", { lock: true });
+      await assertLoyaltyAllowed(db, businessId);
       await authorize(db, ctx, businessId, "appointments.manage");
       const scope = await agendaScope(db, actor, businessId);
       const account = await accountByToken(db, token);
@@ -374,6 +378,7 @@ export const loyaltyScanService = {
     const { token, appointmentId } = parseInput(scanCompleteSchema, input);
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "appointments.manage", { lock: true });
+      await assertLoyaltyAllowed(db, businessId);
       const scope = await agendaScope(db, actor, businessId);
       const account = await accountByToken(db, token);
       const linked = await linkedClient(db, businessId, account.id);

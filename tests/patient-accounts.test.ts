@@ -61,6 +61,15 @@ const today = (clientId: string, agenda = ricardoAgenda, status = "confirmed") =
   }
   throw new Error("No quedó una hora libre para la cita de prueba");
 };
+// La tarjeta sólo en los negocios que habilita el super admin (migración 060): sin habilitar, ni «Escanear» ni la
+// invitación del QR; aquí se habilita en los dos negocios de la prueba.
+console.log("Sin la tarjeta habilitada (migración 060)");
+ok((await ricardo("POST", `${B}/scan`, { token: "0".repeat(32) })).status === 403, "«Escanear» no responde");
+ok((await browser()("GET", `/patient/invite/${slug}`)).status === 404, "ni la invitación de su QR");
+const admin = await as("admin@demo.com");
+for (const id of [businessId, laura.session.businessId]) {
+  if ((await admin("PUT", `/admin/businesses/${id}/loyalty-allowed`, { enabled: true })).status !== 200) throw new Error("No se pudo habilitar la tarjeta");
+}
 const auditCount = (action: string) => count(`select count(*) from audit_logs where business_id = '${businessId}' and action = '${action}'`);
 
 /* ======================================================================================== */

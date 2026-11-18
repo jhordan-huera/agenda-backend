@@ -253,6 +253,7 @@ export const businessService = {
       professionalScope,
       clientRequiredFields: _clientRequiredFields,
       multiClientAppointments: _multiClientAppointments,
+      loyaltyAllowed: _loyaltyAllowed,
       paymentReminders: _paymentReminders,
       socialLinks,
       ...profile

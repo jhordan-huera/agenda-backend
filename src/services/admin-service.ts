@@ -990,6 +990,43 @@ export const adminService = {
   },
 
   /**
+   * La tarjeta de fidelización de un negocio (spec 052, pedido del dueño 2026-11-18): sólo el super admin la habilita;
+   * queda en la actividad del negocio. Al quitarla también se apaga el programa: deja de sumar sellos y sus pacientes
+   * dejan de ver la tarjeta. Los sellos, los premios y las cuentas unidas se guardan; lo ya ganado se canjea desde la
+   * ficha. Volver a habilitarla no la enciende: lo hace el propietario.
+   */
+  async setLoyaltyAllowed(ctx: RequestContext, businessId: string, value: unknown): Promise<Business> {
+    const actor = authorizeSuperAdmin(ctx);
+    const enabled = parseInput(z.boolean({ error: "Indica si el negocio puede tener la tarjeta de fidelización" }), value);
+    return transaction(async (db) => {
+      const current = await findBusiness(db, businessId, true);
+      if (current.loyaltyAllowed === enabled) return current;
+      const business = (await one<Business>(
+        db,
+        `update businesses set loyalty_allowed = $2 where id = $1 returning ${businessColumns()}`,
+        [businessId, enabled],
+      ))!;
+      const turnedOff = enabled
+        ? 0
+        : ((await db.query("update loyalty_programs set enabled_at = null, updated_at = now() where business_id = $1 and enabled_at is not null", [businessId]))
+            .rowCount ?? 0);
+      const label = (on: boolean) => (on ? "Sí" : "No");
+      await logAudit(db, {
+        businessId,
+        actor,
+        action: "platform.loyalty_allowed_changed",
+        entityType: "business",
+        entityId: businessId,
+        summary: enabled
+          ? `Habilitó la tarjeta de fidelización en ${business.name}`
+          : `Quitó la tarjeta de fidelización de ${business.name}${turnedOff ? " (estaba encendida: se apagó)" : ""}`,
+        changes: [{ label: "Tarjeta de fidelización", before: label(current.loyaltyAllowed), after: label(enabled) }],
+      });
+      return business;
+    });
+  },
+
+  /**
    * «Pedir el comprobante de pago» de un negocio (spec 039): `{ enabled, days }`. Sólo el super admin, desde la
    * ficha del negocio en /admin; el negocio no lo cambia (ni el super admin en modo soporte desde su panel: lo
    * ignora account-service). Los recordatorios salen siempre antes de la cita, en los días que elige aquí, que

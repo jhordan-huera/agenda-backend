@@ -325,6 +325,10 @@ canjeadas de un beneficio y encuentra a los pacientes a los que les falta una ci
   historial de la tarjeta, no en la actividad.
 - **RF-026:** Los textos que hoy prometen «sin cuenta» DEBEN decir la verdad: reservar sigue sin cuenta y la cuenta es
   sólo para la tarjeta. La página de privacidad DEBE explicar la cuenta del paciente y sus datos.
+- **RF-027:** La tarjeta DEBE existir sólo en los negocios que habilite el super admin (migración 060); el negocio no
+  puede habilitarla. Sin ella no hay «Fidelización», «Escanear» ni «QR para tus pacientes», y la API lo rechaza. Al
+  quitarla, el programa se apaga y se guardan los sellos, los premios y las cuentas unidas (cambio del 2026-11-18).
+
 
 ### Entidades
 
@@ -446,3 +450,6 @@ canjeadas de un beneficio y encuentra a los pacientes a los que les falta una ci
 16. **La contraseña puede ser un PIN de 4 números,** con el bloqueo creciente (2026-11-16).
 17. **El QR para los pacientes (2026-11-16):** el consultorio descarga una lámina con un QR a «Mi tarjeta» con su
     nombre, con su logo en el centro (o el de Agenda360 si no tiene), y la comparte por WhatsApp o la imprime.
+18. **Sólo en los negocios que habilite el super admin (2026-11-18):** apagada en todos al empezar; el negocio no la
+    habilita. Al quitarla se apaga todo (sin «Fidelización», «Escanear» ni sellos; sus pacientes dejan de verla) y se
+    guarda lo ganado, que se canjea desde la ficha.

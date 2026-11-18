@@ -170,8 +170,11 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   toquen varios, y nunca por lo que ya había vencido al encenderlo o al poner «Volver en» en el servicio. Lleva
   «Reservar mi control» (la página de reservas con el servicio elegido) y «No quiero recibir estos recordatorios»
   (por negocio, se confirma en /recordatorio/:token). Sin copia al profesional. Se borran con el paciente.
-- La tarjeta de fidelización (spec 052, 2026-11-16): cada negocio tiene un programa (apagado al principio; lo
-  configuran el propietario y los administradores en «Fidelización»), con su nombre, el ícono del sello, qué pasa al
+- La tarjeta de fidelización (spec 052, 2026-11-16): sólo en los negocios que el super admin habilite con su
+  interruptor (2026-11-18, migración 060); el negocio no lo cambia. Al quitarla se apaga todo (sin «Fidelización»,
+  «Escanear» ni sellos; sus pacientes dejan de verla) y se guarda lo ganado, que se canjea desde la ficha. Cada negocio
+  habilitado tiene un programa (apagado al principio; lo configuran el propietario y los administradores en
+  «Fidelización»), con su nombre, el ícono del sello, qué pasa al
   ganar el último beneficio («Seguir sumando» o «Empezar una tarjeta nueva», que sube de nivel: Clásica, Plata y Oro)
   y tantos beneficios como quiera (citas necesarias, tipo, valor, condiciones y «vence a los N días»). Cada cita que
   pasa a Atendida desde que se encendió, por cualquier camino, suma un sello a cada paciente activo de la cita, una
@@ -181,11 +184,16 @@ Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
   propietario, los administradores y Recepción, una sola vez; en una cita sin pagar, el descuento baja su precio (con
   la actividad). El email «Ganaste un premio» (sin el servicio en el asunto) lleva copia aparte al profesional.
 - La cuenta del paciente (spec 052, 2026-11-16): opcional y sólo para la tarjeta (reservar sigue sin cuenta). Entra
-  con su teléfono (+593…) y una contraseña, en /mi-tarjeta, con su propia cookie y sus rutas (/api/patient): una
-  sesión de paciente nunca entra al panel. Su QR (un enlace /q/:token, que puede cambiar) lo escanea el equipo en el
-  panel: la primera vez en un negocio, eligiendo entre las citas de hoy que puede ver quién es el paciente, y la cuenta
-  queda unida a esa ficha. Ese escaneo en persona es la verificación: con sólo registrarse con un teléfono, nadie ve
-  nada de un negocio (se mantiene la regla de la spec 050). Después, el QR marca como Atendida la cita de hoy. La
+  con su teléfono (+593…) y una contraseña o un PIN de 4 números (sin los fáciles y con bloqueo creciente: desde el
+  5.º fallo, 15 minutos que se duplican hasta 24 horas), en /mi-tarjeta, con su propia cookie y sus rutas
+  (/api/patient): una sesión de paciente nunca entra al panel. Su QR (un enlace /q/:token, que puede cambiar) lo
+  escanea el equipo en el panel; si llega como enlace, alguien confirma antes que el paciente está ahí. La primera vez
+  en un negocio se elige quién es (la ficha activa con su mismo teléfono, la de una cita de hoy que puede ver o una
+  ficha nueva con el teléfono de la cuenta) y la cuenta queda unida a esa ficha, con el aviso «Tu cuenta quedó unida» al
+  email de la ficha. Ese escaneo en persona es la verificación: con sólo registrarse con un teléfono, nadie ve nada de
+  un negocio (se mantiene la regla de la spec 050). Al escanear, su cita de hoy queda Atendida sola si es la única
+  pendiente o confirmada, de un solo paciente y desde una hora antes de su inicio; las demás, con un toque. El
+  consultorio comparte un QR a /mi-tarjeta con su nombre y su logo para que sus pacientes creen la cuenta. La
   contraseña olvidada la resuelve el consultorio con un enlace de un solo uso por WhatsApp (24 horas, con la
   actividad y un aviso al paciente). El paciente ve sólo sus tarjetas, nunca datos de otros ni nada clínico, y puede
   eliminar su cuenta (el negocio conserva la ficha y los sellos).
@@ -450,4 +458,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.50.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-16
+**Versión**: 1.51.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-18

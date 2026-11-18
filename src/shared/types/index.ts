@@ -209,6 +209,11 @@ export interface Business {
    */
   multiClientAppointments: boolean;
   /**
+   * La tarjeta de fidelización (spec 052): sólo en los negocios que habilita el super admin (migración 060); el
+   * negocio no lo cambia. Sin ella no hay «Fidelización», «Escanear» ni «QR para tus pacientes».
+   */
+  loyaltyAllowed: boolean;
+  /**
    * «Pedir el comprobante de pago» (spec 039): recordatorios diarios por email al paciente para que suba
    * el comprobante de su cita. Lo activa el super admin para cada negocio; el negocio no lo cambia. Un
    * backend anterior no lo manda: el panel lo trata como apagado.

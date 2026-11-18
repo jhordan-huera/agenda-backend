@@ -267,7 +267,7 @@ export const patientAccountService = {
       `select b.name, b.logo_url as "logoUrl", b.brand_colors as "brandColors",
               case when p.enabled_at is not null then p.name end as "programName"
          from businesses b left join loyalty_programs p on p.business_id = b.id
-        where b.slug = $1 and b.status = 'active'`,
+        where b.slug = $1 and b.status = 'active' and b.loyalty_allowed`,
       [slug],
     );
   },

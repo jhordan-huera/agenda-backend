@@ -324,6 +324,11 @@ adminRoutes.put(
   "/businesses/:businessId/client-required-fields",
   handle((req) => adminService.setClientRequiredFields(req.ctx, req.params.businessId, req.body)),
 );
+// La tarjeta de fidelización en el negocio (spec 052): { enabled: boolean }.
+adminRoutes.put(
+  "/businesses/:businessId/loyalty-allowed",
+  handle((req) => adminService.setLoyaltyAllowed(req.ctx, req.params.businessId, req.body?.enabled)),
+);
 // Citas con varios pacientes en el negocio: { enabled: boolean }.
 adminRoutes.put(
   "/businesses/:businessId/multi-client-appointments",

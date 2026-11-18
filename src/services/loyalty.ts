@@ -9,6 +9,7 @@ import {
   normalizeRewardCode,
   priceAfterReward,
   REWARD_CODE_ALPHABET,
+  LOYALTY_NOT_ALLOWED_MESSAGE,
   STAMP_ICONS,
 } from "../shared/lib/constants/loyalty.ts";
 import { formatCurrency } from "../shared/lib/format.ts";
@@ -463,10 +464,20 @@ function programChanges(before: LoyaltyProgram, after: LoyaltyProgram): AuditCha
   return changes;
 }
 
+/**
+ * La tarjeta sólo en los negocios que habilitó el super admin (migración 060). La ficha (su bloque y canjear lo ya
+ * ganado) no pasa por aquí: después de quitarla, lo ganado se puede canjear.
+ */
+export async function assertLoyaltyAllowed(db: Db, businessId: string): Promise<void> {
+  const row = await one<{ allowed: boolean }>(db, "select loyalty_allowed as allowed from businesses where id = $1", [businessId]);
+  if (!row?.allowed) throw new AppError("forbidden", LOYALTY_NOT_ALLOWED_MESSAGE);
+}
+
 export const loyaltyService = {
   /** «Fidelización»: el programa (apagado y con los valores de siempre si nunca se guardó). */
   async program(ctx: RequestContext, businessId: string): Promise<LoyaltyProgram> {
     await authorize(pool, ctx, businessId, "loyalty.manage");
+    await assertLoyaltyAllowed(pool, businessId);
     return programOf(pool, businessId);
   },
 
@@ -474,6 +485,7 @@ export const loyaltyService = {
     const data = parseInput(loyaltyProgramSchema, input);
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "loyalty.manage", { lock: true });
+      await assertLoyaltyAllowed(db, businessId);
       const before = await programOf(db, businessId);
       const after = (await one<LoyaltyProgram>(
         db,
@@ -509,6 +521,7 @@ export const loyaltyService = {
 
   async benefits(ctx: RequestContext, businessId: string): Promise<LoyaltyBenefit[]> {
     await authorize(pool, ctx, businessId, "loyalty.manage");
+    await assertLoyaltyAllowed(pool, businessId);
     return benefitsOf(pool, businessId);
   },
 
@@ -516,6 +529,7 @@ export const loyaltyService = {
     const data = parseInput(loyaltyBenefitSchema, input);
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "loyalty.manage", { lock: true });
+      await assertLoyaltyAllowed(db, businessId);
       await assertServiceOf(db, businessId, data.serviceId);
       const { id } = await saveBenefit(data.visitsRequired, async () =>
         (await one<{ id: string }>(
@@ -544,6 +558,7 @@ export const loyaltyService = {
     const data = parseInput(loyaltyBenefitSchema, input);
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "loyalty.manage", { lock: true });
+      await assertLoyaltyAllowed(db, businessId);
       const before = isUuid(benefitId) ? (await benefitsOf(db, businessId)).find((item) => item.id === benefitId) : undefined;
       if (!before) throw new AppError("not_found", NOT_FOUND);
       await assertServiceOf(db, businessId, data.serviceId);
@@ -578,6 +593,7 @@ export const loyaltyService = {
   async deleteBenefit(ctx: RequestContext, businessId: string, benefitId: string): Promise<{ archived: boolean }> {
     return transaction(async (db) => {
       const actor = await authorize(db, ctx, businessId, "loyalty.manage", { lock: true });
+      await assertLoyaltyAllowed(db, businessId);
       const benefit = isUuid(benefitId) ? (await benefitsOf(db, businessId)).find((item) => item.id === benefitId) : undefined;
       if (!benefit) throw new AppError("not_found", NOT_FOUND);
       const archived = benefit.timesWon > 0;
@@ -635,6 +651,7 @@ export const loyaltyService = {
   /** «Pacientes» de Fidelización: los de menos citas por faltar primero. */
   async members(ctx: RequestContext, businessId: string): Promise<LoyaltyMember[]> {
     await authorize(pool, ctx, businessId, "loyalty.manage");
+    await assertLoyaltyAllowed(pool, businessId);
     const members = await membersOf(pool, businessId, null);
     return members
       .filter((member) => member.totalStamps > 0 || member.hasAccount)
@@ -653,6 +670,7 @@ export const loyaltyService = {
     query: { clientId?: string; benefitId?: string; status?: string; code?: string },
   ): Promise<LoyaltyReward[]> {
     await authorize(pool, ctx, businessId, "loyalty.manage");
+    await assertLoyaltyAllowed(pool, businessId);
     const statuses: LoyaltyRewardStatus[] = ["available", "redeemed", "expired", "voided"];
     const status = statuses.includes(query.status as LoyaltyRewardStatus) ? query.status : null;
     const code = query.code ? normalizeRewardCode(query.code) : null;
@@ -673,6 +691,7 @@ export const loyaltyService = {
 
   async summary(ctx: RequestContext, businessId: string): Promise<LoyaltySummary> {
     await authorize(pool, ctx, businessId, "loyalty.manage");
+    await assertLoyaltyAllowed(pool, businessId);
     return (await one<LoyaltySummary>(
       pool,
       `select (select count(distinct s.client_id) from loyalty_stamps s where s.business_id = $1 and s.voided_at is null)::int as participants,

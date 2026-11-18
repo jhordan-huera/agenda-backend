@@ -9,7 +9,7 @@
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { checks, count, login, sql } from "./helpers/harness.ts";
 import { addDaysISO } from "../src/shared/lib/time.ts";
-import type { ClientLoyalty, LoyaltyBenefit, LoyaltyMember, LoyaltyProgram, LoyaltyReward, LoyaltySummary } from "../src/shared/types/index.ts";
+import type { Business, ClientLoyalty, LoyaltyBenefit, LoyaltyMember, LoyaltyProgram, LoyaltyReward, LoyaltySummary } from "../src/shared/types/index.ts";
 
 const { ok, done } = checks();
 
@@ -77,8 +77,22 @@ const program = (body: Partial<LoyaltyProgram>) =>
   ricardo("PUT", `${B}/loyalty`, { enabled: false, name: "Club Sonrisa", description: "", stampIcon: "tooth", afterLast: "keep", ...body });
 
 /* ======================================================================================== */
-console.log("El programa");
+console.log("Sólo en los negocios que habilita el super admin (migración 060)");
+const admin = await as("admin@demo.com"); // super admin
+const ALLOW = `/admin/businesses/${businessId}/loyalty-allowed`;
+const allowed = () => sql(`select loyalty_allowed from businesses where id = '${businessId}'`) === "t";
 let r = await ricardo("GET", `${B}/loyalty`);
+ok(r.status === 403 && JSON.stringify(r.body).includes("no está habilitada"), "sin habilitar, «Fidelización» no responde", r.body);
+ok((await ricardo("GET", `${B}/loyalty/summary`)).status === 403, "ni sus cifras");
+await ricardo("PATCH", B, { loyaltyAllowed: true });
+ok(!allowed(), "el negocio no se la habilita solo al guardar su configuración");
+ok((await ricardo("PUT", ALLOW, { enabled: true })).status === 403, "ni por la ruta del super admin");
+r = await admin("PUT", ALLOW, { enabled: true });
+ok(r.status === 200 && (r.body as Business).loyaltyAllowed === true && allowed(), "el super admin la habilita", r.body);
+ok(auditCount("platform.loyalty_allowed_changed") === 1, "con la actividad del negocio");
+
+console.log("\nEl programa");
+r = await ricardo("GET", `${B}/loyalty`);
 ok(r.status === 200 && (r.body as LoyaltyProgram).enabled === false, "apagado al empezar", r.body);
 ok((await elena("GET", `${B}/loyalty`)).status === 403 && (await valeria("GET", `${B}/loyalty`)).status === 403, "Recepción y el Profesional no lo ven");
 ok((await elena("PUT", `${B}/loyalty`, { enabled: true, name: "Club", description: "", stampIcon: "star", afterLast: "keep" })).status === 403, "ni lo configuran");
@@ -253,6 +267,24 @@ ok((await elena("GET", `${B}/loyalty/summary`)).status === 403, "Recepción no v
 console.log("\nBorrar el paciente");
 r = await ricardo("DELETE", `${B}/clients/${bea.id}`);
 ok(r.status === 204 && count(`select count(*) from loyalty_stamps where client_id = '${bea.id}'`) === 0 && count(`select count(*) from loyalty_rewards where client_id = '${bea.id}'`) === 0, "se borran sus sellos y sus recompensas", r.status);
+
+console.log("\nAl quitarla (el super admin), se apaga todo y se guarda lo ganado");
+const karla = patient("Karla Guardado");
+const karlaVisit = appointment(karla.id);
+await complete(karlaVisit);
+const karlaStamps = stampsOf(karla.id);
+await ricardo("PUT", `${B}/loyalty`, { enabled: true, name: "Club Sonrisa", description: "", stampIcon: "tooth", afterLast: "keep" });
+r = await admin("PUT", ALLOW, { enabled: false });
+ok(r.status === 200 && !allowed() && sql(`select enabled_at is null from loyalty_programs where business_id = '${businessId}'`) === "t", "la quita y el programa queda apagado", r.body);
+ok(auditCount("platform.loyalty_allowed_changed") === 2, "con la actividad");
+ok((await ricardo("GET", `${B}/loyalty/members`)).status === 403 && (await ricardo("PUT", `${B}/loyalty`, { enabled: true, name: "Club Sonrisa", description: "", stampIcon: "tooth", afterLast: "keep" })).status === 403, "el propietario ya no la ve ni la enciende");
+const afterOff = appointment(karla.id);
+await complete(afterOff);
+ok(stampsOf(karla.id) === karlaStamps && karlaStamps > 0, "una cita atendida ya no suma, y los sellos de antes se guardan", { karlaStamps, now: stampsOf(karla.id) });
+r = await ricardo("GET", `${B}/clients/${karla.id}/loyalty`);
+ok(r.status === 200 && (r.body as ClientLoyalty).program.enabled === false, "la ficha sigue mostrando lo ganado (para canjearlo)", r.body);
+r = await admin("PUT", ALLOW, { enabled: true });
+ok(r.status === 200 && sql(`select enabled_at is null from loyalty_programs where business_id = '${businessId}'`) === "t", "habilitarla otra vez no la enciende: lo hace el propietario");
 
 done("de la tarjeta de fidelización");
 process.exit();

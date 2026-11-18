@@ -2,9 +2,9 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev (sin PR a `main` hasta que el dueño lo pida) · **Fecha**: 2026-11-16
+**Estado**: Implementada en dev; en el PR de `dev` a `main` del 2026-11-18 (antes, las migraciones 059 y 060) · **Fecha**: 2026-11-16
 
-**Repos**: los dos · **Migración**: Sí: `059_tarjeta_de_fidelizacion.sql` (después de la 058)
+**Repos**: los dos · **Migración**: Sí: `059_tarjeta_de_fidelizacion.sql` y `060_tarjeta_por_negocio.sql` (después de la 058)
 
 ## Resumen
 
@@ -151,6 +151,21 @@ El dueño pidió corregir todo «según como sea mejor»; se aplicaron las tres 
   reservas usan la dirección pública del sitio en lo que se publica (`src/lib/public-url.ts`).
 - Las citas de prueba ya no dependen de la hora a la que se corre la suite.
 
+## Sólo en los negocios que habilite el super admin (2026-11-18)
+
+Pedido del dueño: la tarjeta sólo para los negocios que la soliciten, y sólo el super admin la habilita. Migración 060
+(`businesses.loyalty_allowed`, apagada en todos; la conservan los que ya la tenían encendida, sólo en bases de prueba).
+
+- Super admin → el negocio → Ajustes → «Tarjeta de fidelización» (`PUT /admin/businesses/:id/loyalty-allowed`, en la
+  actividad del negocio). El negocio no puede cambiarlo.
+- Sin ella: sin «Fidelización», «Escanear» ni «QR para tus pacientes» (el menú, los botones y las páginas lo dicen); la
+  API responde 403 en el programa, los beneficios, las cifras y Escanear, y 404 en la invitación del QR.
+- Al quitarla (decisión del dueño, «se apaga todo»): también se apaga el programa, deja de sumar sellos y sus pacientes
+  dejan de ver la tarjeta. Los sellos, los premios y las cuentas unidas se guardan; lo ya ganado se canjea desde la ficha.
+  Volver a habilitarla no la enciende: lo hace el propietario.
+- Pruebas: tests/loyalty.test.ts («Sólo en los negocios que habilita el super admin» y «Al quitarla») y
+  tests/patient-accounts.test.ts; recorrido en el navegador del super admin y del propietario.
+
 ## Pendientes y riesgos
 
 - **Queda (bajo):** alguien puede registrar primero el teléfono de otra persona.
@@ -197,7 +212,8 @@ El dueño pidió corregir todo «según como sea mejor»; se aplicaron las tres 
 
 ## Cómo publicarlo (cuando el dueño lo pida)
 
-1. Aplicar en producción la migración 058 (si todavía no está) y después la 059.
+1. Aplicar en producción la migración 058 (si todavía no está), después la 059 y después la 060.
 2. Abrir el PR de `dev` a `main` del backend y después el del front.
-3. Todo sale apagado: cada negocio enciende su tarjeta en «Fidelización».
+3. Todo sale apagado: el super admin habilita la tarjeta en los negocios que la pidan (Negocios → el negocio →
+   Ajustes → «Tarjeta de fidelización») y cada uno la enciende en «Fidelización».
 4. Después de publicar, probar «Escanear» en un iPhone (Safari usa el lector de respaldo).

@@ -95,3 +95,6 @@ Rutas: back/ = agenda-backend, front/ = agenda-front
 - [X] T033 Segunda revisión: el toque para los QR por enlace, la ventana de una hora y las sesiones con varios
   pacientes, el email `loyalty_linked`, `checkPassword` atómico (también al cambiar la contraseña y al eliminar la
   cuenta), `normalizePhone`, fichas inactivas, la dirección pública de los QR y sus pruebas.
+- [X] T034 Sólo en los negocios que habilite el super admin: back/db/migrations/060_tarjeta_por_negocio.sql,
+  `adminService.setLoyaltyAllowed` y su ruta, `assertLoyaltyAllowed` (Fidelización y Escanear), la invitación; front:
+  `LoyaltyAllowedCard` en el panel del super admin, `RequireLoyalty`, el menú y los botones «Escanear»; sus pruebas.

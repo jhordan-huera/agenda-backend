@@ -46,6 +46,7 @@ const businessOwnColumns = columns({
   professionalScope: "professional_scope",
   clientRequiredFields: "client_required_fields",
   multiClientAppointments: "multi_client_appointments",
+  loyaltyAllowed: "loyalty_allowed",
   createdAt: "created_at",
 });
 

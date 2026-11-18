@@ -82,6 +82,9 @@ const QR_TOKEN = /^[0-9a-f]{32}$/;
 
 export const patientQrUrl = (origin: string, token: string) => `${origin.replace(/\/+$/, "")}/q/${token}`;
 
+/** La tarjeta no está habilitada en el negocio (sólo la habilita el super admin, migración 060). */
+export const LOYALTY_NOT_ALLOWED_MESSAGE = "La tarjeta de fidelización no está habilitada en tu negocio. Si la quieres, pídela a Agenda360.";
+
 /**
  * Al escanear, una cita queda atendida sola desde una hora antes de su inicio (decisión del dueño, 2026-11-16): así
  * no se marca una de las 16:00 si el paciente pasa a las 10:00. `nowMinutes`: los minutos desde la medianoche, en la
