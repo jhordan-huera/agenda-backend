@@ -3,9 +3,9 @@
 // otro no ve nada, la unión sólo por escaneo y dentro de las citas que el usuario puede ver, el marcado con el QR (con
 // su sello), el QR nuevo invalida el anterior, el enlace de contraseña del consultorio (un uso, el aviso, la
 // actividad), eliminar la cuenta, y las redes del negocio en Configuración y en la página de reservas.
-import { randomBytes, randomInt } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 import { cedulaFor } from "./helpers/cedula.mjs";
-import { agent, checks, count, login, sql } from "./helpers/harness.ts";
+import { agent, checks, count, fakeNtfy, login, runCron, sql } from "./helpers/harness.ts";
 import { isEasyPassword } from "../src/shared/lib/validations/loyalty.ts";
 import type { Business, PatientAccount, PatientCard, PatientResetLink, PublicBusinessProfile, ScanResult } from "../src/shared/types/index.ts";
 
@@ -14,6 +14,8 @@ const { ok, done } = checks();
 // Contraseñas y PIN de prueba al azar en cada corrida, siempre en algo que se llama «…Password»: GitGuardian marca las
 // fijas y hasta los nombres que parecen claves (regla del dueño: ninguna fija salvo demo1234). Los PIN, sin los fáciles.
 const newPassword = () => `p-${randomBytes(6).toString("hex")}`;
+/** La clave del contador de fallos de un teléfono: con su huella, no el teléfono (revisión 2026-11-18). */
+const failuresKeyOf = (phone: string) => `paciente-fallos:${createHash("sha256").update(phone).digest("hex").slice(0, 32)}`;
 const newPinPassword = (not = ""): string => {
   for (;;) {
     const pin = String(randomInt(0, 10_000)).padStart(4, "0");
@@ -124,7 +126,7 @@ console.log("\nEl bloqueo creciente");
 const target = `09${String(Date.now()).slice(-8)}`;
 const luciaPassword = newPinPassword();
 await browser()("POST", "/patient/signup", { name: "Lucía Intentos", phone: target, password: luciaPassword });
-const failKey = `paciente-fallos:+593${target.slice(1)}`;
+const failKey = failuresKeyOf(`+593${target.slice(1)}`);
 let fail = await browser()("POST", "/patient/login", { phone: target, password: newPinPassword(luciaPassword) });
 await browser()("POST", "/patient/login", { phone: target, password: newPinPassword(luciaPassword) });
 fail = await browser()("POST", "/patient/login", { phone: target, password: newPinPassword(luciaPassword) });
@@ -139,11 +141,12 @@ ok(fail.status === 429 && /30 minutos/.test(JSON.stringify(fail.body)), "pasados
 sql(`update rate_limits set reset_at = reset_at - interval '31 minutes' where key = '${failKey}'`);
 ok((await browser()("POST", "/patient/login", { phone: target, password: luciaPassword })).status === 200, "después, con el PIN bueno entra");
 ok(count(`select count(*) from rate_limits where key = '${failKey}'`) === 0, "y la cuenta de fallos vuelve a cero");
+ok(count(`select count(*) from rate_limits where key like 'paciente-%' and key like '%+593%'`) === 0, "los contadores no guardan teléfonos (sólo su huella)");
 console.log("\nEl bloqueo no se salta con intentos a la vez (revisión de seguridad)");
 const raceDigits = `9${String(Date.now() + 13).slice(-8)}`;
 const ritaPassword = newPinPassword();
 await browser()("POST", "/patient/signup", { name: "Rita Carrera", phone: `0${raceDigits}`, password: ritaPassword });
-const raceKey = `paciente-fallos:+593${raceDigits}`;
+const raceKey = failuresKeyOf(`+593${raceDigits}`);
 const raced = await Promise.all(Array.from({ length: 8 }, (_, i) => browser()("POST", "/patient/login", { phone: `0${raceDigits}`, password: `${newPinPassword(ritaPassword)}x` })));
 ok(
   count(`select hits from rate_limits where key = '${raceKey}'`) === 5 && raced.filter((item) => item.status === 401).length === 4,
@@ -162,6 +165,48 @@ ok(tries.join() === "400,400,400,400,429", "cambiar la contraseña: al 5.º fall
 ok((await session("PUT", "/patient/password", { currentPassword: saraPassword, newPassword: newPinPassword(saraPassword) })).status === 429, "mientras espera, ni con la buena");
 ok((await session("DELETE", "/patient/account", { password: saraPassword })).status === 429, "ni para eliminar la cuenta");
 ok((await browser()("POST", "/patient/login", { phone: `0${lockedPhone}`, password: saraPassword })).status === 429, "y el mismo bloqueo vale para entrar");
+
+console.log("\nLa sesión del paciente: 30 días sin uso, hasta 180 (revisión de seguridad 2026-11-18)");
+const idleDigits = `9${String(Date.now() + 23).slice(-8)}`;
+const idle = browser();
+await idle("POST", "/patient/signup", { name: "Iván Inactivo", phone: `0${idleDigits}`, password: newPinPassword() });
+const idleAccount = sql(`select id from patient_accounts where phone = '+593${idleDigits}'`);
+const days = (expr: string) => Number(sql(`select round(extract(epoch from (${expr} - now())) / 86400) from patient_sessions where account_id = '${idleAccount}'`));
+ok(days("expires_at") === 30, "al entrar, la sesión dura 30 días", days("expires_at"));
+sql(`update patient_sessions set created_at = now() - interval '20 days', expires_at = now() + interval '10 days' where account_id = '${idleAccount}'`);
+r = await idle("GET", "/patient/me");
+ok(r.status === 200 && days("expires_at") === 30 && /agenda360_patient=[^;]+;.*Expires=/i.test(r.headers.getSetCookie().join("\n")), "al usarla, se renueva otros 30 días (y la cookie)", days("expires_at"));
+sql(`update patient_sessions set created_at = now() - interval '178 days', expires_at = now() + interval '1 day' where account_id = '${idleAccount}'`);
+await idle("GET", "/patient/me");
+ok(days("expires_at") === 2, "pero nunca más de 180 días desde que entró", days("expires_at"));
+sql(`update patient_sessions set expires_at = now() - interval '1 second' where account_id = '${idleAccount}'`);
+ok((await idle("GET", "/patient/me")).status === 401, "vencida, hay que volver a entrar");
+
+console.log("\n«Cerrar sesión en todos los dispositivos»");
+const everywhereDigits = `9${String(Date.now() + 29).slice(-8)}`;
+const everywherePassword = newPinPassword();
+const phoneA = browser();
+await phoneA("POST", "/patient/signup", { name: "Eva Todos", phone: `0${everywhereDigits}`, password: everywherePassword });
+const phoneB = browser();
+await phoneB("POST", "/patient/login", { phone: `0${everywhereDigits}`, password: everywherePassword });
+ok((await phoneB("GET", "/patient/me")).status === 200, "con la sesión abierta en otro celular");
+r = await phoneA("POST", "/patient/logout-all");
+ok(r.status === 204 && (await phoneA("GET", "/patient/me")).status === 401 && (await phoneB("GET", "/patient/me")).status === 401, "cierra las dos", r.status);
+
+console.log("\nLos eventos de las cuentas de pacientes, sin teléfonos");
+ok(count(`select count(*) from audit_logs where entity_type = 'patient_account' and action = 'patient_account.login_failed'`) > 0, "los intentos fallidos quedan registrados");
+ok(count(`select count(*) from audit_logs where action = 'patient_account.locked'`) > 0, "y las esperas");
+ok(count(`select count(*) from audit_logs where action = 'patient_account.logged_out_everywhere'`) === 1, "y «Cerrar sesión en todos»");
+ok(count(`select count(*) from audit_logs where entity_type = 'patient_account' and (summary ~ '[0-9]{7}' or actor_name ~ '[0-9]{7}')`) === 0, "sin ningún teléfono");
+const security = (await admin("GET", "/admin/audit-logs?scope=security&limit=100")).body;
+ok((security?.entries ?? []).some((entry: { action: string }) => entry.action.startsWith("patient_account.")), "salen en Actividad → Seguridad del super admin", security?.entries?.length);
+sql(`insert into audit_logs (business_id, actor_name, action, entity_type, summary)
+     select null, 'Cuenta de paciente', 'patient_account.login_failed', 'patient_account', 'prueba de la alerta' from generate_series(1, 30)`);
+const ntfy = await fakeNtfy();
+await runCron(ntfy.url);
+ntfy.close();
+const alert = ntfy.received.find((notice) => /adivinar contraseñas/.test(notice.title));
+ok(alert !== undefined && /cuentas de pacientes/.test(alert.message), "y con muchos intentos en una hora, avisa por ntfy", ntfy.received.map((notice) => notice.title));
 
 const ghost = `09${String(Date.now() + 11).slice(-8)}`;
 let ghostLast = 0;

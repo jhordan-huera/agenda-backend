@@ -92,6 +92,13 @@ ok(!r.cookie && (await browser("GET", "/auth/session")).body === null, "todavía
 let challenge = r.body.challenge;
 r = await browser("POST", "/auth/login/two-factor", { challenge, code: wrong });
 ok(r.status === 400 && /no es correcto/.test(r.body.error.message), "un código incorrecto se rechaza", r.body);
+// Revisión de seguridad 2026-11-18: alguien ya sabe la contraseña; se avisa a la cuenta (y por ntfy, en el cron).
+ok(
+  (await db.query("select 1 from audit_logs where action = 'session.second_factor_failed'")).rowCount === 1 &&
+    (await db.query("select 1 from notifications where type = 'account_security_changed' and to_email = $1 and body like '%falló el código%'", [ADMIN.email]))
+      .rowCount === 1,
+  "el primer código incorrecto tras la contraseña avisa por email a la cuenta",
+);
 const used = codeAt(secret, (await lastStep()) + 1);
 r = await browser("POST", "/auth/login/two-factor", { challenge, code: used });
 ok(r.status === 200 && r.body.platformRole === "super_admin" && r.cookie, "con el código correcto entra", r.body);
@@ -102,6 +109,18 @@ browser = agent();
 challenge = (await browser("POST", "/auth/login", ADMIN)).body.challenge;
 r = await browser("POST", "/auth/login/two-factor", { challenge, code: used });
 ok(r.status === 400, "un código ya usado no sirve otra vez (aunque siga en su intervalo)", r.body);
+
+console.log("Tope de códigos incorrectos en 24 horas (revisión de seguridad 2026-11-18)");
+const adminId = (await db.query("select id from users where email = $1", [ADMIN.email])).rows[0].id;
+await db.query("insert into rate_limits (key, hits, reset_at) values ($1, 20, now() + interval '1 day') on conflict (key) do update set hits = 20", [
+  `acceso:codigos-dia:${adminId}`,
+]);
+const paused = agent();
+const pausedChallenge = (await paused("POST", "/auth/login", ADMIN)).body.challenge;
+await forgetLastStep();
+r = await paused("POST", "/auth/login/two-factor", { challenge: pausedChallenge, code: codeAt(secret, timeStep()) });
+ok(r.status === 429 && /24 horas/.test(r.body.error.message), "con 20 códigos incorrectos en el día, ni el correcto entra", r.body);
+await db.query("delete from rate_limits where key = $1", [`acceso:codigos-dia:${adminId}`]);
 
 console.log("Códigos de recuperación");
 r = await browser("POST", "/auth/login/two-factor", { challenge, code: recoveryCodes[0].toLowerCase().replace("-", " ") });

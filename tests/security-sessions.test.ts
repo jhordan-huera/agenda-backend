@@ -64,7 +64,12 @@ const { a: shortSession, r: shortLogin } = await login("jhordan@demo.com", false
 let row = await sessionRow(shortSession.token());
 ok(shortLogin.status === 200 && row && row.remember === false, "sin «Recordarme»: sesión corta", row);
 ok(row.hoursLeft > 11.9 && row.hoursLeft <= 12, "caduca a las 12 horas sin usarla", row.hoursLeft);
-ok(!shortLogin.setCookie.some((c) => /Expires=/i.test(c)), "y la cookie se borra al cerrar el navegador", shortLogin.setCookie);
+// Sólo la de la sesión: la del dispositivo de confianza (2026-11-18) dura 180 días a propósito.
+ok(
+  !shortLogin.setCookie.filter((c) => c.startsWith("agendo_session=")).some((c) => /Expires=/i.test(c)),
+  "y la cookie se borra al cerrar el navegador",
+  shortLogin.setCookie,
+);
 const { a: longSession, r: longLogin } = await login("ricardo@demo.com", true);
 row = await sessionRow(longSession.token());
 ok(row.remember === true && row.hoursLeft > 14 * 24 - 0.1 && row.hoursLeft <= 14 * 24, "con «Recordarme»: 14 días", row.hoursLeft);

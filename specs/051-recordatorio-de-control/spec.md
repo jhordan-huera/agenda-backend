@@ -2,7 +2,7 @@
 
 **Carpeta**: `specs/051-recordatorio-de-control` (rama de trabajo: `dev`) · **Creada**: 2026-11-15
 
-**Estado**: Implementada en `dev` (2026-11-15) y aprobada después de la revisión del EGM (2026-11-16, ver
+**Estado**: Publicada (2026-11-18, PR back #81 y front #66)
 [revision-egm/](revision-egm/consolidated_review_report.md)). Aprobada el 2026-11-15 («apruebo», con las decisiones
 recomendadas). Sólo en `dev`, para probarla: no se abre el PR a `main` hasta que el dueño del producto lo pida. Si
 antes hay que publicar otro cambio, se aplica primero la migración 058 y la función sale apagada.

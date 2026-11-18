@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev y aprobada después de la revisión del EGM (2026-11-16). En el PR de `dev` a `main` del 2026-11-18 (antes, la migración 058)
+**Estado**: Publicada (2026-11-18, PR back #81 y front #66)
 hasta que el dueño lo pida · **Fecha**: 2026-11-15
 
 **Repos**: los dos · **Migración**: Sí: `058_recordatorio_de_control.sql`

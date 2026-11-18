@@ -8,6 +8,7 @@ import { logAudit } from "./audit.ts";
 import { authorizeClinical, findPatient } from "./clinical-service.ts";
 import { parseInput, type RequestContext } from "./context.ts";
 import { fileStorage, type FileStorage } from "./file-storage.ts";
+import { matchesDeclaredType, SIGNATURE_BYTES } from "./file-signature.ts";
 import { planOf } from "./plan-limits.ts";
 
 /**
@@ -34,10 +35,18 @@ export function requireStorage(): FileStorage {
 
 async function findAttachment(db: Db, businessId: string, attachmentId: string) {
   const attachment = isUuid(attachmentId)
-    ? await one<{ clientId: string; clientName: string; fileName: string; storagePath: string; status: string; sizeBytes: number }>(
+    ? await one<{
+        clientId: string;
+        clientName: string;
+        fileName: string;
+        storagePath: string;
+        status: string;
+        sizeBytes: number;
+        contentType: string;
+      }>(
         db,
         `select a.client_id as "clientId", c.name as "clientName", a.file_name as "fileName", a.storage_path as "storagePath",
-                a.status, a.size_bytes as "sizeBytes"
+                a.status, a.size_bytes as "sizeBytes", a.content_type as "contentType"
            from clinical_attachments a join clients c on c.id = a.client_id
           where a.id = $1 and a.business_id = $2`,
         [attachmentId, businessId],
@@ -77,14 +86,25 @@ export const clinicalAttachmentService = {
   /** El navegador terminó de subir: se comprueba que el archivo llegó y queda en la historia. */
   async completeUpload(ctx: RequestContext, businessId: string, attachmentId: string): Promise<ClinicalAttachment> {
     const storage = requireStorage();
-    return transaction(async (db) => {
+    const result = await transaction(async (db): Promise<ClinicalAttachment | { rejectedPath: string }> => {
       const actor = await authorizeClinical(db, ctx, businessId, true);
       const attachment = await findAttachment(db, businessId, attachmentId);
       await findPatient(db, businessId, attachment.clientId, actor);
       if (attachment.status === "pending") {
-        const size = await storage.sizeOf(attachment.storagePath);
-        if (size === null) throw new AppError("conflict", "El archivo no terminó de subirse. Vuelve a intentarlo.");
+        const info = await storage.fileInfo(attachment.storagePath);
+        if (info === null) throw new AppError("conflict", "El archivo no terminó de subirse. Vuelve a intentarlo.");
+        const { size } = info;
         if (size > CLINICAL_ATTACHMENT_MAX_BYTES) throw new AppError("validation", "El archivo supera los 15 MB.");
+        // El tipo guardado es el declarado y el contenido es una foto o un PDF de verdad (como el comprobante del
+        // paciente): una página web no queda en la historia clínica (revisión 2026-11-18).
+        const head = info.contentType === null || info.contentType === attachment.contentType
+          ? await storage.readHead(attachment.storagePath, SIGNATURE_BYTES)
+          : null;
+        if (head === null || !matchesDeclaredType(head, attachment.contentType)) {
+          // Se borra y se responde el error fuera de la transacción (si no, el borrado se desharía).
+          await db.query("delete from clinical_attachments where id = $1", [attachmentId]);
+          return { rejectedPath: attachment.storagePath };
+        }
         await db.query("update clinical_attachments set status = 'ready', size_bytes = $2 where id = $1", [attachmentId, size]);
         await logAudit(db, {
           businessId,
@@ -101,6 +121,11 @@ export const clinicalAttachmentService = {
         [attachmentId],
       ))!;
     });
+    if ("rejectedPath" in result) {
+      await storage.remove([result.rejectedPath]).catch(() => undefined);
+      throw new AppError("validation", "Ese archivo no es una foto ni un PDF. Sube una imagen (JPG, PNG, WebP, HEIC) o un PDF.");
+    }
+    return result;
   },
 
   /** URL de unos minutos para ver o descargar el archivo. */

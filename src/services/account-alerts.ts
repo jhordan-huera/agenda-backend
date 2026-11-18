@@ -61,6 +61,8 @@ const ACCOUNT_CHANGES: Record<string, string> = {
   "session.two_factor_reset": "Se reinició su verificación en dos pasos (npm run db:reset-2fa)",
   "session.password_changed": "Cambió su contraseña",
   "platform.user_password_changed": "Le cambiaron la contraseña desde el panel",
+  // Revisión de seguridad 2026-11-18: la contraseña ya la sabe alguien que no tiene el celular.
+  "session.second_factor_failed": "Alguien escribió bien su contraseña y falló el código de verificación",
 };
 
 export interface AccountChange {

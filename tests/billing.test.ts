@@ -644,6 +644,18 @@ let firstReceipt = "";
   r = await ricardo("POST", `/businesses/${DENTAL}/billing/charges/${chargeId}/receipt`, receiptInput);
   ok(r.status === 404, "el cobro de otro negocio no existe para él", r.status);
 
+  // Una página web con nombre de foto se rechaza y se borra (revisión de seguridad 2026-11-18).
+  r = await owner("POST", R, receiptInput);
+  const disguised = r.body;
+  await put(disguised.upload, Buffer.from("<html><script>alert(1)</script></html>"));
+  r = await owner("POST", `${R}/${disguised.receipt.id}/complete`);
+  ok(
+    r.status === 409 && /no es una foto ni un PDF/.test(r.body.error?.message ?? "") &&
+      count(`select count(*) from billing_receipts where id = '${disguised.receipt.id}'`) === 0,
+    "una página web con nombre de foto se rechaza y se borra",
+    r.body,
+  );
+
   r = await owner("POST", R, receiptInput);
   ok(r.status === 200 && r.body.upload.method === "PUT", "pide la URL de subida", r.body);
   const pending = r.body;

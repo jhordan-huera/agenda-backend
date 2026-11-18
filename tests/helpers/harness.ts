@@ -40,7 +40,9 @@ export interface Reply {
  * IP (con su firma): cada prueba usa las suyas y no gasta los límites de las demás.
  */
 export function agent(options: { base?: string; ip?: string } = {}) {
-  let cookie = "";
+  // Varias cookies a la vez, como un navegador (la sesión y el dispositivo de confianza, 2026-11-18): una vacía se borra.
+  const jar = new Map<string, string>();
+  const cookieHeader = () => [...jar].map(([name, value]) => `${name}=${value}`).join("; ");
   const call = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Reply> => {
     const res = await fetch((options.base ?? BASE) + path, {
       method,
@@ -49,15 +51,32 @@ export function agent(options: { base?: string; ip?: string } = {}) {
         "X-Requested-With": "fetch",
         ...(options.ip ? viaProxy(options.ip) : {}),
         ...headers,
-        ...(cookie ? { Cookie: cookie } : {}),
+        ...(jar.size ? { Cookie: cookieHeader() } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    for (const c of res.headers.getSetCookie()) cookie = c.split(";")[0];
+    for (const c of res.headers.getSetCookie()) {
+      const [pair] = c.split(";");
+      const at = pair.indexOf("=");
+      const name = pair.slice(0, at).trim();
+      const value = pair.slice(at + 1);
+      if (value) jar.set(name, value);
+      else jar.delete(name);
+    }
     const text = await res.text();
     return { status: res.status, body: text ? JSON.parse(text) : undefined, headers: res.headers };
   };
-  return Object.assign(call, { cookie: () => cookie, setCookie: (value: string) => (cookie = value) });
+  return Object.assign(call, {
+    cookie: cookieHeader,
+    /** Reemplaza todas las cookies por las de `value` («a=1; b=2»; vacío: ninguna). */
+    setCookie: (value: string) => {
+      jar.clear();
+      for (const part of value.split(";")) {
+        const at = part.indexOf("=");
+        if (at > 0 && part.slice(at + 1)) jar.set(part.slice(0, at).trim(), part.slice(at + 1));
+      }
+    },
+  });
 }
 
 export async function login(email: string, options: { ip?: string; remember?: boolean; base?: string } = {}) {

@@ -47,6 +47,7 @@ import { appOrigin, queueEmail } from "./notifications.ts";
 import { countActiveProfessionals } from "./plan-limits.ts";
 import { getPlanPrices, getPlatformBankAccounts, getPlatformSettings } from "./platform-settings.ts";
 import { notifyBillingReceipt } from "./push-notices.ts";
+import { matchesDeclaredType, SIGNATURE_BYTES } from "./file-signature.ts";
 import { applyRewards, availableRewardIds } from "./referral-service.ts";
 
 /**
@@ -580,6 +581,8 @@ async function receiptUrlOf(db: Db, chargeId: string): Promise<{ url: string }> 
 }
 
 /** Borra archivos de comprobantes ya sin registro. Después de confirmar el borrado; nunca falla. */
+const NOT_A_RECEIPT_FILE = "Ese archivo no es una foto ni un PDF. Sube la foto o el PDF del comprobante.";
+
 async function removeFiles(paths: string[]): Promise<void> {
   if (!paths.length || !receiptStorage) return;
   await receiptStorage
@@ -647,9 +650,9 @@ export const billingService = {
       const actor = await authorizeBilling(db, ctx, businessId, { upload: true });
       const charge = await findCharge(db, chargeId, { businessId, lock: true });
       const receipt = isUuid(receiptId)
-        ? await one<{ storagePath: string; status: string }>(
+        ? await one<{ storagePath: string; status: string; contentType: string }>(
             db,
-            `select storage_path as "storagePath", status from billing_receipts where id = $1 and charge_id = $2 for update`,
+            `select storage_path as "storagePath", status, content_type as "contentType" from billing_receipts where id = $1 and charge_id = $2 for update`,
             [receiptId, charge.id],
           )
         : null;
@@ -660,11 +663,19 @@ export const billingService = {
         await db.query("delete from billing_receipts where id = $1", [receiptId]);
         return { charge: null, discarded: { path: receipt.storagePath, message: closedMessage(charge.status) }, tooLarge: null };
       }
-      const size = await storage.sizeOf(receipt.storagePath);
-      if (size === null) throw new AppError("conflict", "El comprobante no terminó de subirse. Vuelve a intentarlo.");
+      const info = await storage.fileInfo(receipt.storagePath);
+      if (info === null) throw new AppError("conflict", "El comprobante no terminó de subirse. Vuelve a intentarlo.");
+      const { size } = info;
       if (size > RECEIPT_MAX_BYTES) {
         await db.query("delete from billing_receipts where id = $1", [receiptId]);
         return { charge: null, discarded: null, tooLarge: receipt.storagePath };
+      }
+      // Como el comprobante del paciente (2026-11-15): el tipo guardado es el declarado y el contenido es una foto o un PDF
+      // de verdad. Si no, una página web subida como comprobante se abriría al revisarlo (revisión 2026-11-18).
+      const head = info.contentType === null || info.contentType === receipt.contentType ? await storage.readHead(receipt.storagePath, SIGNATURE_BYTES) : null;
+      if (head === null || !matchesDeclaredType(head, receipt.contentType)) {
+        await db.query("delete from billing_receipts where id = $1", [receiptId]);
+        return { charge: null, discarded: { path: receipt.storagePath, message: NOT_A_RECEIPT_FILE }, tooLarge: null };
       }
       await db.query("update billing_receipts set status = 'ready', size_bytes = $2 where id = $1", [receiptId, size]);
       await db.query("update billing_charges set status = 'in_review', updated_at = now() where id = $1", [charge.id]);

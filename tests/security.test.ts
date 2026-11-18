@@ -219,11 +219,14 @@ const timed = async (work: () => Promise<{ status: number; body: any }>) => {
   return { ...reply, ms: Math.round(performance.now() - started) };
 };
 let slow = await timed(() => agent()("POST", `${ownerBusiness}/waitlist`, { name: slowName, phone: "0991234567" }));
-ok(slow.status === 401 && slow.ms < 3000, "sin sesión, «Anotar» responde 401 sin validar el cuerpo", { status: slow.status, ms: slow.ms });
+// Sin sesión, desde la revisión 2026-11-18, ni se lee un cuerpo de más de 100 kB: 400 al momento, antes de validar nada.
+ok(slow.status === 400 && slow.ms < 3000, "sin sesión, «Anotar» rechaza el cuerpo enorme sin validarlo", { status: slow.status, ms: slow.ms });
 slow = await timed(() => owner("POST", `${ownerBusiness}/waitlist`, { name: slowName, phone: "0991234567" }));
 ok(slow.status === 400 && slow.ms < 3000, "con sesión, un nombre enorme se rechaza al momento", { status: slow.status, ms: slow.ms });
 slow = await timed(() => agent()("POST", `${ownerBusiness}/clients`, { name: slowName }));
-ok(slow.status === 401 && slow.ms < 3000, "las demás rutas del panel, también 401 antes de leer nada", { status: slow.status, ms: slow.ms });
+ok(slow.status === 400 && slow.ms < 3000, "las demás rutas del panel, también", { status: slow.status, ms: slow.ms });
+slow = await timed(() => agent()("POST", `${ownerBusiness}/clients`, { name: "Ana" }));
+ok(slow.status === 401, "y con un cuerpo pequeño, 401 como siempre", { status: slow.status });
 const nameField = personNameField("El nombre");
 let started = performance.now();
 const tooLong = nameField.safeParse("a-".repeat(1_000_000));
@@ -239,6 +242,11 @@ const bigBooking = await agent()("POST", `/public/businesses/no-existe/bookings`
 ok(bigBooking.status === 400 && /demasiado grandes/.test(bigBooking.body?.error?.message ?? ""), "las rutas públicas no reciben más de 100 kB", bigBooking.body);
 const bigLogin = await agent()("POST", "/auth/login", { email: "x".repeat(200_000), password: "x" });
 ok(bigLogin.status === 400, "el inicio de sesión tampoco", bigLogin.status);
+// Express no distingue mayúsculas en las rutas: el tope tampoco (revisión de seguridad 2026-11-18).
+const bigUpper = await agent()("POST", `/PUBLIC/businesses/no-existe/bookings`, { notes: "x".repeat(200_000) });
+ok(bigUpper.status === 400 && /demasiado grandes/.test(bigUpper.body?.error?.message ?? ""), "ni escribiendo la ruta en mayúsculas", bigUpper.body);
+const bigNoSession = await agent()("POST", `/businesses/${"0".repeat(8)}-0000-0000-0000-${"0".repeat(12)}/clients`, { notes: "x".repeat(200_000) });
+ok(bigNoSession.status === 400 && /demasiado grandes/.test(bigNoSession.body?.error?.message ?? ""), "y sin sesión, ninguna ruta lee más de 100 kB", bigNoSession.body);
 
 console.log("La dirección de la visita a domicilio, sin enlaces (2026-11-15)");
 const visit = (address: string, reference = "") => ({ address, reference, lat: -0.18, lng: -78.48 });

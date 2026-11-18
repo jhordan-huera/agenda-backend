@@ -33,11 +33,22 @@ const MAX_FAILURES_PER_IP = 50;
  * sesión antes (los eventos de sesión se guardan 90 días). El dueño, desde las de siempre, entra.
  */
 const MAX_FAILURES_PER_ACCOUNT = 30;
+/**
+ * Intentos con una cuenta en 24 horas desde conexiones nuevas para ella (revisión de seguridad 2026-11-18): el tope de
+ * 15 minutos se reiniciaba y dejaba probar unas 2.900 contraseñas al día. Desde una conexión o un navegador donde la
+ * cuenta ya entró (dispositivo de confianza, trusted-device.ts) no cuenta.
+ */
+const MAX_ATTEMPTS_PER_ACCOUNT_PER_DAY = 100;
+/** Intentos de hoy con una cuenta desde conexiones nuevas a partir de los cuales se pide el CAPTCHA. */
+export const CAPTCHA_AFTER_ATTEMPTS = 3;
+const DAY_MS = 24 * 60 * 60_000;
 
 /** Desde dónde se conecta (IP y navegador). Sólo se guarda en los eventos de sesión. */
 export interface ClientConnection {
   ip: string;
   userAgent: string | null;
+  /** La cookie del dispositivo de confianza (trusted-device.ts), si la trae. No se guarda. */
+  deviceToken?: string | null;
 }
 
 /**
@@ -130,17 +141,9 @@ export interface AttemptReservation {
 /** Huella del email para las claves de los contadores (no se guardan emails en rate_limits). */
 const accountKey = (email: string) => createHash("sha256").update(email.trim().toLowerCase()).digest("hex").slice(0, 32);
 
-export async function reserveAttempt(email: string, ip: string, userId: string | null): Promise<AttemptReservation> {
-  const account = accountKey(email);
-  // La misma clave de conexión que los límites de peticiones: IPv4 una a una e IPv6 por subred /64.
-  const connection = ipKeyGenerator(ip, 64);
-  const keys = {
-    accountFromIp: `acceso:cuenta-ip:${account}:${connection}`,
-    ip: `acceso:ip:${connection}`,
-    account: `acceso:cuenta:${account}`,
-  };
-  // Desde una conexión donde la cuenta ya inició sesión no cuenta el tope repartido entre muchas IP.
-  const knownIp = userId
+/** ¿La cuenta ya inició sesión desde esta conexión (IP)? */
+export async function isKnownConnection(userId: string | null, ip: string): Promise<boolean> {
+  return userId
     ? Boolean(
         await one(
           pool,
@@ -149,6 +152,32 @@ export async function reserveAttempt(email: string, ip: string, userId: string |
         ),
       )
     : false;
+}
+
+/** Intentos de hoy con la cuenta desde conexiones nuevas (sin sumar): para decidir si se pide el CAPTCHA. */
+export async function accountAttemptsToday(email: string): Promise<number> {
+  const row = await one<{ hits: number }>(pool, "select hits from rate_limits where key = $1 and reset_at > now()", [
+    `acceso:cuenta-dia:${accountKey(email)}`,
+  ]);
+  return row?.hits ?? 0;
+}
+
+/**
+ * `known`: la cuenta ya entró desde esta conexión o este navegador (dispositivo de confianza). Si no se indica, se mira
+ * sólo la conexión.
+ */
+export async function reserveAttempt(email: string, ip: string, userId: string | null, known?: boolean): Promise<AttemptReservation> {
+  const account = accountKey(email);
+  // La misma clave de conexión que los límites de peticiones: IPv4 una a una e IPv6 por subred /64.
+  const connection = ipKeyGenerator(ip, 64);
+  const keys = {
+    accountFromIp: `acceso:cuenta-ip:${account}:${connection}`,
+    ip: `acceso:ip:${connection}`,
+    account: `acceso:cuenta:${account}`,
+    accountDay: `acceso:cuenta-dia:${account}`,
+  };
+  // Desde una conexión (o un navegador) donde la cuenta ya inició sesión no cuentan los topes repartidos entre muchas IP.
+  const knownIp = known ?? (await isKnownConnection(userId, ip));
   const windowMs = LOCKOUT_MINUTES * 60_000;
   const locked: AttemptReservation = { locked: true, succeeded: async () => undefined };
   // De lo más estrecho a lo más amplio, y parando en el primer tope: lo que ya frenó la conexión no
@@ -157,10 +186,11 @@ export async function reserveAttempt(email: string, ip: string, userId: string |
   if ((await incrementCounter(pool, keys.accountFromIp, windowMs)).hits > MAX_FAILURES_PER_ACCOUNT_AND_IP) return locked;
   if ((await incrementCounter(pool, keys.ip, windowMs)).hits > MAX_FAILURES_PER_IP) return locked;
   if (!knownIp && (await incrementCounter(pool, keys.account, windowMs)).hits > MAX_FAILURES_PER_ACCOUNT) return locked;
+  if (!knownIp && (await incrementCounter(pool, keys.accountDay, DAY_MS)).hits > MAX_ATTEMPTS_PER_ACCOUNT_PER_DAY) return locked;
   return {
     locked: false,
     async succeeded() {
-      await pool.query("delete from rate_limits where key = any($1::text[])", [[keys.accountFromIp, keys.account]]);
+      await pool.query("delete from rate_limits where key = any($1::text[])", [[keys.accountFromIp, keys.account, keys.accountDay]]);
       await pool.query("update rate_limits set hits = greatest(hits - 1, 0) where key = $1", [keys.ip]);
     },
   };

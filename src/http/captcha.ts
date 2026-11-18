@@ -65,6 +65,19 @@ async function verifyToken(token: string, ip: string): Promise<Verification> {
   return { ok: true };
 }
 
+const REQUIRED_MESSAGE = "Por seguridad, confirma que no eres un robot para seguir intentando.";
+
+/**
+ * El CAPTCHA del inicio de sesión del equipo, sólo cuando hace falta (varios intentos desde una conexión nueva, revisión
+ * 2026-11-18): sin token, «captcha_required» para que el panel lo muestre; con uno inválido, el error de siempre.
+ */
+export async function checkCaptchaToken(token: unknown, ip: string): Promise<void> {
+  if (!config.turnstile) return;
+  if (typeof token !== "string" || token.length === 0 || token.length > 2048) throw new AppError("captcha_required", REQUIRED_MESSAGE);
+  const verification = await verifyToken(token, ip);
+  if (!verification.ok) throw verification.error;
+}
+
 /** Exige un token de Turnstile válido en `req.body.captchaToken` (si el CAPTCHA está activado). */
 export const requireCaptcha: RequestHandler = async (req, _res, next) => {
   if (!config.turnstile) return next();

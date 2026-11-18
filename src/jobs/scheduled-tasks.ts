@@ -390,6 +390,11 @@ export interface LoginAlert {
 
 /** Intentos fallidos que hacen saltar la alerta, dentro de la última hora. */
 const LOGIN_ALERT_ATTEMPTS = 10;
+/** Intentos fallidos en la última hora, sumando todas las cuentas del equipo, que avisan (revisión 2026-11-18). */
+const TEAM_TOTAL_ALERT_ATTEMPTS = 50;
+/** Intentos fallidos en cuentas de pacientes, o cuentas puestas en espera, en la última hora que avisan. */
+const PATIENT_ALERT_ATTEMPTS = 30;
+const PATIENT_ALERT_LOCKS = 5;
 
 
 /**
@@ -407,7 +412,25 @@ async function findLoginAttacks(since: string | null): Promise<LoginAlert[]> {
       order by attempts desc`,
     [LOGIN_ALERT_ATTEMPTS, since],
   );
-  return rows.map((row) => ({ account: maskEmail(row.email ?? row.attempted), attempts: row.attempts }));
+  const alerts = rows.map((row) => ({ account: maskEmail(row.email ?? row.attempted), attempts: row.attempts }));
+  // Ataques repartidos (revisión de seguridad 2026-11-18): pocas pruebas en muchas cuentas no pasan del tope de cada una,
+  // pero suman. También las cuentas de pacientes (PIN de 4 números), que antes no dejaban rastro.
+  const totals = (await one<{ team: number; patients: number; locked: number; latest: string | null }>(
+    pool,
+    `select count(*) filter (where action = 'session.login_failed')::int as team,
+            count(*) filter (where action = 'patient_account.login_failed')::int as patients,
+            count(*) filter (where action = 'patient_account.locked')::int as locked,
+            max(created_at) as latest
+       from audit_logs
+      where action in ('session.login_failed', 'patient_account.login_failed', 'patient_account.locked')
+        and created_at > now() - interval '1 hour'`,
+  ))!;
+  const fresh = totals.latest !== null && (since === null || new Date(totals.latest) > new Date(since));
+  if (fresh && totals.team >= TEAM_TOTAL_ALERT_ATTEMPTS) alerts.push({ account: "todas las cuentas del equipo (en total)", attempts: totals.team });
+  if (fresh && (totals.patients >= PATIENT_ALERT_ATTEMPTS || totals.locked >= PATIENT_ALERT_LOCKS)) {
+    alerts.push({ account: `cuentas de pacientes${totals.locked ? ` (${totals.locked} en espera)` : ""}`, attempts: totals.patients });
+  }
+  return alerts;
 }
 
 /** Hasta 30 lotes de 10 emails por ejecución; lo que quede sale en la siguiente. */

@@ -211,10 +211,16 @@ r = await ricardo("POST", `${B}/clients/${patient.id}/clinical-record/attachment
 ok(r.status === 400 && /15 MB/.test(r.body.error.message), "más de 15 MB → 400", r.body);
 const error = sqlError(`update clinical_attachments set file_name = 'otro.pdf' where id = '${attachment.id}'`);
 ok(error && /no se pueden modificar/.test(error), "un archivo no se modifica ni con SQL directo", error);
+// Una página web declarada como PDF no queda en la historia (revisión de seguridad 2026-11-18).
+r = await ricardo("POST", `${B}/clients/${patient.id}/clinical-record/attachments`, { fileName: "informe.pdf", contentType: "application/pdf", sizeBytes: 40, description: "" });
+await fetch(ORIGIN + r.body.upload.url, { method: "PUT", headers: r.body.upload.headers, body: Buffer.from("<html><script>alert(1)</script></html>") });
+const fake = await ricardo("POST", `${B}/clinical-attachments/${r.body.attachment.id}/complete`);
+ok(fake.status === 400 && sql(`select count(*) from clinical_attachments where id = '${r.body.attachment.id}'`) === "0", "un archivo que no es una foto ni un PDF se rechaza y se borra", fake.body);
 const other = (await ricardo("GET", `${B}/clients`)).body.find((c) => c.id !== patient.id);
 sql(`delete from clinical_notes where client_id = '${other.id}'; delete from clinical_profiles where client_id = '${other.id}';`);
 r = await ricardo("POST", `${B}/clients/${other.id}/clinical-record/attachments`, { fileName: "foto.jpg", contentType: "image/jpeg", sizeBytes: 5, description: "" });
-await fetch(ORIGIN + r.body.upload.url, { method: "PUT", headers: r.body.upload.headers, body: Buffer.from("jpeg!") });
+// Con la firma de un JPG: el contenido tiene que ser una foto o un PDF de verdad (revisión 2026-11-18).
+await fetch(ORIGIN + r.body.upload.url, { method: "PUT", headers: r.body.upload.headers, body: Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from("jpeg!")]) });
 await ricardo("POST", `${B}/clinical-attachments/${r.body.attachment.id}/complete`);
 r = await ricardo("DELETE", `${B}/clients/${other.id}`);
 ok(r.status === 409, "un paciente con archivos no se puede eliminar", r.body);
