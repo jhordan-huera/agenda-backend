@@ -1,6 +1,6 @@
 # Reporte: Revisión de seguridad completa
 
-**Estado**: Implementada en dev (2026-11-18), sin publicar · **Fecha**: 2026-11-18
+**Estado**: Front publicado (2026-11-18, PR #66); backend en el PR #82 · **Fecha**: 2026-11-18
 
 **Repos**: los dos · **Migración**: No
 

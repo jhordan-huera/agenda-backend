@@ -2,7 +2,7 @@
 
 **Spec**: [spec.md](./spec.md) · **Plan**: [plan.md](./plan.md) · **Tareas**: [tasks.md](./tasks.md)
 
-**Estado**: Implementada en dev; en el PR de `dev` a `main` del 2026-11-18 (antes, las migraciones 059 y 060) · **Fecha**: 2026-11-16
+**Estado**: Publicada (2026-11-18, PR back #81 y front #66) · **Fecha**: 2026-11-16
 
 **Repos**: los dos · **Migración**: Sí: `059_tarjeta_de_fidelizacion.sql` y `060_tarjeta_por_negocio.sql` (después de la 058)
 
