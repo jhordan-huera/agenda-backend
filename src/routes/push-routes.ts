@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { handle, limitRequests } from "../http/handlers.ts";
-import { requireSuperAdminTwoFactor } from "../http/session.ts";
+import { requirePasswordChanged, requireSuperAdminTwoFactor } from "../http/session.ts";
 import { pushDeviceService } from "../services/push-device-service.ts";
 
 /**
@@ -12,6 +12,8 @@ import { pushDeviceService } from "../services/push-device-service.ts";
 export const pushRoutes = Router();
 
 pushRoutes.use(requireSuperAdminTwoFactor);
+// Con una contraseña temporal, primero la contraseña nueva (spec 054).
+pushRoutes.use(requirePasswordChanged);
 
 const deviceLimit = limitRequests({
   name: "avisos-aparato",

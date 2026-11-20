@@ -3,7 +3,7 @@
 // resumen de las 8 y los del super admin) y que un fallo de los avisos nunca rompe una reserva (RF-011).
 // Desde la spec 017, también el resumen de las 8 en el celular de cada profesional, con su agenda.
 // El servicio de avisos es uno falso en 127.0.0.1 (tests/helpers/harness.ts) que descifra lo que recibe.
-import { businessInput, createBusinessWithOwner } from "./helpers/business.mjs";
+import { acceptSupportPassword, businessInput, createBusinessWithOwner } from "./helpers/business.mjs";
 import { cedulaFor } from "./helpers/cedula.mjs";
 import { BASE, agent, checks, count, fakeNtfy, fakePushService, login, runCron, sleep, sql, startApi, type ReceivedPush } from "./helpers/harness.ts";
 import { getAvailableSlots, scopeToProfessional } from "../src/shared/lib/availability.ts";
@@ -579,6 +579,7 @@ booking = await orphanPage.book(person("Nora Isabel Tapia Ruiz"));
 ok(booking.status === 200 && count("select count(*) from push_messages") === messagesBefore, "una reserva no avisa a nadie (tampoco al super admin)", booking.body);
 r = await admin("POST", `/admin/businesses/${orphan}/owner`, { firstName: "Olga", lastName: "Nueva", email: `olga.${tag}@correo.ec`, password: "demo1234" });
 ok(r.status === 200, "el super admin le asigna propietario", r.body);
+acceptSupportPassword(`olga.${tag}@correo.ec`);
 const olga = await as(`olga.${tag}@correo.ec`);
 const olgaDevice = push.device();
 ok((await activate(olga, olgaDevice)).status === 200, "la nueva propietaria activa sus avisos");

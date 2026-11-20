@@ -1,6 +1,8 @@
-// Contraseñas gestionadas por el super admin. Cambiar el email de la cuenta pide la contraseña actual.
+// Contraseñas: el super admin las pone (temporales desde la spec 054: al entrar, la persona crea la suya) y cualquier
+// cuenta cambia la suya con la actual. Cambiar el email de la cuenta pide la contraseña actual. La recuperación con una
+// contraseña temporal por email se prueba en password-recovery.test.ts.
 import pg from "pg";
-import { businessInput, createBusinessWithOwner } from "./helpers/business.mjs";
+import { acceptSupportPassword, businessInput, createBusinessWithOwner } from "./helpers/business.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
@@ -12,14 +14,24 @@ const ok = (cond, label, extra) => {
   }
 };
 function agent() {
-  let cookie = "";
+  // Varias cookies, como un navegador: al cambiar la contraseña sólo llega la del dispositivo de confianza.
+  const jar = new Map();
   return async (method, path, body) => {
     const res = await fetch(BASE + path, {
       method,
-      headers: { "Content-Type": "application/json", "X-Requested-With": "fetch", ...(cookie ? { Cookie: cookie } : {}) },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Requested-With": "fetch",
+        ...(jar.size ? { Cookie: [...jar].map(([name, value]) => `${name}=${value}`).join("; ") } : {}),
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    for (const c of res.headers.getSetCookie()) cookie = c.split(";")[0];
+    for (const c of res.headers.getSetCookie()) {
+      const [pair] = c.split(";");
+      const at = pair.indexOf("=");
+      if (pair.endsWith("=")) jar.delete(pair.slice(0, at));
+      else jar.set(pair.slice(0, at), pair.slice(at + 1));
+    }
     const text = await res.text();
     return { status: res.status, body: text ? JSON.parse(text) : undefined };
   };
@@ -32,23 +44,23 @@ let r = await login(owner, "jhordan@demo.com", "demo1234");
 const ownerId = r.body.userId;
 const B = `/businesses/${r.body.businessId}`;
 r = await owner("POST", "/auth/change-password", { currentPassword: "demo1234", newPassword: "OtraClave1", confirmPassword: "OtraClave1" });
-ok(r.status === 403 && /soporte/.test(r.body.error.message), "el propietario no puede cambiar su contraseña", r.body);
+ok(r.status === 204, "el propietario cambia su contraseña con la actual (spec 054)", r.body);
 r = await owner("POST", `${B}/team`, { firstName: "X", lastName: "Y", email: "x@example.com", role: "staff" });
 ok(r.status === 404, "el propietario ya no puede invitar (ruta eliminada)", r.status);
 r = await agent()("POST", "/auth/forgot-password", { email: "jhordan@demo.com" });
-ok(r.status === 404, "recuperación por enlace eliminada", r.status);
+ok(r.status === 204, "«¿Olvidaste tu contraseña?» con una contraseña temporal (spec 054)", r.status);
 
 console.log("Cambiar el email de la cuenta");
 const profile = { firstName: "Jhordan", lastName: "Demo", phone: "", avatarUrl: null };
 r = await owner("PUT", `/users/${ownerId}`, { ...profile, email: "jhordan.nuevo@example.com" });
 ok(r.status === 400 && /contraseña/.test(r.body.error.message), "sin la contraseña actual → 400", r.body);
-r = await owner("PUT", `/users/${ownerId}`, { ...profile, email: "jhordan.nuevo@example.com", currentPassword: "OtraClave1" });
-ok(r.status === 400 && /no es correcta/.test(r.body.error.message), "con una contraseña equivocada → 400", r.body);
 r = await owner("PUT", `/users/${ownerId}`, { ...profile, email: "jhordan.nuevo@example.com", currentPassword: "demo1234" });
+ok(r.status === 400 && /no es correcta/.test(r.body.error.message), "con una contraseña equivocada → 400", r.body);
+r = await owner("PUT", `/users/${ownerId}`, { ...profile, email: "jhordan.nuevo@example.com", currentPassword: "OtraClave1" });
 ok(r.status === 200 && r.body.email === "jhordan.nuevo@example.com", "con la contraseña actual sí", r.body);
 r = await owner("PUT", `/users/${ownerId}`, { ...profile, email: "jhordan.nuevo@example.com", firstName: "Jhordan" });
 ok(r.status === 200, "el resto del perfil se edita sin contraseña", r.body);
-ok((await login(agent(), "jhordan.nuevo@example.com", "demo1234")).status === 200, "entra con el email nuevo y la misma contraseña");
+ok((await login(agent(), "jhordan.nuevo@example.com", "OtraClave1")).status === 200, "entra con el email nuevo y la misma contraseña");
 
 console.log("Super admin");
 const admin = agent();
@@ -87,7 +99,7 @@ r = await admin("PUT", `/admin/users/${miguel.id}/password`, { password: "Miguel
 ok(r.status === 204, "el super admin pone la contraseña", r.body);
 ok((await miguelSession("GET", "/auth/session")).body === null, "se cierran las sesiones abiertas del usuario");
 r = await login(agent(), "miguel@demo.com", "MiguelClave2026");
-ok(r.status === 200, "el usuario entra con la contraseña nueva");
+ok(r.status === 200 && r.body.passwordChangeRequired === true, "el usuario entra con ella y tiene que crear la suya (spec 054)", r.body);
 const superAdminId = users.find((u) => u.user.email === "admin@demo.com").user.id;
 r = await admin("PUT", `/admin/users/${superAdminId}/password`, { password: "Cualquiera123" });
 ok(r.status === 403, "no se cambia así la de un super admin", r.body);
@@ -114,8 +126,8 @@ const db = new pg.Pool({ connectionString: process.env.TEST_DATABASE_URL });
 const secretOf = async (id) => (await db.query("select secret from notifications where id = $1", [id])).rows[0]?.secret;
 const created = emails.find((e) => e.to === "rosa@example.com" && e.type === "business_created");
 ok(
-  created && /Contraseña: ••••••••/.test(created.body) && !/temporal|cambia la contraseña/i.test(created.body) && (await secretOf(created.id)) === "RosaClave2026",
-  "alta de negocio: email con la contraseña elegida",
+  created && /Contraseña temporal: ••••••••/.test(created.body) && /crear la tuya/.test(created.body) && (await secretOf(created.id)) === "RosaClave2026",
+  "alta de negocio: email con la contraseña elegida, temporal (spec 054)",
   created?.body,
 );
 const changed = emails.find((e) => e.to === "miguel@demo.com" && e.type === "password_reset");

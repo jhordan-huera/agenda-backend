@@ -16,10 +16,13 @@ export type AppErrorCode =
   | "push_failed"
   /** Inicio de sesión con varios intentos fallidos desde una conexión nueva: hace falta el CAPTCHA (revisión 2026-11-18). */
   | "captcha_required"
+  /** La sesión se abrió con una contraseña temporal: primero hay que crear la propia (spec 054). */
+  | "password_change_required"
   | "server";
 
 const STATUS_BY_CODE: Record<AppErrorCode, number> = {
   captcha_required: 403,
+  password_change_required: 403,
   validation: 400,
   unauthorized: 401,
   plan_limit: 402,

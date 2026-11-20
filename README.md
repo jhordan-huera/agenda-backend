@@ -197,10 +197,13 @@ Todas las rutas cuelgan de `/api`. Respuestas JSON; los errores tienen la forma
 
 ## Contraseñas, modo soporte e historia clínica
 
-- **Las contraseñas las pone el super admin**: al agregar el propietario de un negocio, al agregar un
-  miembro a un equipo, al agregar otro super admin y al cambiársela a un usuario (mínimo 8
-  caracteres). Se envían por email. Los usuarios no pueden cambiarla ni hay recuperación por enlace
-  ("¿Olvidaste tu contraseña?" indica el email de soporte). Sólo el super admin cambia la suya. Una
+- **Las contraseñas que pone el super admin son temporales** (spec 054): al agregar el propietario de un
+  negocio, al agregar un miembro a un equipo, al agregar otro super admin y al cambiársela a un usuario
+  (mínimo 8 caracteres). Se envían por email (y, si quiere, por WhatsApp desde el diálogo); al entrar
+  con ella, la persona crea la suya. **«¿Olvidaste tu contraseña?»** envía una contraseña temporal por
+  email (1 hora, una sola vez, la misma respuesta exista o no la cuenta; la de siempre sigue sirviendo
+  hasta usarla). Cualquier cuenta cambia la suya en Configuración → Perfil con la actual. No hay
+  enlaces para definirla. Una
   cuenta existente sin negocio que pasa a ser propietaria recibe la contraseña que elige el super
   admin y se cierran sus sesiones abiertas. Quien se registra por `/register` elige la suya (mínimo 8
   caracteres); se puede cerrar el registro en Configuración de la plataforma. Riesgo conocido: el

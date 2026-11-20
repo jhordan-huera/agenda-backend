@@ -64,6 +64,7 @@ import type {
   User,
 } from "../shared/types/index.ts";
 import { createUserAccount, hashPassword, isEmailRegistered } from "./accounts.ts";
+import { discardTemporaryPasswords } from "./password-recovery.ts";
 import { discardedEmailSql, emailQuotaStatus } from "./email-limits.ts";
 import { ADMIN_AUDIT_QUERY, parseAuditFilters, queryAuditLogs } from "./activity-service.ts";
 import { businessAnalytics } from "./analytics-service.ts";
@@ -674,8 +675,13 @@ export const adminService = {
       if (existing) {
         // También a una cuenta existente se le pone la contraseña elegida (el super admin la conoce)
         // y se cierran sus sesiones abiertas, como al cambiarla desde Usuarios.
-        await db.query("update users set password_hash = $2 where id = $1", [existing.id, await hashPassword(data.password)]);
+        // Temporal (spec 054): al entrar con ella, crea la suya; las temporales del email dejan de servir.
+        await db.query("update users set password_hash = $2, password_change_required = true where id = $1", [
+          existing.id,
+          await hashPassword(data.password),
+        ]);
         await db.query("delete from sessions where user_id = $1", [existing.id]);
+        await discardTemporaryPasswords(db, existing.id);
       }
       const owner = existing ?? (await createUserAccount(db, data));
 
@@ -1192,15 +1198,20 @@ export const adminService = {
     });
   },
 
-  /** Pone la contraseña que elige el super admin, se la envía por email y cierra sus sesiones abiertas. */
+  /**
+   * Pone la contraseña que elige el super admin, se la envía por email y cierra sus sesiones abiertas. Es temporal (spec
+   * 054): al entrar con ella, la persona crea la suya. El diálogo puede además mandarla por WhatsApp desde el navegador
+   * del super admin; la API no la devuelve.
+   */
   async setUserPassword(ctx: RequestContext, userId: string, input: unknown): Promise<void> {
     const actor = authorizeSuperAdmin(ctx);
     const { password } = parseInput(userPasswordSchema, input);
     await transaction(async (db) => {
       const user = await findUser(db, userId, true);
       assertCanManageAccount(ctx, user, "cambiar la contraseña de");
-      await db.query("update users set password_hash = $2 where id = $1", [userId, await hashPassword(password)]);
+      await db.query("update users set password_hash = $2, password_change_required = true where id = $1", [userId, await hashPassword(password)]);
       await db.query("delete from sessions where user_id = $1", [userId]);
+      await discardTemporaryPasswords(db, userId);
       await queueEmail(db, {
         businessId: null,
         type: "password_reset",
@@ -1214,7 +1225,7 @@ export const adminService = {
         action: "platform.user_password_changed",
         entityType: "user",
         entityId: userId,
-        summary: `Cambió la contraseña de ${getFullName(user)} (${user.email})`,
+        summary: `Le puso una contraseña temporal a ${getFullName(user)} (${user.email})`,
       });
     });
   },

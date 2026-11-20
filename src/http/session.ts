@@ -1,7 +1,13 @@
 import type { CookieOptions, RequestHandler, Response } from "express";
 import { config } from "../config.ts";
 import { findSessionByToken, type IssuedSession } from "../services/auth-service.ts";
-import { requireUser, superAdminNeedsTwoFactor, TWO_FACTOR_REQUIRED_CODE, TWO_FACTOR_REQUIRED_MESSAGE } from "../services/context.ts";
+import {
+  PASSWORD_CHANGE_REQUIRED_MESSAGE,
+  requireUser,
+  superAdminNeedsTwoFactor,
+  TWO_FACTOR_REQUIRED_CODE,
+  TWO_FACTOR_REQUIRED_MESSAGE,
+} from "../services/context.ts";
 import { DEVICE_COOKIE } from "../services/trusted-device.ts";
 import { AppError } from "./errors.ts";
 
@@ -69,8 +75,23 @@ export const requireSuperAdminTwoFactor: RequestHandler = (req, res, next) => {
  */
 export const requireSignedIn: RequestHandler = (req, _res, next) => {
   requireUser(req.ctx);
+  assertPasswordChanged(req.ctx.passwordChangeRequired);
   next();
 };
+
+/**
+ * La sesión que se abrió con una contraseña temporal (spec 054) sólo puede crear la contraseña nueva: el panel
+ * (/businesses, /users, /images, /admin, dentro de requireSignedIn), /push y las rutas de /auth que no son crear la
+ * contraseña, ver la sesión, el modo de pantalla o cerrar sesión responden 403 `password_change_required`.
+ */
+export const requirePasswordChanged: RequestHandler = (req, _res, next) => {
+  assertPasswordChanged(req.ctx.passwordChangeRequired);
+  next();
+};
+
+function assertPasswordChanged(required: boolean | undefined): void {
+  if (required) throw new AppError("password_change_required", PASSWORD_CHANGE_REQUIRED_MESSAGE);
+}
 
 /**
  * Protección CSRF: toda petición que modifica datos debe llevar la cabecera

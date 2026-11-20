@@ -733,6 +733,8 @@ export interface BlockedTime {
 export type EmailType =
   | "welcome"
   | "password_reset"
+  /** «¿Olvidaste tu contraseña?»: la contraseña temporal, que sirve una vez y vence en 1 hora (spec 054). */
+  | "temporary_password"
   | "team_invite"
   | "booking_created"
   | "booking_received"

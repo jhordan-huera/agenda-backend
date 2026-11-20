@@ -30,6 +30,7 @@ export type EmailPriority = "team" | "patient" | "business";
  */
 export const EMAIL_PRIORITY: Record<EmailType, EmailPriority> = {
   password_reset: "team",
+  temporary_password: "team",
   team_invite: "team",
   account_security_changed: "team",
   platform_admin_added: "team",

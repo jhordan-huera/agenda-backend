@@ -31,15 +31,18 @@ export async function findUserById(db: Db, userId: string): Promise<User | null>
   return one<User>(db, `select ${userColumns()} from users where id = $1`, [userId]);
 }
 
-/** Crea el usuario con la contraseña que eligió el super admin (se le envía por email). */
+/**
+ * Crea el usuario con la contraseña que eligió el super admin (se le envía por email). Es temporal (spec 054): al entrar
+ * con ella, la persona crea la suya.
+ */
 export async function createUserAccount(
   db: Db,
   person: { firstName: string; lastName: string; email: string; password: string },
 ): Promise<User> {
   return (await one<User>(
     db,
-    `insert into users (first_name, last_name, email, password_hash)
-     values ($1, $2, $3, $4)
+    `insert into users (first_name, last_name, email, password_hash, password_change_required)
+     values ($1, $2, $3, $4, true)
      returning ${userColumns()}`,
     [person.firstName, person.lastName, person.email, await hashPassword(person.password)],
   ))!;

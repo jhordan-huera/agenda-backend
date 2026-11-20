@@ -72,7 +72,8 @@ export const QUERY_TEXT_MAX = 160;
  * - cron_runs: cada lunes a las 12:00 se borran las pasadas de antes (src/jobs/scheduled-tasks.ts);
  * - notifications: el contenido, cada lunes a las 12:00 (purgeOldEmailContent; los que siguen en cola no se tocan);
  * - audit_logs: purge_audit_logs (migración 026): 5 meses, las sesiones 90 días y la historia clínica 5 años;
- * - sessions y login_challenges: deleteExpiredSessions, al caducar;
+ * - sessions, login_challenges y temporary_passwords: deleteExpiredSessions, al caducar (las contraseñas temporales,
+ *   un día después de vencer o de usarse);
  * - panel_notices: NOTICE_DAYS = 30 (cleanupPanelNotices; sus lecturas, en cascada);
  * - push_messages: PUSH_MESSAGE_DAYS = 7; push_subscriptions en pausa: PAUSED_DEVICE_DAYS = 90 (cleanupPush);
  * - payment_receipts: RECEIPT_RETENTION_MONTHS = 3 después de la cita (purgeOldReceipts);
@@ -117,6 +118,10 @@ export const TABLE_INFO: Record<string, { label: string; retention: string }> = 
   users: { label: "Cuentas", retention: "Nunca" },
   sessions: { label: "Sesiones abiertas", retention: "Al caducar (como mucho 30 días)" },
   login_challenges: { label: "Verificación en dos pasos (códigos por usar)", retention: "Al caducar" },
+  temporary_passwords: {
+    label: "Contraseñas temporales de «¿Olvidaste tu contraseña?» (sólo su huella)",
+    retention: "Un día después de vencer (1 hora) o de usarse",
+  },
   rate_limits: { label: "Límites de peticiones", retention: "Al vencer cada límite" },
   image_uploads: { label: "Subidas de logos y fotos", retention: "24 horas" },
   push_subscriptions: { label: "Aparatos con avisos en el celular", retention: "Los pausados, a los 90 días" },
@@ -199,6 +204,7 @@ const QUERY_LABELS: { pattern: RegExp; label: string; cron?: true; onlySupabase?
   { pattern: /^update notifications set body = /, label: "El cron borra el contenido de los emails viejos", cron: true },
   { pattern: /^delete from sessions where expires_at\b/, label: "El cron borra las sesiones caducadas", cron: true },
   { pattern: /^delete from login_challenges where expires_at\b/, label: "El cron borra los códigos de verificación caducados", cron: true },
+  { pattern: /^delete from temporary_passwords where\b/, label: "El cron borra las contraseñas temporales vencidas o usadas", cron: true },
   { pattern: /^select id from businesses where status = .*notification_settings/, label: "El cron busca los negocios con recordatorios", cron: true },
   { pattern: /^with zones as materialized\b/, label: "El cron prepara la analítica", cron: true },
   { pattern: /^insert into analytics_snapshots\b/, label: "El cron guarda la foto de la analítica", cron: true },
