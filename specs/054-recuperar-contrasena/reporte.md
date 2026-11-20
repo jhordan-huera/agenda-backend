@@ -74,7 +74,7 @@ aplicó sobre una base nueva con las 60 anteriores.
 
 | Repo | Commit | Mensaje |
 |---|---|---|
-| agenda-backend | ac7c27e | Spec 054: la contraseña temporal, la sesión que sólo crea la nueva, la del soporte temporal, el cambio en Perfil, migración 061 y pruebas |
+| agenda-backend | f5334cf | Spec 054: la contraseña temporal, la sesión que sólo crea la nueva, la del soporte temporal, el cambio en Perfil, migración 061 y pruebas |
 | agenda-front | 5ad1014 | Spec 054: «¿Olvidaste tu contraseña?», «Crea tu contraseña nueva», Perfil y «Enviar por WhatsApp» en el diálogo del soporte |
 
 ## Cómo publicarlo
