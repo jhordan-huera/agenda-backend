@@ -58,7 +58,7 @@ ok(r.status === 200, "crear negocio", r.body);
 const businessId = r.body.business.id;
 const emails = (await admin("GET", "/admin/emails")).body;
 const created = emails.find((e: any) => e.type === "business_created" && e.to === "sara@example.com");
-ok(created && created.body.includes("Contraseña: ••••••••"), "el email guardado muestra la contraseña oculta", created?.body);
+ok(created && created.body.includes("Contraseña temporal: ••••••••"), "el email guardado muestra la contraseña oculta", created?.body);
 ok(!JSON.stringify(emails).includes(ownerPassword), "el super admin no ve la contraseña en el registro de emails");
 let row = (await db.query("select body, html, secret from notifications where id = $1", [created.id])).rows[0];
 ok(row.secret === ownerPassword, "la contraseña queda aparte hasta que se envía el email");
@@ -66,7 +66,7 @@ ok(!row.body.includes(ownerPassword) && !row.html.includes(ownerPassword), "ni e
 const tricky = "A$&b<c>'d";
 const outgoing = outgoingContent({ ...row, secret: tricky });
 ok(
-  outgoing.text.includes(`Contraseña: ${tricky}`) && !outgoing.text.includes("••••••••"),
+  outgoing.text.includes(`Contraseña temporal: ${tricky}`) && !outgoing.text.includes("••••••••"),
   "el email que sale lleva la contraseña real",
   outgoing.text,
 );
@@ -105,9 +105,11 @@ const legacy = emailTemplates.teamInvite({
   password: "Vieja<&>Clave'1",
   loginUrl: "https://agenda.example/login",
 });
+// Los emails de antes decían «Contraseña:» (desde la spec 054, «Contraseña temporal:»).
+const oldLabel = (text: string) => text.replaceAll("Contraseña temporal", "Contraseña");
 const inserted = await db.query(
   "insert into notifications (business_id, type, to_email, subject, body, html, status) values (null, 'team_invite', 'ana@example.com', $1, $2, $3, 'sent') returning id",
-  [legacy.subject, legacy.body, legacy.html],
+  [legacy.subject, oldLabel(legacy.body), oldLabel(legacy.html)],
 );
 const migration = readFileSync(new URL("../db/migrations/015_email_secrets.sql", import.meta.url), "utf8");
 await db.query(migration.slice(migration.indexOf("update notifications")));

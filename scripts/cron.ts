@@ -76,6 +76,7 @@ const EMAIL_GROUPS: Record<EmailType, [string, string]> = {
   business_created: ["Negocio creado", "Negocios creados"],
   team_invite: ["Alta en un equipo", "Altas en un equipo"],
   password_reset: ["Contraseña cambiada", "Contraseñas cambiadas"],
+  temporary_password: ["Contraseña temporal («¿Olvidaste tu contraseña?»)", "Contraseñas temporales («¿Olvidaste tu contraseña?»)"],
   welcome: ["Bienvenida", "Bienvenidas"],
   business_suspended: ["Negocio suspendido", "Negocios suspendidos"],
   business_reactivated: ["Negocio reactivado", "Negocios reactivados"],

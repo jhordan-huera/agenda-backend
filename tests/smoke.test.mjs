@@ -1,4 +1,4 @@
-import { createBusinessWithOwner } from "./helpers/business.mjs";
+import { acceptSupportPassword, createBusinessWithOwner } from "./helpers/business.mjs";
 import { cedulaFor } from "./helpers/cedula.mjs";
 // Pruebas de extremo a extremo contra la API de prueba.
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
@@ -12,6 +12,9 @@ const ok = (cond, label, extra) => {
 };
 
 function agent() {
+  // Varias cookies a la vez, como un navegador: la sesión y el dispositivo de confianza (spec 053; spec 054 al cambiar la
+  // contraseña, que sólo manda la del dispositivo).
+  const jar = new Map();
   let cookie = "";
   return async (method, path, body, headers = {}) => {
     if (body && typeof body === "object" && "documentId" in body && body.documentId === undefined) body = { ...body, documentId: cedulaFor(body.email) };
@@ -28,8 +31,11 @@ function agent() {
     const set = res.headers.getSetCookie?.() ?? [];
     for (const c of set) {
       const [pair] = c.split(";");
-      cookie = pair.endsWith("=") ? "" : pair;
+      const at = pair.indexOf("=");
+      if (pair.endsWith("=")) jar.delete(pair.slice(0, at));
+      else jar.set(pair.slice(0, at), pair.slice(at + 1));
     }
+    cookie = [...jar].map(([name, value]) => `${name}=${value}`).join("; ");
     const text = await res.text();
     let json = null;
     try { json = text ? JSON.parse(text) : undefined; } catch { json = text; }
@@ -172,6 +178,7 @@ r = await supportAdmin("PUT", `/admin/businesses/${lauraBusinessId}/plan`, { pla
 ok(r.status === 409, "volver a Free con 2 usuarios → 409", r.body);
 r = await laura("DELETE", `${LB}/team/${newMemberId}`);
 ok(r.status === 204, "quitar miembro");
+acceptSupportPassword("nuevo@example.com");
 r = await agent()("POST", "/auth/login", { email: "nuevo@example.com", password: "NuevoClave1", remember: true });
 ok(r.status === 401 || r.status === 403, "miembro quitado no entra");
 
@@ -293,9 +300,9 @@ ok(r.status === 404, "la ruta antigua /professional ya no existe (daba el email,
 
 console.log("Contraseñas y sesiones");
 r = await ana("POST", "/auth/change-password", { currentPassword: "Clave12345", newPassword: "OtraClave123", confirmPassword: "OtraClave123" });
-ok(r.status === 403, "un usuario normal no cambia su contraseña", r.body);
+ok(r.status === 204, "cualquier cuenta cambia su contraseña con la actual (spec 054)", r.body);
 r = await ana("POST", "/auth/forgot-password", { email: "ana@example.com" });
-ok(r.status === 404, "sin recuperación por enlace");
+ok(r.status === 204, "«¿Olvidaste tu contraseña?» responde 204 (spec 054, se prueba en password-recovery.test.ts)");
 r = await ana("POST", "/auth/logout");
 ok(r.status === 204 && (await ana("GET", "/auth/session")).body === null, "cerrar sesión");
 

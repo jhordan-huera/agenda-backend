@@ -1,5 +1,6 @@
 // Equipo de la plataforma: el super admin principal agrega a otros super admins para el soporte.
 import { execFileSync } from "node:child_process";
+import { acceptSupportPassword } from "./helpers/business.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
@@ -25,6 +26,7 @@ function agent() {
 }
 const login = async (email, password = "demo1234") => {
   const a = agent();
+  acceptSupportPassword(email);
   const r = await a("POST", "/auth/login", { email, password, remember: true });
   return { a, session: r.body, status: r.status };
 };

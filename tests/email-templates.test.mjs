@@ -61,7 +61,7 @@ ok(confirmed.html.includes("Clínica &amp; Co"), "también el nombre del negocio
 ok(!/Precio/.test(confirmed.body) && !/Precio/.test(confirmed.html), "sin precio cuando el servicio lo oculta");
 ok(/Precio: \$35/.test(emailTemplates.bookingReceived(appointment).body), "el negocio sí ve el precio");
 const created = all[1];
-ok(/Contraseña: Clave2026!/.test(created.body) && /Iniciar sesión: https:\/\/agenda\.example\/login/.test(created.body), "texto: datos de acceso y enlace del botón", created.body);
+ok(/Contraseña temporal: Clave2026!/.test(created.body) && /Iniciar sesión: https:\/\/agenda\.example\/login/.test(created.body), "texto: datos de acceso y enlace del botón", created.body);
 ok(/href="https:\/\/agenda\.example\/login"/.test(created.html) && /Si el botón no funciona/.test(created.html), "HTML: botón con enlace y alternativa en texto");
 const malicious = emailTemplates.appointmentCancelled({ ...appointment, bookingUrl: "javascript:alert(1)" });
 ok(!malicious.html.includes("javascript:"), "un enlace que no es http(s) no llega al HTML");

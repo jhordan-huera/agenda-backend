@@ -23,8 +23,30 @@ export const registerSchema = z
     message: "Las contraseñas no coinciden",
   });
 
+/**
+ * «¿Olvidaste tu contraseña?» (spec 054): el email de la cuenta. La API responde lo mismo exista o no (no revela quién
+ * está registrado) y, si existe, le envía una contraseña temporal.
+ */
+export const forgotPasswordSchema = z.object({
+  email: emailField,
+  captchaToken: z.string().max(4096).optional(),
+});
 
-/** Cambio de la propia contraseña: sólo el super admin (las de los usuarios las pone él). */
+/**
+ * «Crea tu contraseña nueva» (spec 054): después de entrar con una contraseña temporal (la del email o la que puso el
+ * soporte). No pide la actual: la API comprueba que la sesión se abrió con una temporal y que la nueva es distinta.
+ */
+export const newPasswordSchema = z
+  .object({
+    newPassword: passwordField,
+    confirmPassword: z.string(),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    path: ["confirmPassword"],
+    message: "Las contraseñas no coinciden",
+  });
+
+/** Cambio de la propia contraseña, con la actual: cualquier cuenta del equipo y el super admin (spec 054). */
 export const changePasswordSchema = z
   .object({
     currentPassword: z.string().min(1, "Ingresa tu contraseña actual"),
@@ -81,4 +103,6 @@ export type TwoFactorLoginInput = z.infer<typeof twoFactorLoginSchema>;
 export type TwoFactorDisableInput = z.infer<typeof twoFactorDisableSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
+export type NewPasswordInput = z.infer<typeof newPasswordSchema>;
 export type ThemeModeInput = z.infer<typeof themeModeSchema>;

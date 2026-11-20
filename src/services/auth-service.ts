@@ -6,7 +6,14 @@ import { AppError } from "../http/errors.ts";
 import { THEME_MODE_LABELS } from "../shared/lib/constants/app.ts";
 import { emailTemplates } from "../shared/lib/email/templates.ts";
 import { formatSupportContact, getFullName } from "../shared/lib/format.ts";
-import { changePasswordSchema, loginSchema, registerSchema, themeModeSchema, twoFactorLoginSchema } from "../shared/lib/validations/auth.ts";
+import {
+  changePasswordSchema,
+  loginSchema,
+  newPasswordSchema,
+  registerSchema,
+  themeModeSchema,
+  twoFactorLoginSchema,
+} from "../shared/lib/validations/auth.ts";
 import type { BrandColors, BusinessRole, BusinessStatus, PlatformRole, ThemeMode, TwoFactorChallenge, User } from "../shared/types/index.ts";
 import { hashPassword, needsRehash, verifyPassword } from "./accounts.ts";
 import { logAudit } from "./audit.ts";
@@ -17,7 +24,8 @@ import { pausePushDevices } from "./push-device-service.ts";
 import { checkCaptchaToken } from "../http/captcha.ts";
 import { incrementCounter } from "../http/rate-limit-store.ts";
 import { issueDeviceToken, isTrustedDevice } from "./trusted-device.ts";
-import { queueAccountSecurityEmail } from "./account-alerts.ts";
+import { queueAccountSecurityEmail, queueOwnPasswordEmail } from "./account-alerts.ts";
+import { deleteOldTemporaryPasswords, discardTemporaryPasswords, isLastUsedTemporary, useTemporaryPassword } from "./password-recovery.ts";
 import {
   accountAttemptsToday,
   CAPTCHA_AFTER_ATTEMPTS,
@@ -61,6 +69,11 @@ export interface Session {
   panelColors: BrandColors | null;
   /** Modo de pantalla de la cuenta (spec 019), de cualquier rol. "auto": sigue al modo del aparato. */
   themeMode: ThemeMode;
+  /**
+   * Se entró con una contraseña temporal (la del email o la que puso el soporte, spec 054): el panel sólo muestra «Crea
+   * tu contraseña nueva» y la API responde `password_change_required` al resto.
+   */
+  passwordChangeRequired: boolean;
 }
 
 /** Token de sesión recién emitido: la ruta lo guarda en una cookie httpOnly. */
@@ -95,13 +108,17 @@ const sha256 = (value: string) => createHash("sha256").update(value).digest("hex
  */
 const DUMMY_PASSWORD_HASH = "$2b$12$9PfTLcduCrpzXq42WwlcRuyP6cf8HmcoIqDRGpO.I/s12UC5QFGeG";
 
-/** La cuenta como la lee el inicio de sesión: con la contraseña, la verificación y el modo de pantalla (spec 019). */
-type LoginRow = User & { passwordHash: string; twoFactor: boolean; themeMode: ThemeMode };
+/**
+ * La cuenta como la lee el inicio de sesión: con la contraseña, la verificación, el modo de pantalla (spec 019) y si su
+ * contraseña la puso el soporte (spec 054: al entrar, hay que crear la propia).
+ */
+type LoginRow = User & { passwordHash: string; twoFactor: boolean; themeMode: ThemeMode; mustChange: boolean };
 
 const withoutSecrets = ({
   passwordHash: _password,
   twoFactor: _twoFactor,
   themeMode: _themeMode,
+  mustChange: _mustChange,
   ...user
 }: LoginRow): User => user;
 
@@ -123,18 +140,19 @@ async function blockInactive(user: User, connection: ClientConnection): Promise<
   throw new AppError("forbidden", `Tu cuenta está desactivada. Escribe a ${supportContact} para recuperar el acceso.`);
 }
 
-async function createSession(db: Db, userId: string, remember: boolean): Promise<IssuedSession> {
+/** `passwordChangeRequired`: la sesión se abre con una contraseña temporal y sólo puede crear la nueva (spec 054). */
+async function createSession(db: Db, userId: string, remember: boolean, passwordChangeRequired = false): Promise<IssuedSession> {
   const token = randomBytes(32).toString("base64url");
   const row = (await one<{ expiresAt: string }>(
     db,
-    `insert into sessions (user_id, token_hash, expires_at, remember)
+    `insert into sessions (user_id, token_hash, expires_at, remember, password_change_required)
      select u.id, $2,
             case when $3::boolean then now() + make_interval(days => least($4::int, case when u.platform_role = 'super_admin' then $5::int else $6::int end))
                  else now() + make_interval(hours => $7) end,
-            $3
+            $3, $8
        from users u where u.id = $1
      returning expires_at as "expiresAt"`,
-    [userId, sha256(token), remember, REMEMBER_DAYS, SUPER_ADMIN_REMEMBER_DAYS, REMEMBER_MAX_DAYS, IDLE_HOURS],
+    [userId, sha256(token), remember, REMEMBER_DAYS, SUPER_ADMIN_REMEMBER_DAYS, REMEMBER_MAX_DAYS, IDLE_HOURS, passwordChangeRequired],
   ))!;
   return { token, expiresAt: new Date(row.expiresAt), persistent: remember };
 }
@@ -159,11 +177,13 @@ export async function findSessionByToken(token: string): Promise<FoundSession | 
       twoFactorEnabled: boolean;
       themeMode: ThemeMode;
       renewedUntil: string | null;
+      passwordChangeRequired: boolean;
     }
   >(
     pool,
     `with found as (
        select s.id as "sessionId", s.remember, s.last_seen_at < now() - make_interval(mins => $2) as stale,
+              s.password_change_required as "passwordChangeRequired",
               u.two_factor_secret is not null as "twoFactorEnabled", u.theme_mode as "themeMode", ${userColumns("u")}
          from sessions s
          join users u on u.id = s.user_id
@@ -188,12 +208,28 @@ export async function findSessionByToken(token: string): Promise<FoundSession | 
     [sha256(token), RENEW_EVERY_MINUTES, REMEMBER_DAYS, MAX_SESSION_HOURS, IDLE_HOURS, SUPER_ADMIN_REMEMBER_DAYS, REMEMBER_MAX_DAYS],
   );
   if (!row) return null;
-  const { sessionId, remember, twoFactorEnabled, themeMode, renewedUntil, stale: _stale, ...user } = row;
-  return { user, sessionId, twoFactorEnabled, themeMode, renewedUntil: remember && renewedUntil ? new Date(renewedUntil) : null };
+  const { sessionId, remember, twoFactorEnabled, themeMode, renewedUntil, passwordChangeRequired, stale: _stale, ...user } = row;
+  return {
+    user,
+    sessionId,
+    twoFactorEnabled,
+    themeMode,
+    passwordChangeRequired,
+    renewedUntil: remember && renewedUntil ? new Date(renewedUntil) : null,
+  };
 }
 
-/** `themeMode`: el de la cuenta, leído en la misma consulta que el usuario (spec 019). */
-async function resolveSession(db: Db, user: User, twoFactorEnabled: boolean, themeMode: ThemeMode): Promise<Session | null> {
+/**
+ * `themeMode`: el de la cuenta, leído en la misma consulta que el usuario (spec 019). `passwordChangeRequired`: la de la
+ * sesión (spec 054).
+ */
+async function resolveSession(
+  db: Db,
+  user: User,
+  twoFactorEnabled: boolean,
+  themeMode: ThemeMode,
+  passwordChangeRequired = false,
+): Promise<Session | null> {
   if (!user.isActive) return null;
   const membership = await one<{
     businessId: string;
@@ -230,12 +266,15 @@ async function resolveSession(db: Db, user: User, twoFactorEnabled: boolean, the
     twoFactorSetupRequired: user.platformRole === "super_admin" && config.superAdminTwoFactorRequired && !twoFactorEnabled,
     panelColors: panel?.colors ?? null,
     themeMode,
+    passwordChangeRequired,
   };
 }
 
 export const authService = {
   async getSession(ctx: RequestContext): Promise<Session | null> {
-    return ctx.user ? resolveSession(pool, ctx.user, Boolean(ctx.twoFactorEnabled), ctx.themeMode ?? "auto") : null;
+    return ctx.user
+      ? resolveSession(pool, ctx.user, Boolean(ctx.twoFactorEnabled), ctx.themeMode ?? "auto", Boolean(ctx.passwordChangeRequired))
+      : null;
   },
 
   async signIn(input: unknown, connection: ClientConnection): Promise<SignInResult> {
@@ -243,7 +282,7 @@ export const authService = {
     const row = await one<LoginRow>(
       pool,
       `select ${userColumns()}, password_hash as "passwordHash", two_factor_secret is not null as "twoFactor",
-              theme_mode as "themeMode"
+              theme_mode as "themeMode", password_change_required as "mustChange"
          from users where email = $1`,
       [email],
     );
@@ -268,7 +307,15 @@ export const authService = {
       );
       throw lockedOutError();
     }
-    const valid = await verifyPassword(password, row?.passwordHash ?? DUMMY_PASSWORD_HASH);
+    let valid = await verifyPassword(password, row?.passwordHash ?? DUMMY_PASSWORD_HASH);
+    // Si no es la de siempre, la contraseña temporal pendiente de «¿Olvidaste tu contraseña?» (spec 054). Siempre una
+    // segunda comparación (con un hash de referencia si no hay cuenta): un email inexistente tarda lo mismo.
+    let viaTemporary = false;
+    if (!valid) {
+      if (user?.isActive) viaTemporary = await useTemporaryPassword(user.id, password);
+      else await verifyPassword(password, DUMMY_PASSWORD_HASH);
+      valid = viaTemporary;
+    }
     if (!user || !valid) {
       await logSessionEvent(
         user,
@@ -280,21 +327,38 @@ export const authService = {
       throw new AppError("unauthorized", "Email o contraseña incorrectos.");
     }
     if (!user.isActive) return blockInactive(user, connection);
-    // Las contraseñas de antes del costo 12 se rehacen al entrar (sólo si nadie la cambió entretanto).
     let passwordHash = row!.passwordHash;
-    if (needsRehash(passwordHash)) {
-      const rehashed = await hashPassword(password);
-      await pool.query("update users set password_hash = $2 where id = $1 and password_hash = $3", [user.id, rehashed, passwordHash]);
-      passwordHash = rehashed;
+    if (viaTemporary) {
+      await logSessionEvent(user, { action: "session.temporary_login", summary: "Entró con una contraseña temporal" }, connection);
+      // Un super admin: aviso a la cuenta y al dueño de la plataforma (y por ntfy, account-alerts.ts).
+      if (user.platformRole === "super_admin") {
+        await queueAccountSecurityEmail(pool, user, "Entró con una contraseña temporal («¿Olvidaste tu contraseña?»)", connection);
+      }
+    } else {
+      // Recordó la de siempre: las temporales pendientes dejan de servir.
+      await discardTemporaryPasswords(pool, user.id);
+      // Las contraseñas de antes del costo 12 se rehacen al entrar (sólo si nadie la cambió entretanto).
+      if (needsRehash(passwordHash)) {
+        const rehashed = await hashPassword(password);
+        await pool.query("update users set password_hash = $2 where id = $1 and password_hash = $3", [user.id, rehashed, passwordHash]);
+        passwordHash = rehashed;
+      }
     }
+    // Con una contraseña temporal (o la que puso el soporte), la sesión sólo puede crear la nueva (spec 054).
+    const mustChange = viaTemporary || row!.mustChange;
     // Con la verificación en dos pasos, la sesión se abre al escribir el código (verifyTwoFactor).
     if (row?.twoFactor) {
-      return { twoFactor: { twoFactorRequired: true, challenge: await createLoginChallenge(pool, user.id, remember) } };
+      return { twoFactor: { twoFactorRequired: true, challenge: await createLoginChallenge(pool, user.id, remember, mustChange) } };
     }
-    const issued = await createSession(pool, user.id, remember);
-    await logSessionEvent(user, { action: "session.login", summary: "Inició sesión" }, connection);
+    const issued = await createSession(pool, user.id, remember, mustChange);
+    await logSessionEvent(user, { action: "session.login", summary: viaTemporary ? "Inició sesión con una contraseña temporal" : "Inició sesión" }, connection);
     await attempt.succeeded();
-    return { session: (await resolveSession(pool, user, false, row!.themeMode))!, issued, device: issueDeviceToken(user.id, passwordHash) };
+    return {
+      session: (await resolveSession(pool, user, false, row!.themeMode, mustChange))!,
+      issued,
+      // El navegador queda de confianza cuando tenga su contraseña propia (al crearla, newPassword).
+      device: mustChange ? null : issueDeviceToken(user.id, passwordHash),
+    };
   },
 
   /**
@@ -392,7 +456,7 @@ export const authService = {
     // Cada paso intermedio sirve para una sola sesión.
     const consumed = await one(pool, "delete from login_challenges where id = $1 returning id", [challenge.id]);
     if (!consumed) throw new AppError("unauthorized", "Pasó demasiado tiempo. Vuelve a escribir tu contraseña.");
-    const issued = await createSession(pool, user.id, challenge.remember);
+    const issued = await createSession(pool, user.id, challenge.remember, challenge.passwordChangeRequired);
     await attempt.succeeded();
     await logSessionEvent(
       user,
@@ -406,7 +470,12 @@ export const authService = {
       connection,
     );
     const { passwordHash } = (await one<{ passwordHash: string }>(pool, 'select password_hash as "passwordHash" from users where id = $1', [user.id]))!;
-    return { session: (await resolveSession(pool, user, true, themeMode))!, issued, device: issueDeviceToken(user.id, passwordHash) };
+    const mustChange = challenge.passwordChangeRequired;
+    return {
+      session: (await resolveSession(pool, user, true, themeMode, mustChange))!,
+      issued,
+      device: mustChange ? null : issueDeviceToken(user.id, passwordHash),
+    };
   },
 
   /**
@@ -453,11 +522,13 @@ export const authService = {
    * Cambia la propia contraseña y cierra las demás sesiones. Sólo el super admin: las
    * contraseñas de los usuarios las pone él (para poder entrar en su cuenta si le piden ayuda).
    */
-  async changePassword(ctx: RequestContext, input: unknown, connection: ClientConnection): Promise<void> {
+  /**
+   * POST /auth/change-password (Configuración → Perfil): cualquier cuenta del equipo y el super admin, con la actual
+   * (spec 054; antes sólo el super admin). La actual incorrecta cuenta como intento fallido. Cierra las demás sesiones,
+   * anula las temporales pendientes y avisa por email. Devuelve la cookie del dispositivo de confianza con el hash nuevo.
+   */
+  async changePassword(ctx: RequestContext, input: unknown, connection: ClientConnection): Promise<{ device: DeviceCookie }> {
     const user = requireUser(ctx);
-    if (user.platformRole !== "super_admin") {
-      throw new AppError("forbidden", "Tu contraseña la gestiona el soporte de la plataforma. Escríbele si necesitas cambiarla.");
-    }
     const data = parseInput(changePasswordSchema, input);
     const attempt = await startSessionCheck(user, connection);
     if (!(await isCurrentPassword(user.id, data.currentPassword))) {
@@ -465,12 +536,54 @@ export const authService = {
       throw new AppError("validation", "La contraseña actual no es correcta.");
     }
     await attempt.succeeded();
+    const hash = await hashPassword(data.newPassword);
     await transaction(async (db) => {
-      await db.query("update users set password_hash = $2 where id = $1", [user.id, await hashPassword(data.newPassword)]);
+      await db.query("update users set password_hash = $2, password_change_required = false where id = $1", [user.id, hash]);
       await db.query("delete from sessions where user_id = $1 and id <> $2", [user.id, ctx.sessionId]);
+      await db.query("delete from temporary_passwords where user_id = $1", [user.id]);
       await logSessionEvent(user, { action: "session.password_changed", summary: "Cambió su contraseña" }, connection, db);
-      await queueAccountSecurityEmail(db, user, "Cambió su contraseña", connection);
+      await queueOwnPasswordEmail(db, user, "Cambió su contraseña", connection);
     });
+    return { device: issueDeviceToken(user.id, hash) };
+  },
+
+  /**
+   * POST /auth/new-password: «Crea tu contraseña nueva», después de entrar con una contraseña temporal (la del email o la
+   * que puso el soporte, spec 054). Sólo con la sesión marcada; no pide la actual. La nueva tiene que ser distinta de la
+   * temporal. Pasa a ser su contraseña, cierra las demás sesiones, libera ésta y avisa por email.
+   */
+  async newPassword(ctx: RequestContext, input: unknown, connection: ClientConnection): Promise<{ session: Session; device: DeviceCookie }> {
+    const user = requireUser(ctx);
+    if (!ctx.passwordChangeRequired) {
+      throw new AppError("conflict", "Tu contraseña ya está creada. Para cambiarla, ve a Configuración → Perfil.");
+    }
+    const { newPassword } = parseInput(newPasswordSchema, input);
+    // La temporal del soporte es la contraseña actual de la cuenta; la del email, la última que usó.
+    const current = (await one<{ passwordHash: string; mustChange: boolean }>(
+      pool,
+      'select password_hash as "passwordHash", password_change_required as "mustChange" from users where id = $1',
+      [user.id],
+    ))!;
+    const sameAsSupport = current.mustChange && (await verifyPassword(newPassword, current.passwordHash));
+    if (sameAsSupport || (await isLastUsedTemporary(user.id, newPassword))) {
+      throw new AppError("validation", "Elige una contraseña distinta de la temporal.");
+    }
+    const hash = await hashPassword(newPassword);
+    await transaction(async (db) => {
+      await db.query("update users set password_hash = $2, password_change_required = false where id = $1", [user.id, hash]);
+      await db.query("delete from sessions where user_id = $1 and id <> $2", [user.id, ctx.sessionId]);
+      await db.query("update sessions set password_change_required = false where id = $1", [ctx.sessionId]);
+      await db.query("delete from temporary_passwords where user_id = $1", [user.id]);
+      await logSessionEvent(
+        user,
+        { action: "session.password_changed", summary: "Creó su contraseña nueva después de entrar con una contraseña temporal" },
+        connection,
+        db,
+      );
+      await queueOwnPasswordEmail(db, user, "Creó su contraseña nueva después de entrar con una contraseña temporal", connection);
+    });
+    const session = (await resolveSession(pool, user, Boolean(ctx.twoFactorEnabled), ctx.themeMode ?? "auto", false))!;
+    return { session, device: issueDeviceToken(user.id, hash) };
   },
 
   /**
@@ -524,4 +637,5 @@ export async function isCurrentPassword(userId: string, password: string): Promi
 export async function deleteExpiredSessions(): Promise<void> {
   await pool.query("delete from sessions where expires_at <= now()");
   await pool.query("delete from login_challenges where expires_at <= now()");
+  await deleteOldTemporaryPasswords(pool);
 }

@@ -25,13 +25,16 @@ export const MAX_CHALLENGE_ATTEMPTS = 5;
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
-/** Paso intermedio del inicio de sesión: la contraseña ya es correcta y falta el código. */
-export async function createLoginChallenge(db: Db, userId: string, remember: boolean): Promise<string> {
+/**
+ * Paso intermedio del inicio de sesión: la contraseña ya es correcta y falta el código. `passwordChangeRequired`: se
+ * entró con una contraseña temporal (spec 054) y la sesión que se abra con el código sólo podrá crear la nueva.
+ */
+export async function createLoginChallenge(db: Db, userId: string, remember: boolean, passwordChangeRequired = false): Promise<string> {
   const token = randomBytes(32).toString("base64url");
   await db.query(
-    `insert into login_challenges (user_id, token_hash, remember, expires_at)
-     values ($1, $2, $3, now() + make_interval(mins => $4))`,
-    [userId, sha256(token), remember, CHALLENGE_MINUTES],
+    `insert into login_challenges (user_id, token_hash, remember, expires_at, password_change_required)
+     values ($1, $2, $3, now() + make_interval(mins => $4), $5)`,
+    [userId, sha256(token), remember, CHALLENGE_MINUTES, passwordChangeRequired],
   );
   return token;
 }
@@ -41,13 +44,14 @@ export interface LoginChallenge {
   userId: string;
   remember: boolean;
   attempts: number;
+  passwordChangeRequired: boolean;
 }
 
 /** El paso intermedio vigente de este token, o null si no existe o caducó. */
 export function findLoginChallenge(db: Db, token: string): Promise<LoginChallenge | null> {
   return one<LoginChallenge>(
     db,
-    `select id, user_id as "userId", remember, attempts from login_challenges
+    `select id, user_id as "userId", remember, attempts, password_change_required as "passwordChangeRequired" from login_challenges
       where token_hash = $1 and expires_at > now()`,
     [sha256(token)],
   );

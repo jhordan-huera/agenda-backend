@@ -336,14 +336,24 @@ function zoneSuffix(data: AppointmentEmailData, date: ISODate = data.date): stri
 /** La hora de inicio, con la zona en las citas virtuales: "10:00 (hora de Ecuador, GMT-5)". */
 const startAt = (data: AppointmentEmailData) => `${data.startTime}${zoneSuffix(data)}`;
 
+/** Email y contraseña. Desde la spec 054 las que llegan por email son temporales: al entrar se crea la propia. */
 const credentials = (email: string, password: string): EmailBlock => ({
   kind: "details",
   title: "Tus datos de acceso",
   rows: [
     { label: "Email", value: email },
-    { label: "Contraseña", value: password, mono: true },
+    { label: "Contraseña temporal", value: password, mono: true },
   ],
 });
+
+/** «1 hora», «2 horas», «30 minutos». */
+function describeMinutes(minutes: number): string {
+  if (minutes % 60 === 0) return minutes === 60 ? "1 hora" : `${minutes / 60} horas`;
+  return minutes === 1 ? "1 minuto" : `${minutes} minutos`;
+}
+
+/** La nota de las contraseñas que pone el soporte (spec 054). */
+const TEMPORARY_NOTE = "Es una contraseña temporal: al entrar te pediremos crear la tuya. Si algún día la olvidas, usa «¿Olvidaste tu contraseña?» en el inicio de sesión.";
 
 /**
  * Datos de la cita: servicio, profesional, fecha, hora, precio y lugar (con enlace al mapa). En una serie
@@ -610,7 +620,7 @@ export const emailTemplates = {
         { kind: "text", text: `Te añadieron al equipo de ${data.businessName} con el rol ${data.roleLabel}.` },
         credentials(data.email, data.password),
         { kind: "button", label: "Iniciar sesión", url: data.loginUrl },
-        { kind: "note", text: "Guarda este email: si necesitas otra contraseña, pídesela al soporte." },
+        { kind: "note", text: TEMPORARY_NOTE },
       ],
     }),
 
@@ -629,7 +639,7 @@ export const emailTemplates = {
         { kind: "button", label: "Entrar al panel", url: data.loginUrl },
         {
           kind: "note",
-          text: "Al entrar por primera vez tendrás que activar la verificación en dos pasos (con una app de autenticación en tu celular): es obligatoria para los super admins. Guarda este email: si necesitas otra contraseña, pídesela a quien te agregó.",
+          text: "Es una contraseña temporal: al entrar por primera vez crearás la tuya y activarás la verificación en dos pasos (con una app de autenticación en tu celular), que es obligatoria para los super admins. Si algún día olvidas tu contraseña, usa «¿Olvidaste tu contraseña?» en el inicio de sesión.",
         },
       ],
     }),
@@ -656,7 +666,7 @@ export const emailTemplates = {
           title: "Tu página de reservas",
           rows: [{ label: "Compártela con tus clientes", value: data.bookingUrl.replace(/^https?:\/\//, ""), href: data.bookingUrl }],
         },
-        { kind: "note", text: "Guarda este email: si necesitas otra contraseña, pídesela al soporte." },
+        { kind: "note", text: TEMPORARY_NOTE },
       ],
     }),
 
@@ -689,17 +699,63 @@ export const emailTemplates = {
       ],
     }),
 
+  /** La contraseña que pone el soporte con «Cambiar contraseña»: temporal desde la spec 054. */
   passwordChanged: (firstName: string, email: string, password: string, loginUrl: string): EmailContent =>
     platformEmail({
-      subject: "Tu nueva contraseña",
-      preheader: "El soporte cambió tu contraseña.",
-      title: "Tu nueva contraseña",
+      subject: "Tu contraseña temporal",
+      preheader: "El soporte te puso una contraseña temporal: al entrar crearás la tuya.",
+      title: "Tu contraseña temporal",
       greeting: `Hola ${firstName}:`,
       blocks: [
-        { kind: "text", text: `El equipo de soporte de ${APP_NAME} cambió tu contraseña.` },
+        { kind: "text", text: `El equipo de soporte de ${APP_NAME} te puso una contraseña temporal. Al entrar te pediremos crear la tuya.` },
         credentials(email, password),
         { kind: "button", label: "Iniciar sesión", url: loginUrl },
         { kind: "note", text: "Si no pediste este cambio, responde a este email." },
+      ],
+    }),
+
+  /**
+   * «¿Olvidaste tu contraseña?» (spec 054): una contraseña temporal que sirve una vez y vence en `minutes`. La de siempre
+   * sigue funcionando hasta que se use esta.
+   */
+  temporaryPassword: (data: { firstName: string; email: string; password: string; minutes: number; loginUrl: string }): EmailContent =>
+    platformEmail({
+      subject: "Tu contraseña temporal",
+      preheader: `Sirve una sola vez y vence en ${describeMinutes(data.minutes)}.`,
+      title: "Tu contraseña temporal",
+      greeting: `Hola ${data.firstName}:`,
+      blocks: [
+        { kind: "text", text: `Pediste recuperar el acceso a tu cuenta de ${APP_NAME}. Entra con esta contraseña temporal: después te pediremos crear una nueva.` },
+        credentials(data.email, data.password),
+        { kind: "callout", tone: "warning", text: `Sirve una sola vez y vence en ${describeMinutes(data.minutes)}. Si pediste varias, usa la última.` },
+        { kind: "button", label: "Iniciar sesión", url: data.loginUrl },
+        { kind: "note", text: "Si no fuiste tú, ignora este correo: tu contraseña de siempre sigue funcionando." },
+      ],
+    }),
+
+  /**
+   * La persona cambió su contraseña (spec 054): al crear la nueva después de una temporal o en Configuración → Perfil.
+   * A las cuentas del equipo; las de super admin reciben `accountSecurityChanged`, que también va al dueño.
+   */
+  ownPasswordChanged: (data: { firstName: string; email: string; at: string; ip: string; browser: string; recoverUrl: string }): EmailContent =>
+    platformEmail({
+      subject: "Cambiaste tu contraseña",
+      preheader: `Se cambió la contraseña de tu cuenta de ${APP_NAME}.`,
+      title: "Cambiaste tu contraseña",
+      greeting: `Hola ${data.firstName}:`,
+      blocks: [
+        { kind: "text", text: `Se cambió la contraseña de tu cuenta de ${APP_NAME}.` },
+        {
+          kind: "details",
+          rows: [
+            { label: "Cuenta", value: data.email },
+            { label: "Cuándo", value: data.at },
+            { label: "IP", value: data.ip, mono: true },
+            { label: "Navegador", value: data.browser },
+          ],
+        },
+        { kind: "callout", tone: "warning", text: "Si no fuiste tú, recupera el acceso ahora y avisa al soporte." },
+        { kind: "button", label: "Recuperar el acceso", url: data.recoverUrl },
       ],
     }),
 

@@ -15,7 +15,15 @@ export interface RequestContext {
   twoFactorEnabled?: boolean;
   /** Modo de pantalla de la cuenta (spec 019), leído con la sesión: lo devuelve GET /auth/session. */
   themeMode?: ThemeMode;
+  /**
+   * La sesión se abrió con una contraseña temporal (la del email o la que puso el soporte, spec 054): sólo puede crear
+   * la contraseña nueva, ver la sesión y cerrarla. El resto responde `password_change_required`.
+   */
+  passwordChangeRequired?: boolean;
 }
+
+/** Lo que responde la API a una sesión que todavía tiene que crear su contraseña (spec 054). */
+export const PASSWORD_CHANGE_REQUIRED_MESSAGE = "Crea tu contraseña nueva para seguir.";
 
 /** Código del error que reciben las peticiones del super admin mientras no active la verificación en dos pasos. */
 export const TWO_FACTOR_REQUIRED_CODE = "two_factor_required";

@@ -49,6 +49,28 @@ export async function queueAccountSecurityEmail(db: Db, user: User, change: stri
   }
 }
 
+/**
+ * La persona cambió su propia contraseña (spec 054): al crear la nueva después de una temporal o en Configuración →
+ * Perfil. Un super admin, como siempre: a la cuenta y al dueño de la plataforma. Las cuentas del equipo, sólo a ellas,
+ * con «Recuperar el acceso» por si no fueron ellas.
+ */
+export async function queueOwnPasswordEmail(db: Db, user: User, change: string, connection: ClientConnection): Promise<void> {
+  if (user.platformRole === "super_admin") return queueAccountSecurityEmail(db, user, change, connection);
+  await queueEmail(db, {
+    businessId: null,
+    type: "account_security_changed",
+    to: user.email,
+    ...emailTemplates.ownPasswordChanged({
+      firstName: user.firstName,
+      email: user.email,
+      at: describeMoment(new Date()),
+      ip: connection.ip,
+      browser: describeBrowser(connection.userAgent),
+      recoverUrl: `${appOrigin()}/forgot-password`,
+    }),
+  });
+}
+
 /* ------------------------------------------------------------ Aviso de ntfy -- */
 
 /** Cambios detallados por pasada del cron; de los demás sólo se dice cuántos son. */
@@ -63,6 +85,8 @@ const ACCOUNT_CHANGES: Record<string, string> = {
   "platform.user_password_changed": "Le cambiaron la contraseña desde el panel",
   // Revisión de seguridad 2026-11-18: la contraseña ya la sabe alguien que no tiene el celular.
   "session.second_factor_failed": "Alguien escribió bien su contraseña y falló el código de verificación",
+  // Spec 054: «¿Olvidaste tu contraseña?». Quien lee su email entra sin la contraseña de siempre (falta el código).
+  "session.temporary_login": "Entró con una contraseña temporal",
 };
 
 export interface AccountChange {

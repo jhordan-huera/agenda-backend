@@ -2,6 +2,7 @@
 // llegan con la sesión. Nadie cambia los de otro y las cuentas de los negocios no los tienen.
 import { execFileSync } from "node:child_process";
 import type { BrandColors } from "../src/shared/types/index.ts";
+import { acceptSupportPassword } from "./helpers/business.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 const DEMO = "demo1234";
@@ -30,6 +31,7 @@ const sql = (query: string) =>
   execFileSync("psql", [process.env.TEST_DATABASE_URL!, "-qAtc", query], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 const login = async (email: string, secret = DEMO) => {
   const a = agent();
+  acceptSupportPassword(email);
   const session = (await a("POST", "/auth/login", { email, password: secret, remember: true })).body;
   return { a, session };
 };

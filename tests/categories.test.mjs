@@ -1,5 +1,5 @@
 // Categorías de negocio en la base de datos.
-import { businessInput, createBusinessWithOwner } from "./helpers/business.mjs";
+import { acceptSupportPassword, businessInput, createBusinessWithOwner } from "./helpers/business.mjs";
 
 const BASE = process.env.TEST_API_URL ?? "http://localhost:4100/api";
 let failures = 0;
@@ -22,6 +22,7 @@ function agent() {
 }
 const login = async (email, password = "demo1234") => {
   const a = agent();
+  acceptSupportPassword(email);
   const r = await a("POST", "/auth/login", { email, password, remember: true });
   return { a, session: r.body };
 };

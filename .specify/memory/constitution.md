@@ -54,15 +54,20 @@ Agenda360 guarda datos de salud (historia clínica, citas, contacto de pacientes
 Las decisiones ya tomadas no se cambian como "arreglo" ni como mejora de seguridad sin preguntar.
 Si una tiene un riesgo, se menciona como riesgo aceptado. Vigentes:
 
-- Las contraseñas las pone siempre el super admin y van por email: no hay "olvidé mi contraseña"
-  automático ni enlaces para definirla; mínimo 8 caracteres.
+- Las contraseñas del equipo y de los super admins (spec 054, decisión del dueño del 2026-11-20, que
+  reemplaza a la del 2026-10-04): la que pone el super admin (altas y «Cambiar contraseña») es temporal
+  y va por email, y también por WhatsApp desde su navegador si quiere; al entrar con ella se crea la
+  propia. «¿Olvidaste tu contraseña?» envía una contraseña temporal por email (1 hora, una sola vez,
+  la misma respuesta exista o no la cuenta, y la de siempre sigue sirviendo hasta usarla). Cualquier
+  cuenta cambia la suya en Configuración → Perfil con la actual. No hay enlaces para definirla;
+  mínimo 8 caracteres. La del paciente (spec 052) sigue con el enlace de su consultorio.
 - Sólo el super admin agrega miembros de equipo, cambia planes y categorías de negocio.
 - En modo soporte el super admin tiene permisos de propietario, salvo la historia clínica: no ve ni
   cambia antecedentes, evoluciones, archivos ni su actividad, ni da o quita el acceso clínico al
   equipo; sí gestiona los formatos y la activa o desactiva (spec 025, 2026-10-19). No se avisa al
   negocio de la entrada ni se registran sus consultas, sólo lo que crea o cambia. Riesgos aceptados:
-  el super admin pone las contraseñas y podría entrar como el propietario (se enteraría por el email
-  de la contraseña nueva), y el acceso técnico a la base y a las copias, reservado al mantenimiento,
+  el super admin pone las contraseñas temporales y podría usar una antes que la persona (ésta ya no
+  podría entrar con ella y lo notaría), y el acceso técnico a la base y a las copias, reservado al mantenimiento,
   llega a los datos (la política lo dice).
 - La verificación en dos pasos es obligatoria para el super admin.
 - Las citas pueden llegar al profesional como invitaciones de calendario por email (spec 027,
@@ -458,4 +463,4 @@ Reglas del flujo:
   aclara la redacción.
 - Las decisiones de producto nuevas (principio III) se añaden aquí cuando se toman.
 
-**Versión**: 1.51.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-18
+**Versión**: 1.52.0 | **Ratificada**: 2026-10-13 | **Última modificación**: 2026-11-20

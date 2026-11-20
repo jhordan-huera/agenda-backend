@@ -11,6 +11,7 @@
 import { spawn } from "node:child_process";
 import { agent, checks, count, fakeNtfy, login, runCron, sleep, sql, startApi } from "./helpers/harness.ts";
 import type { DatabaseFiles, DatabaseHistoryPoint, DatabaseMaintenance, DatabaseStats, DatabaseTables, DatabaseWork } from "../src/shared/types/index.ts";
+import { acceptSupportPassword } from "./helpers/business.mjs";
 
 const { ok, done } = checks();
 const service = await import("../src/services/database-stats-service.ts");
@@ -106,6 +107,7 @@ ok(
 r = await owner("POST", "/admin/platform-admins", { firstName: "Sofía", lastName: "Soporte", email: "sofia.soporte@example.com", password: "Soporte-2026" });
 ok(r.status === 200 && r.body.user.platformOwner === false, "el principal agrega a otro super admin", r.body);
 const helper = agent({ ip: "10.24.0.3" });
+acceptSupportPassword("sofia.soporte@example.com");
 await helper("POST", "/auth/login", { email: "sofia.soporte@example.com", password: "Soporte-2026", remember: true });
 r = await stats(helper);
 ok(r.status === 403 && r.body.error.message === "Sólo el super admin principal ve la base de datos.", "otro super admin: 403", r.body);
